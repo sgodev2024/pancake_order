@@ -5,6 +5,10 @@ use App\Http\Controllers\Api\PermissionGroupController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\RolePermissionController;
+use App\Http\Controllers\Api\ShopController;
+use App\Http\Controllers\Api\ShopCustomerController;
+use App\Http\Controllers\Api\ShopEmployeeController;
+use App\Http\Controllers\Api\ShopOrderController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -51,4 +55,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('permission-groups', PermissionGroupController::class);
     Route::apiResource('permissions', PermissionController::class);
     Route::apiResource('role-permissions', RolePermissionController::class);
+    
+    Route::apiResource('shops', ShopController::class);
+    Route::apiResource('shops.customers', ShopCustomerController::class);
 });

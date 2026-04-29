@@ -22,6 +22,11 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'pancake_user_id',
+        'fb_id',
+        'phone_number',
+        'pancake_full_data',
+        'avatar_url'
     ];
 
     /**
@@ -32,6 +37,10 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+    ];
+
+    protected $casts = [
+        'pancake_full_data'  => 'array'
     ];
 
     /**
