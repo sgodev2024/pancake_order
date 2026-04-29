@@ -50,6 +50,7 @@ class GetOrderByShopJob implements ShouldQueue
                 $time = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
                 $insertData[] = [
                     "shop_id"                  => $this->shop_id,
+                    "order_number_vtp"         => $data_item["order_number_vtp"],
                     "pancake_order_id"         => $data_item["id"],
                     "total_quantity"           => $total_quantity,
                     "cod"                      => $data_item["cod"] ?? 0,
