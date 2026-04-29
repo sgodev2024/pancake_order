@@ -25,7 +25,11 @@ class Order extends Model
         "status",
         "pancake_customer_id",
         "status_vtp",
-        "pancake_full_data"
+        "pancake_full_data",
+        "received_at_shop",
+        "customer_name",
+        "customer_phone",
+        "customer_address"
     ];
 
     protected $casts = [

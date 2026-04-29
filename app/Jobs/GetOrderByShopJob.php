@@ -47,6 +47,7 @@ class GetOrderByShopJob implements ShouldQueue
                 if (!empty($data_item["items"])) {
                     $total_quantity = collect($data_item["items"])->sum("quantity");
                 }
+                $time = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
                 $insertData[] = [
                     "shop_id"                  => $this->shop_id,
                     "pancake_order_id"         => $data_item["id"],
@@ -54,14 +55,18 @@ class GetOrderByShopJob implements ShouldQueue
                     "cod"                      => $data_item["cod"] ?? 0,
                     "cash"                     => $data_item["cash"] ?? 0,
                     "note"                     => $data_item["note"] ?? NULL,
-                    "user_creator_id"          => !empty($data_item["creator"]) ? $data_item["creator"]["id"] : NULL,
-                    "user_care_id"             => !empty($data_item["assigning_care"]["id"]) ? $data_item["assigning_care"]["id"] : NULL,
-                    "user_assigning_seller_id" => !empty($data_item["assigning_seller"]["id"]) ? $data_item["assigning_seller"]["id"] : NULL,
-                    "pancake_customer_id"      => !empty($data_item["customer"]["id"]) ? $data_item["customer"]["id"] : NULL,
+                    "user_creator_id"          => $data_item["creator"]["id"] ?? NULL,
+                    "user_care_id"             => $data_item["assigning_care"]["id"] ?? NULL,
+                    "user_assigning_seller_id" => $data_item["assigning_seller"]["id"] ?? NULL,
+                    "pancake_customer_id"      => $data_item["customer"]["id"] ?? NULL,
                     "status"                   => $data_item["status"],
                     "pancake_full_data"        => json_encode($data_item),
-                    "created_at"               => Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s"),
-                    "updated_at"               => Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s")
+                    "received_at_shop"         => $data_item["received_at_shop"],
+                    "customer_name"            => $data_item["customer"]["name"] ?? NULL,
+                    "customer_phone"           => !empty($data_item["customer"]["phone_numbers"]) ? implode(",", $data_item["customer"]["phone_numbers"]) : NULL,
+                    "customer_address"         => $data_item["shipping_address"]["full_address"] ?? NULL,
+                    "created_at"               => $time,
+                    "updated_at"               => $time
                 ];
             }
             Order::insert($insertData);
