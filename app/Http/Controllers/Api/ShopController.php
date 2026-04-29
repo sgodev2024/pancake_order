@@ -20,6 +20,21 @@ class ShopController extends Controller
         $this->apiUrl = env("PANCAKE_API_V1");
     }
 
+    public function index()
+    {
+        try {
+            return response()->json([
+                "success" => true,
+                "data"    => Shop::select("id", "name")->latest()->get()
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([ 
+                "success" => false,
+                "message" => $th->getMessage()
+            ]);
+        }
+    }
+
     public function store(Request $request)
     {
         try {

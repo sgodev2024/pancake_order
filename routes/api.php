@@ -58,4 +58,5 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     
     Route::apiResource('shops', ShopController::class);
     Route::apiResource('shops.customers', ShopCustomerController::class);
+    Route::apiResource('shops.orders', ShopOrderController::class);
 });
