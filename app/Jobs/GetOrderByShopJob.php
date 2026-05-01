@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Order;
 use App\Models\Shop;
+use App\Services\OrderService;
 use Carbon\Carbon;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -42,33 +43,9 @@ class GetOrderByShopJob implements ShouldQueue
     {
         try {
             $insertData = [];
+            $orderService = new OrderService();
             foreach ($this->datas as $data_item) {
-                $total_quantity = 0;
-                if (!empty($data_item["items"])) {
-                    $total_quantity = collect($data_item["items"])->sum("quantity");
-                }
-                $time = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
-                $insertData[] = [
-                    "shop_id"                  => $this->shop_id,
-                    "order_number_vtp"         => $data_item["order_number_vtp"],
-                    "pancake_order_id"         => $data_item["id"],
-                    "total_quantity"           => $total_quantity,
-                    "cod"                      => $data_item["cod"] ?? 0,
-                    "cash"                     => $data_item["cash"] ?? 0,
-                    "note"                     => $data_item["note"] ?? NULL,
-                    "user_creator_id"          => $data_item["creator"]["id"] ?? NULL,
-                    "user_care_id"             => $data_item["assigning_care"]["id"] ?? NULL,
-                    "user_assigning_seller_id" => $data_item["assigning_seller"]["id"] ?? NULL,
-                    "pancake_customer_id"      => $data_item["customer"]["id"] ?? NULL,
-                    "status"                   => $data_item["status"],
-                    "pancake_full_data"        => json_encode($data_item),
-                    "received_at_shop"         => $data_item["received_at_shop"],
-                    "customer_name"            => $data_item["customer"]["name"] ?? NULL,
-                    "customer_phone"           => !empty($data_item["customer"]["phone_numbers"]) ? implode(",", $data_item["customer"]["phone_numbers"]) : NULL,
-                    "customer_address"         => $data_item["shipping_address"]["full_address"] ?? NULL,
-                    "created_at"               => $time,
-                    "updated_at"               => $time
-                ];
+                $insertData[] = $orderService->getOrderItem($data_item, $this->shop_id);
             }
             Order::insert($insertData);
 
