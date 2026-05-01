@@ -12,7 +12,8 @@ class OrderService
         if (!empty($data_item["items"])) {
             $total_quantity = collect($data_item["items"])->sum("quantity");
         }
-        $time = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
+        $created_at = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
+        $updated_at = Carbon::parse($data_item["updated_at"])->format("Y-m-d H:i:s");
         
         return [
             "shop_id"                  => $shop_id,
@@ -32,8 +33,8 @@ class OrderService
             "customer_name"            => $data_item["customer"]["name"] ?? NULL,
             "customer_phone"           => !empty($data_item["customer"]["phone_numbers"]) ? implode(",", $data_item["customer"]["phone_numbers"]) : NULL,
             "customer_address"         => $data_item["shipping_address"]["full_address"] ?? NULL,
-            "created_at"               => $time,
-            "updated_at"               => $time
+            "created_at"               => $created_at,
+            "updated_at"               => $updated_at
         ];
     }
 }

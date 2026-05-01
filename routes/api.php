@@ -67,6 +67,5 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 });
 
 Route::prefix("webhook")->group(function() {
-    Route::post("/pancake/order", [WebhookController::class, "reciveOrderPancake"]);
-    Route::post("/pancake/customer", [WebhookController::class, "reciveCustomerPancake"]);
+    Route::post("/pancake", [WebhookController::class, "recivePancake"]);
 });
