@@ -30,7 +30,8 @@ class ShopOrderController extends Controller
                 'orders.received_at_shop',
                 'orders.customer_name',
                 'orders.customer_phone',
-                'orders.customer_address'
+                'orders.customer_address',
+                'orders.pancake_order_id'
             ]);
 
             // 3. Xử lý các điều kiện lọc (Filters)

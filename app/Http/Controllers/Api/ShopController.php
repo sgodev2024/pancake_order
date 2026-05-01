@@ -58,7 +58,7 @@ class ShopController extends Controller
                             "updated_at"        => now()
                         ]);
                         $this->getEmployee($shop);
-                        $this->getCustomer($shop);
+                        //$this->getCustomer($shop);
                         $this->getOrder($shop);
                     }
                     
