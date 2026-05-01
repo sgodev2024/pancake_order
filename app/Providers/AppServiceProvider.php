@@ -24,5 +24,7 @@ class AppServiceProvider extends ServiceProvider
         // Bạn có thể tùy chỉnh thời gian hết hạn của token ở đây
         Passport::tokensExpireIn(now()->addDays(15));
         Passport::refreshTokensExpireIn(now()->addDays(30));
+        // THÊM DÒNG NÀY: Dành riêng cho Personal Access Token (hàm $user->createToken)
+        Passport::personalAccessTokensExpireIn(now()->addDays(15));
     }
 }

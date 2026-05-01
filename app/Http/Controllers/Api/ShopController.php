@@ -25,7 +25,12 @@ class ShopController extends Controller
         try {
             return response()->json([
                 "success" => true,
-                "data"    => Shop::select("id", "name")->latest()->get()
+                "data"    => Shop::select("id", "name")
+                                 ->with(["users" => function ($q) {
+                                    $q->select("users.id", "users.name", "users.email");
+                                 }])
+                                 ->latest()
+                                 ->get()
             ]);
         } catch (\Throwable $th) {
             return response()->json([ 
@@ -53,6 +58,7 @@ class ShopController extends Controller
                             "pancake_shop_id"   => $shop_item["id"],
                             "name"              => $shop_item["name"],
                             "api_key"           => $inputs["api_key"],
+                            "care_cycle_days"   => $index["care_cycle_days"] ?? 5,
                             "pancake_full_data" => json_encode($shop_item),
                             "created_at"        => now(),
                             "updated_at"        => now()

@@ -7,8 +7,10 @@ use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\RolePermissionController;
 use App\Http\Controllers\Api\ShopController;
 use App\Http\Controllers\Api\ShopCustomerController;
-use App\Http\Controllers\Api\ShopEmployeeController;
 use App\Http\Controllers\Api\ShopOrderController;
+use App\Http\Controllers\Api\ShopUserController;
+use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\WebhookController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -59,4 +61,12 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('shops', ShopController::class);
     Route::apiResource('shops.customers', ShopCustomerController::class);
     Route::apiResource('shops.orders', ShopOrderController::class);
+    Route::apiResource('shops.users', ShopUserController::class);
+
+    Route::apiResource('users', UserController::class);
+});
+
+Route::prefix("webhook")->group(function() {
+    Route::post("/pancake/order", [WebhookController::class, "reciveOrderPancake"]);
+    Route::post("/pancake/customer", [WebhookController::class, "reciveCustomerPancake"]);
 });

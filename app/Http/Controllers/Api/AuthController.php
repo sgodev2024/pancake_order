@@ -25,13 +25,15 @@ class AuthController extends Controller
 
             // 3. Tạo Token (Đây là lúc Passport vào cuộc)
             // 'Personal Access Token' là tên định danh cho token, bạn đặt là gì cũng được
-            $token = $user->createToken('PancakeManagementToken')->accessToken;
+            $token = $user->createToken('PancakeManagementToken');
+            $expiresAt = $token->token->expires_at->toDateTimeString();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Đăng nhập thành công',
-                'access_token' => $token,
+                'access_token' => $token->accessToken,
                 'token_type' => 'Bearer',
+                'expires_at' => $expiresAt,
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,

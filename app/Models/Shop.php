@@ -16,7 +16,8 @@ class Shop extends Model
         "pancake_shop_id",
         "name",
         "api_key",
-        "pancake_full_data"
+        "pancake_full_data",
+        "care_cycle_days"
     ];
 
     protected $casts = [
@@ -32,5 +33,10 @@ class Shop extends Model
     public function orders()
     {
         return $this->hasMany(Order::class, "shop_id", "id");
+    }
+
+    public function users()
+    {
+        return $this->belongsToMany(User::class, ShopUser::class)->withPivot('is_manager');
     }
 }
