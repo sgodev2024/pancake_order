@@ -84,18 +84,18 @@ class ShopUserController extends Controller
         }
     }
 
-    public function update(Request $request, $shopId) // Giả sử route có truyền shop_id
+    public function update(Request $request, $shop_id, $user_id) // Giả sử route có truyền shop_id
     {
         try {
             $isManager = filter_var($request->is_manager, FILTER_VALIDATE_BOOLEAN);
             // NẾU LÀ MANAGER: Tự động tước quyền các manager hiện tại của shop (nếu có)
             if ($isManager) {
-                $existingManager = ShopUser::where('shop_id', $shopId)
+                $existingManager = ShopUser::where('shop_id', $shop_id)
                                        ->where('is_manager', true)
                                        ->first();
 
                 // Nếu đã có manager VÀ đó không phải là user hiện tại
-                if ($existingManager && $existingManager->user_id != $request->user_id) {
+                if ($existingManager && $existingManager->user_id != $user_id) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Shop này đã có quản lý. Vui lòng gỡ quyền của người cũ trước.'
@@ -104,7 +104,7 @@ class ShopUserController extends Controller
             }
             // Cú pháp chuẩn: Mảng 1 là điều kiện tìm, Mảng 2 là dữ liệu cập nhật
             ShopUser::updateOrCreate(
-                ['shop_id' => $shopId, 'user_id' => $request->user_id], 
+                ['shop_id' => $shop_id, 'user_id' => $user_id], 
                 ['is_manager' => $request->is_manager]
             );
 
