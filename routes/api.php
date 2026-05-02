@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\PermissionGroupController;
 use App\Http\Controllers\Api\PermissionController;
@@ -65,6 +66,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('shops.users', ShopUserController::class);
 
     Route::apiResource("orders", OrderController::class);
+    Route::apiResource("customers", CustomerController::class);
 
     Route::apiResource('users', UserController::class);
 });
