@@ -1,0 +1,92 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Order;
+use Illuminate\Http\Request;
+
+class OrderController extends Controller
+{
+    public function index(Request $request)
+    {
+        try {
+            $inputs = $request->only(
+                "search",
+                "shop_id",
+                "status",
+                "received_at_shop",
+                "page",
+                "page_size"
+            );
+            // 1. Khởi tạo query từ relationship
+            $query = Order::query();
+            $query->where("shop_id", $inputs["shop_id"]);
+            // 2. XỬ LÝ LỌC (FILTERING)
+            // Lọc theo status
+            if (isset($inputs['status']) && $inputs['status'] !== '') {
+                // Hỗ trợ cả trường hợp FE gửi lên một mảng status hoặc 1 status duy nhất
+                if (is_array($inputs['status'])) {
+                    $query->whereIn('orders.status', $inputs['status']);
+                } else {
+                    $query->where('orders.status', $inputs['status']);
+                }
+            }
+
+            // Lọc theo received_at_shop (thường là boolean 0/1)
+            if (isset($inputs['received_at_shop']) && $inputs['received_at_shop'] !== '') {
+                $query->where('orders.received_at_shop', $inputs['received_at_shop']);
+            }
+
+            // (Bonus) Lọc theo search (ví dụ tìm theo số điện thoại hoặc mã đơn VTP)
+            if (!empty($inputs['search'])) {
+                $searchTerm = '%' . $inputs['search'] . '%';
+                $query->where(function ($q) use ($searchTerm) {
+                    $q->where('orders.order_number_vtp', 'like', $searchTerm)
+                    ->orWhere('orders.customer_phone', 'like', $searchTerm)
+                    ->orWhere('orders.customer_name', 'like', $searchTerm);
+                });
+            }
+            // 2. Select các trường cụ thể cần lấy để tối ưu performance
+            // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
+            $query->select([
+                'id', 
+                'order_number_vtp', 
+                'total_quantity',
+                'cod',
+                'cash',
+                'note',
+                'created_at',
+                'status',
+                'status_vtp',
+                'pancake_full_data',
+                'received_at_shop',
+                'customer_name',
+                'customer_phone',
+                'customer_address',
+                'pancake_order_id'
+            ]);
+            
+            $pageNumber = $inputs["page"];
+            $page_size = $inputs["page_size"] ?? 30;
+            // 4. Sắp xếp và Phân trang (Lấy 30 records mỗi trang)
+            $orders = $query->latest('created_at')->paginate($page_size, ['*'], 'page', $pageNumber);
+
+            return response()->json([
+                "success" => true,
+                "data" => [
+                    'orders' => $orders->items(),
+                    'current_page' => $orders->currentPage(),
+                    'per_page'     => $orders->perPage(),
+                    'total_items'  => $orders->total(),
+                    'total_pages'  => $orders->lastPage(),
+                ]
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
+            ], 500);
+        }
+    }
+}
