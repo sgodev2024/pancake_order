@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shop;
+use App\Models\ShopUser;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
@@ -17,7 +19,7 @@ class ShopUserController extends Controller
     {
         // 1. Validate dữ liệu đầu vào
         $validator = Validator::make($request->all(), [
-            'user_id'    => 'required|integer|exists:users,id',
+            'email'      => 'required|email|exists:users,email',
             'is_manager' => 'sometimes|boolean' // Yêu cầu là kiểu boolean (true/false, 1/0)
         ]);
 
@@ -28,8 +30,8 @@ class ShopUserController extends Controller
                 'errors'  => $validator->errors()
             ], 422);
         }
-
-        $userId = $validator->validated()['user_id'];
+        $email = $validator->validated()['email'];
+        $userId = User::where('email', $email)->value('id'); // Hàm value('id') giúp lấy thẳng cột id cho tối ưu
         
         // Mặc định nếu không truyền is_manager lên thì là false (0)
         $isManager = $request->input('is_manager', false); 
@@ -79,6 +81,43 @@ class ShopUserController extends Controller
                 'success' => false, 
                 'message' => 'User này đã tồn tại trong shop với quyền tương tự, không có thay đổi nào.',
             ], 200); 
+        }
+    }
+
+    public function update(Request $request, $shopId) // Giả sử route có truyền shop_id
+    {
+        try {
+            $isManager = filter_var($request->is_manager, FILTER_VALIDATE_BOOLEAN);
+            // NẾU LÀ MANAGER: Tự động tước quyền các manager hiện tại của shop (nếu có)
+            if ($isManager) {
+                $existingManager = ShopUser::where('shop_id', $shopId)
+                                       ->where('is_manager', true)
+                                       ->first();
+
+                // Nếu đã có manager VÀ đó không phải là user hiện tại
+                if ($existingManager && $existingManager->user_id != $request->user_id) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Shop này đã có quản lý. Vui lòng gỡ quyền của người cũ trước.'
+                    ], 400); // 400 Bad Request
+                }
+            }
+            // Cú pháp chuẩn: Mảng 1 là điều kiện tìm, Mảng 2 là dữ liệu cập nhật
+            ShopUser::updateOrCreate(
+                ['shop_id' => $shopId, 'user_id' => $request->user_id], 
+                ['is_manager' => $request->is_manager]
+            );
+
+            return response()->json([
+                'success' => true, // Đã sửa thành true
+                'message' => 'Cập nhật thành công'
+            ], 200);
+            
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => false, 
+                'message' => 'Vui lòng thử lại: ' . $th->getMessage() // In thêm lỗi ra để dễ debug
+            ], 500); // Đã sửa thành 500
         }
     }
 }
