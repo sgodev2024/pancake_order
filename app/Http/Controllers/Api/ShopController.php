@@ -3,17 +3,32 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Jobs\CustomerByShopChunkJob;
 use App\Jobs\GetEmployeeByShopJob;
 use App\Jobs\OrderByShopChunkJob;
 use App\Models\Shop;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Routing\Controllers\Middleware;
 
-class ShopController extends Controller
+class ShopController extends Controller implements HasMiddleware
 {
     protected $apiUrl;
+
+    /**
+     * Khai báo middleware cho Controller
+     */
+    public static function middleware(): array
+    {
+        return [
+            // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
+            new Middleware(PermissionCheckMiddleware::class . ':create-shop', only: ['store']),
+            new Middleware(PermissionCheckMiddleware::class . ':list-shop', only: ['index']),
+        ];
+    }
 
     public function __construct()
     {
@@ -29,6 +44,14 @@ class ShopController extends Controller
                                  ->with(["users" => function ($q) {
                                     $q->select("users.id", "users.name", "users.email");
                                  }])
+                                 ->where(function ($q) {
+                                    if (!is_admin()) {
+                                        // Lọc các shop mà danh sách users của nó có chứa user đang đăng nhập
+                                        $q->whereHas('users', function ($userQuery) {
+                                            $userQuery->where('users.id', auth()->id());
+                                        });
+                                    }
+                                 })
                                  ->latest()
                                  ->get()
             ]);

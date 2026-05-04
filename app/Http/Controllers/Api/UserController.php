@@ -20,8 +20,8 @@ class UserController extends Controller
         $users = User::with(["shops" => function ($q) {
                         $q->select("shops.id", "shops.name");
                      }])
-                     ->select("id", "name", "phone_number", "email")
-                     ->paginate(30); 
+                     ->select("id", "name", "phone_number", "email", "role_id")
+                     ->paginate(30);
         
         return response()->json([
             'success' => true,
@@ -40,7 +40,8 @@ class UserController extends Controller
             'name'         => 'required|string|max:255',
             'email'        => 'required|string|email|max:255|unique:users,email',
             'password'     => 'required|string|min:6',
-            'phone_number' => 'required|string|min:10'
+            'phone_number' => 'required|string|min:10',
+            'role_id'      => 'required|exists:roles,id'
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -88,7 +89,8 @@ class UserController extends Controller
             'name'         => 'sometimes|string|max:255',
             'email'        => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
             'password'     => 'sometimes|string|min:6',
-            'phone_number' => 'sometimes|string|min:10'
+            'phone_number' => 'sometimes|string|min:10',
+            'role_id'      => 'required|exists:roles,id'
         ]);
 
         if ($validator->fails()) {

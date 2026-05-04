@@ -22,6 +22,11 @@ class OrderController extends Controller
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
             $query->where("shop_id", $inputs["shop_id"]);
+            if (!is_admin()) {
+                $user = auth()->user();
+                $query->where("user_creator_id", $user->pancake_user_id)
+                      ->orWhere("user_care_id", $user->pancake_user_id);
+            }
             // 2. XỬ LÝ LỌC (FILTERING)
             // Lọc theo status
             if (isset($inputs['status']) && $inputs['status'] !== '') {

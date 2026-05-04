@@ -3,15 +3,29 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\PermissionGroup;
 use App\Models\Role;
 use App\Models\RolePermission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 
-class RoleController extends Controller
+class RoleController extends Controller implements HasMiddleware
 {
+    /**
+     * Khai báo middleware cho Controller
+     */
+    public static function middleware(): array
+    {
+        return [
+            // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
+            new Middleware(PermissionCheckMiddleware::class . ':role'),
+        ];
+    }
+
     // 1. Lấy danh sách Role
     public function index()
     {

@@ -51,6 +51,7 @@ class GetEmployeeByShopJob implements ShouldQueue
                 unset($user["id"]);
                 $user["pancake_full_data"] = json_encode($data_item);
                 $user["password"] = Hash::make("12345678");
+                $user["role_id"] = 3; // 1 = admin, 2= manager, 3=nhân viên
                 $user_exist = User::where("pancake_user_id", $user["pancake_user_id"])->first();
                 if (empty($user_exist)) {
                     $user_exist = User::create($user);
