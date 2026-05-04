@@ -59,6 +59,6 @@ class User extends Authenticatable
 
     public function shops()
     {
-        return $this->belongsToMany(Shop::class, ShopUser::class);
+        return $this->belongsToMany(Shop::class, ShopUser::class)->withPivot('is_manager');
     }
 }

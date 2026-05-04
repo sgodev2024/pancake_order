@@ -24,8 +24,15 @@ class OrderController extends Controller
             $query->where("shop_id", $inputs["shop_id"]);
             if (!is_admin()) {
                 $user = auth()->user();
-                $query->where("user_creator_id", $user->pancake_user_id)
-                      ->orWhere("user_care_id", $user->pancake_user_id);
+                $isManager = $user->shops()
+                                    ->where('shop_id', $inputs["shop_id"])
+                                    ->wherePivot('is_manager', 1)
+                                    ->exists();
+                if (!$isManager) {
+                    $query->where("user_creator_id", $user->pancake_user_id)
+                          ->orWhere("user_care_id", $user->pancake_user_id);
+                }
+                
             }
             // 2. XỬ LÝ LỌC (FILTERING)
             // Lọc theo status

@@ -38,6 +38,11 @@ class UserController extends Controller implements HasMiddleware
         $users = User::with(["shops" => function ($q) {
                         $q->select("shops.id", "shops.name");
                      }])
+                     ->with([
+                        "role" => function ($query) {
+                            $query->select("name", "id");
+                        }
+                     ])
                      ->select("id", "name", "phone_number", "email", "role_id")
                      ->paginate(30);
         

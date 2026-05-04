@@ -26,7 +26,7 @@ class ShopController extends Controller implements HasMiddleware
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
             new Middleware(PermissionCheckMiddleware::class . ':create-shop', only: ['store']),
-            new Middleware(PermissionCheckMiddleware::class . ':list-shop', only: ['index']),
+            // new Middleware(PermissionCheckMiddleware::class . ':list-shop', only: ['index']),
         ];
     }
 
