@@ -120,6 +120,12 @@ class UserController extends Controller
      */
     public function destroy(User $user)
     {
+        if ($user->email == "admin@gmail.com") {
+            return response()->json([
+                "success" => false,
+                "message" => "Tài khoản này không được phép xóa"
+            ]);
+        }
         // Xóa user
         $user->delete();
 

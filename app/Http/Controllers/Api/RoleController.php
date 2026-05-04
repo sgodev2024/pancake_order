@@ -8,6 +8,7 @@ use App\Models\Role;
 use App\Models\RolePermission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class RoleController extends Controller
 {
@@ -33,15 +34,19 @@ class RoleController extends Controller
     // 2. Thêm Role mới
     public function store(Request $request)
     {
+        $request->merge([
+            'slug' => Str::slug($request->input('name'))
+        ]);
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|unique:roles,name|max:255',
+            'slug' => 'required|string|unique:roles,slug|max:255',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
-        $role = Role::create($request->only('name'));
+        $role = Role::create($request->only('name', 'slug'));
         return response()->json(['success' => true, 'data' => $role], 201);
     }
 
@@ -56,15 +61,23 @@ class RoleController extends Controller
     }
 
     // 4. Cập nhật Role
-    public function update(Request $request, string $id)
+    public function update(Request $request, $id)
     {
         $role = Role::find($id);
         if (!$role) {
             return response()->json(['success' => false, 'message' => 'Không tìm thấy Role'], 404);
         }
-
+        if ($role->slug == "admin") {
+            return response()->json(['success' => false, 'message' => 'Quyền này không được phép sửa'], 500);
+        }
+        if ($request->has('name')) {
+            $request->merge([
+                'slug' => Str::slug($request->input('name'))
+            ]);
+        }
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255|unique:roles,name,' . $id,
+            'slug' => 'required|string|max:255|unique:roles,slug,' . $id,
         ]);
 
         if ($validator->fails()) {
@@ -81,6 +94,9 @@ class RoleController extends Controller
         $role = Role::find($id);
         if (!$role) {
             return response()->json(['success' => false, 'message' => 'Không tìm thấy Role'], 404);
+        }
+        if ($role->slug == "admin") {
+            return response()->json(['success' => false, 'message' => 'Quyền này không được phép xóa'], 500);
         }
 
         $role->delete();

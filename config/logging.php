@@ -73,6 +73,14 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'pancake-webhook-error' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/pancake-webhook-error.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => env('LOG_DAILY_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
         'pancake-webhook' => [
             'driver' => 'daily',
             'path' => storage_path('logs/pancake-webhook.log'),

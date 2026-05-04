@@ -14,24 +14,14 @@ class WebhookController extends Controller
         try {
             $data = file_get_contents('php://input');
             $res = json_decode($data, true);
+            Log::channel("pancake-webhook")->info($res);
             GetOrderFromWebhookJob::dispatch($res);
 
             return;
         } catch (\Throwable $th) {
-            Log::channel("pancake-webhook")->info($th->getMessage());
+            Log::channel("pancake-webhook-error")->info($th->getMessage());
 
             return;
-        }
-    }
-
-    public function reciveCustomerPancake()
-    {
-        try {
-            $data = file_get_contents('php://input');
-            $res = json_decode($data, true);
-            
-        } catch (\Throwable $th) {
-            Log::channel("pancake-webhook")->info($th->getMessage());
         }
     }
 }
