@@ -65,6 +65,27 @@ class RoleSeeder extends Seeder
                         "slug" => "list-customer"
                     ]
                 ]
+            ],
+            [
+                "name" => "Nhân viên",
+                "permissions" => [
+                    [
+                        "name" => "Xem danh sách",
+                        "slug" => "list-staff"
+                    ],
+                    [
+                        "name" => "Thêm",
+                        "slug" => "create-staff"
+                    ],
+                    [
+                        "name" => "Sửa",
+                        "slug" => "update-staff"
+                    ],
+                    [
+                        "name" => "Xóa",
+                        "slug" => "delete-staff"
+                    ]
+                ]
             ]
         ];
         Role::insert($roles);
