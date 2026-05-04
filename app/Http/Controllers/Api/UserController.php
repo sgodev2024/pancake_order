@@ -35,10 +35,10 @@ class UserController extends Controller implements HasMiddleware
     public function index()
     {
         // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
-        $users = User::with(["shops" => function ($q) {
-                        $q->select("shops.id", "shops.name");
-                     }])
-                     ->with([
+        $users = User::with([
+                        "shops" => function ($q) {
+                            $q->select("shops.id", "shops.name");
+                        },
                         "role" => function ($query) {
                             $query->select("name", "id");
                         }
