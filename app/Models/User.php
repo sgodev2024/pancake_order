@@ -61,4 +61,9 @@ class User extends Authenticatable
     {
         return $this->belongsToMany(Shop::class, ShopUser::class)->withPivot('is_manager');
     }
+
+    public function role()
+    {
+        return $this->belongsTo(Role::class);
+    }
 }
