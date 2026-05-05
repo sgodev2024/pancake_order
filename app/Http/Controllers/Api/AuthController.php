@@ -100,7 +100,7 @@ class AuthController extends Controller
     {
         // Vì route này nằm trong middleware 'auth:api', 
         // $request->user() sẽ luôn chứa thông tin user tương ứng với token gửi lên.
-        $user = $request->user();
+        $user = $request->user()->load('role:id,name');
 
         return response()->json([
             'success' => true,
