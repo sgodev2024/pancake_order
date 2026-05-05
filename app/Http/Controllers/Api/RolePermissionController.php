@@ -47,7 +47,7 @@ class RolePermissionController extends Controller implements HasMiddleware
     {
         $validator = Validator::make($request->all(), [
             'role_id' => 'required|exists:roles,id',
-            'permission_ids' => 'required|array',
+            'permission_ids' => 'nullable|array',
             'permission_ids.*' => 'exists:permissions,id',
         ]);
 
@@ -61,7 +61,7 @@ class RolePermissionController extends Controller implements HasMiddleware
         // 1. Thêm những ID mới
         // 2. Xóa những ID cũ không có trong mảng gửi lên
         // 3. Giữ lại những ID đang có
-        $role->permissions()->sync($request->permission_ids);
+        $role->permissions()->sync($request->permission_ids ?? []);
 
         return response()->json([
             'success' => true,
