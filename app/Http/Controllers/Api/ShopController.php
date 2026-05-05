@@ -40,7 +40,7 @@ class ShopController extends Controller implements HasMiddleware
         try {
             return response()->json([
                 "success" => true,
-                "data"    => Shop::select("id", "name")
+                "data"    => Shop::select("id", "name", "pancake_shop_id")
                                  ->with(["users" => function ($q) {
                                     $q->select("users.id", "users.name", "users.email");
                                  }])

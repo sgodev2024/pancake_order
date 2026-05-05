@@ -43,7 +43,7 @@ class UserController extends Controller implements HasMiddleware
                             $query->select("name", "id");
                         }
                      ])
-                     ->select("id", "name", "phone_number", "email", "role_id")
+                     ->select("id", "name", "phone_number", "email", "role_id", "pancake_full_data")
                      ->paginate(30);
         
         return response()->json([
