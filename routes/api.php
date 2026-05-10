@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\CustomerCareController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\PermissionGroupController;
@@ -69,6 +70,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource("customers", CustomerController::class);
 
     Route::apiResource('users', UserController::class);
+
+    Route::apiResource('customer-cares', CustomerCareController::class);
 });
 
 Route::prefix("webhook")->group(function() {
