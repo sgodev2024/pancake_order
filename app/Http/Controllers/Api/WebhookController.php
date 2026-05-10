@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Log;
 
 class WebhookController extends Controller
 {
-    public function reciveOrderPancake()
+    public function recivePancake()
     {
         try {
             $data = file_get_contents('php://input');
