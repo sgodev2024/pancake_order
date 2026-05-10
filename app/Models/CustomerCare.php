@@ -22,4 +22,13 @@ class CustomerCare extends Model
         "user_assigning_seller_id",
         "status"
     ];
+
+    public function shop()
+    {
+        return $this->belongsTo(Shop::class);
+    }
+
+    protected $casts = [
+        'customer_phones' => 'array'
+    ];
 }

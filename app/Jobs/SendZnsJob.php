@@ -65,9 +65,10 @@ class SendZnsJob implements ShouldQueue
                     Log::channel("zns")->info($response);
                 } 
             }
-
+            Log::channel("zns")->info("=============Thành công SendZnsJob =============");
             return;
         } catch (\Throwable $th) {
+            Log::channel("zns")->info("=============Thất bại SendZnsJob =============");
             Log::channel("zns")->info($th->getMessage());
 
             return;

@@ -70,18 +70,33 @@ class AddCustomerCareJob implements ShouldQueue
     public function handle(): void
     {
         try {
-            CustomerCare::create([
-                "shop_id"                  => $this->shop_id,
-                "pancake_customer_id"      => $this->pancake_customer_id,
-                "customer_phones"          => $this->customer_phone_numbers,
-                "customer_name"            => $this->customer_name,
-                "customer_addresss"        => $this->customer_address,
-                "pancake_order_id"         => $this->pancake_order_id,
-                "date_care"                => Carbon::parse($this->order_created_at)->addDays($this->care_cycle_days)->format("Y-m-d"),
-                "user_creator_id"          => $this->user_creator_id,
-                "user_care_id"             => $this->user_care_id,
-                "user_assigning_seller_id" => $this->user_assigning_seller_id
-            ]);
+            $checkExist = CustomerCare::where("pancake_order_id", $this->pancake_order_id)->first();
+            if ($checkExist) {
+                $checkExist->update([
+                    "pancake_customer_id"      => $this->pancake_customer_id,
+                    "customer_phones"          => $this->customer_phone_numbers,
+                    "customer_name"            => $this->customer_name,
+                    "customer_addresss"        => $this->customer_address,
+                    "date_care"                => Carbon::parse($this->order_created_at)->addDays($this->care_cycle_days ?? 5)->format("Y-m-d"),
+                    "user_creator_id"          => $this->user_creator_id,
+                    "user_care_id"             => $this->user_care_id,
+                    "user_assigning_seller_id" => $this->user_assigning_seller_id
+                ]);
+            } else {
+                CustomerCare::create([
+                    "shop_id"                  => $this->shop_id,
+                    "pancake_customer_id"      => $this->pancake_customer_id,
+                    "customer_phones"          => $this->customer_phone_numbers,
+                    "customer_name"            => $this->customer_name,
+                    "customer_addresss"        => $this->customer_address,
+                    "pancake_order_id"         => $this->pancake_order_id,
+                    "date_care"                => Carbon::parse($this->order_created_at)->addDays($this->care_cycle_days ?? 5)->format("Y-m-d"),
+                    "user_creator_id"          => $this->user_creator_id,
+                    "user_care_id"             => $this->user_care_id,
+                    "user_assigning_seller_id" => $this->user_assigning_seller_id
+                ]);
+            }
+            Log::channel("pancake-webhook-error")->info("=================Thành công AddCustomerCareJob==============");
         } catch (\Throwable $th) {
             Log::channel("pancake-webhook-error")->info("=================AddCustomerCareJob==============");
             Log::channel("pancake-webhook-error")->info($th->getMessage());

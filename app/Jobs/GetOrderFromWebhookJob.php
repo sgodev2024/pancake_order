@@ -51,7 +51,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $this->data["shipping_address"]
                     )->onQueue("send-zns");
                 }
-                $customer_exist = Customer::select("id", "phone_numbers")->where("pancake_customer_id", $customer["id"])->first();
+                $customer_exist = Customer::select("id", "phone_numbers", "pancake_customer_id", "name")->where("pancake_customer_id", $customer["id"])->first();
                 if (!$customer_exist) {
                     $customer_exist = Customer::create([
                         "shop_id"             => $shop->id,
@@ -75,26 +75,24 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         "phone_numbers" => $unique_phones
                     ]);
                 }
-                if ($is_new_order) {
-                    AddCustomerCareJob::dispatch(
-                        $shop->id,
-                        $shop->care_cycle_days,
-                        $order->pancake_order_id,
-                        $order->created_at,
-                        $customer_exist->name,
-                        $customer_exist->phone_numbers,
-                        $customer["new_full_address"] ?? NULL,
-                        $customer_exist->pancake_customer_id,
-                        $order->user_creator_id,
-                        $order->user_care_id,
-                        $order->user_assigning_seller_id
-                    );
-                }
+                AddCustomerCareJob::dispatch(
+                    $shop->id,
+                    $shop->care_cycle_days,
+                    $order->pancake_order_id,
+                    $order->created_at,
+                    $customer_exist->name,
+                    $customer_exist->phone_numbers,
+                    $customer["new_full_address"] ?? NULL,
+                    $customer_exist->pancake_customer_id,
+                    $order->user_creator_id,
+                    $order->user_care_id,
+                    $order->user_assigning_seller_id
+                );
             }
-
+            Log::channel("pancake-webhook-error")->info("=================Thành công GetOrderFromWebhookJob==============");
             return;
         } catch (\Throwable $th) {
-            Log::channel("pancake-webhook-error")->info("=================GetOrderFromWebhookJob==============");
+            Log::channel("pancake-webhook-error")->info("=================Lỗi GetOrderFromWebhookJob==============");
             Log::channel("pancake-webhook-error")->info($th->getMessage());
         }
     }

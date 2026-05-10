@@ -16,7 +16,7 @@ return new class extends Migration
             $table->integer("shop_id");
             $table->string("pancake_customer_id");
             $table->string("pancake_order_id")->nullable();
-            $table->string("customer_phones")->nullable();
+            $table->json("customer_phones")->nullable();
             $table->string("customer_name")->nullable();
             $table->string("customer_addresss")->nullable();
             $table->date("date_care");
