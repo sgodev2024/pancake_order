@@ -32,8 +32,9 @@ class UserController extends Controller implements HasMiddleware
      * Lấy danh sách tất cả users (Index)
      * GET /api/users
      */
-    public function index()
+    public function index(Request $request)
     {
+        $inputs = $request->only("role_id");
         // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
         $users = User::with([
                         "shops" => function ($q) {
@@ -43,6 +44,17 @@ class UserController extends Controller implements HasMiddleware
                             $query->select("name", "id");
                         }
                      ])
+                     ->where(function ($q) use ($inputs) {
+                        if (isset($inputs["role_id"])) {
+                            $q->where("role_id", $inputs["role_id"]);
+                        }
+                        if (isset($inputs["search"])) {
+                            $searchTerm = $inputs["search"] . "%";
+                            $q->where("email", "like", $searchTerm)
+                              ->orWhere("name", "like", $searchTerm)
+                              ->orWhere("phone_number", "like", $searchTerm);
+                        }
+                     })
                      ->select("id", "name", "phone_number", "email", "role_id", "pancake_full_data")
                      ->paginate(30);
         

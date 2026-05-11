@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\ShopOrderController;
 use App\Http\Controllers\Api\ShopUserController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\WebhookController;
+use App\Models\ApiKey;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -74,6 +75,28 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('customer-cares', CustomerCareController::class);
 
     Route::get("overview", [CustomerCareController::class, "overview"]);
+
+    Route::put("api-key", function () {
+        ApiKey::updateOrCreate(
+            [
+                "id" => 1
+            ],[
+                "api_key" => request()->api_key
+            ]
+        );
+
+        return response()->json([
+            "success" => true,
+            "message" => "Cập nhật thành công"
+        ]);
+    });
+    Route::get("api-key", function () {
+        return response()->json([
+            "success" => true,
+            "data"    => ApiKey::select("id", "api_key")->first()
+        ]);
+    });
+
 });
 
 Route::prefix("webhook")->group(function() {

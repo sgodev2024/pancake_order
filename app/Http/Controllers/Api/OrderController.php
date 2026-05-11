@@ -17,7 +17,9 @@ class OrderController extends Controller
                 "status",
                 "received_at_shop",
                 "page",
-                "page_size"
+                "page_size",
+                "date_start",
+                "date_end"
             );
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
@@ -44,19 +46,24 @@ class OrderController extends Controller
                     $query->where('orders.status', $inputs['status']);
                 }
             }
-
+            if (isset($inputs["date_start"])) {
+                $query->where("created_at", ">=", $inputs["date_start"] . " 00:00:00");
+            }
+            if (isset($inputs["date_end"])) {
+                $query->where("created_at", "<=", $inputs["date_end"] . " 23:59:59");
+            }
             // Lọc theo received_at_shop (thường là boolean 0/1)
             if (isset($inputs['received_at_shop']) && $inputs['received_at_shop'] !== '') {
                 $query->where('orders.received_at_shop', $inputs['received_at_shop']);
             }
-
             // (Bonus) Lọc theo search (ví dụ tìm theo số điện thoại hoặc mã đơn VTP)
             if (!empty($inputs['search'])) {
-                $searchTerm = '%' . $inputs['search'] . '%';
-                $query->where(function ($q) use ($searchTerm) {
+                $searchTerm = $inputs['search'] . '%';
+                $query->where(function ($q) use ($searchTerm, $inputs) {
                     $q->where('orders.order_number_vtp', 'like', $searchTerm)
-                    ->orWhere('orders.customer_phone', 'like', $searchTerm)
-                    ->orWhere('orders.customer_name', 'like', $searchTerm);
+                      ->orWhere('orders.customer_phone', 'like', $searchTerm)
+                      ->orWhere('orders.customer_name', 'like', $searchTerm)
+                      ->orWhere('orders.pancake_order_id', $inputs['search']);
                 });
             }
             // 2. Select các trường cụ thể cần lấy để tối ưu performance

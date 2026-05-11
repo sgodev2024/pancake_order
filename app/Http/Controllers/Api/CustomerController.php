@@ -28,7 +28,10 @@ class CustomerController extends Controller implements HasMiddleware
             $inputs = $request->only(
                 "page",
                 "page_size",
-                "shop_id"
+                "shop_id",
+                "date_start",
+                "date_end",
+                "search"
             );
             // 1. Khởi tạo query từ relationship
             $query = Customer::query();
@@ -52,7 +55,18 @@ class CustomerController extends Controller implements HasMiddleware
                         ->orWhere('phone_numbers', 'like', "%{$search}%");
                 });
             });
-
+            if (isset($inputs["date_start"])) {
+                $query->where("created_at", ">=", $inputs["date_start"] . " 00:00:00");
+            }
+            if (isset($inputs["date_end"])) {
+                $query->where("created_at", "<=", $inputs["date_end"] . " 23:59:59");
+            }
+            if (!is_admin()) {
+                $user = auth()->user();
+                $query->where("user_creator_id", $user->pancake_user_id)
+                      ->orWhere("user_care_id", $user->pancake_user_id)
+                      ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+            }
             $pageNumber = $inputs["page"];
             $page_size  = $inputs["page_size"] ?? 30;
             // 4. Sắp xếp và Phân trang (Lấy 30 records mỗi trang)
