@@ -2,15 +2,12 @@
 
 namespace App\Jobs;
 
-use App\Models\Order;
-use App\Models\Shop;
-use App\Services\OrderService;
-use Carbon\Carbon;
+use App\Models\Product;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
 
-class GetOrderByShopJob implements ShouldQueue
+class GetProductByShopJob implements ShouldQueue
 {
     use Queueable;
 
@@ -43,13 +40,17 @@ class GetOrderByShopJob implements ShouldQueue
     {
         try {
             $insertData = [];
-            $orderService = new OrderService();
             foreach ($this->datas as $data_item) {
                 if (!empty($data_item["order_number_vtp"])) {
-                    $insertData[] = $orderService->getOrderItem($data_item, $this->shop_id);
+                    $insertData[] = [
+                        "shop_id"            => $this->shop_id,
+                        "pancake_product_id" => $data_item["id"],
+                        "name"               => $data_item["product"]["name"],
+                        "pancake_full_data"  => json_encode($data_item)
+                    ];
                 }
             }
-            Order::insert($insertData);
+            Product::insert($insertData);
 
             return;
         } catch (\Throwable $th) {

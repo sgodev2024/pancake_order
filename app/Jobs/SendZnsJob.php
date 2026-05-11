@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\ApiKey;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Http;
@@ -36,6 +37,7 @@ class SendZnsJob implements ShouldQueue
      */
     public function handle(): void
     {
+        return;
         try {
             $new_phones = [];
             $customer = $this->customer;
