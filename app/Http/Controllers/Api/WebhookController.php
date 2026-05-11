@@ -15,7 +15,7 @@ class WebhookController extends Controller
             $data = file_get_contents('php://input');
             $res = json_decode($data, true);
             Log::channel("pancake-webhook")->info($res);
-            GetOrderFromWebhookJob::dispatch($res);
+            GetOrderFromWebhookJob::dispatch($res)->onQueue("get-order-webhook");
 
             return;
         } catch (\Throwable $th) {
