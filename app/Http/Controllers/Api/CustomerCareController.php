@@ -48,7 +48,7 @@ class CustomerCareController extends Controller
                                             Carbon::now()->endOfWeek()->format("Y-m-d"),
                                         ]),
             'customer_care_expire'  => $query->where("date_care", "<=", date("Y-m-d"))
-                                            ->where("status", 1),
+                                            ->where("status", 0),
         };
 
         return $query->where(fn($q) => $this->applyAccessFilter($q, $user, $inputs["shop_id"]));
@@ -117,7 +117,7 @@ class CustomerCareController extends Controller
                 SUM(CASE WHEN date_care = ? THEN 1 ELSE 0 END) as customer_care_today,
                 SUM(CASE WHEN date_care > ? THEN 1 ELSE 0 END) as customer_care_pending,
                 SUM(CASE WHEN date_care BETWEEN ? AND ? THEN 1 ELSE 0 END) as customer_care_in_week,
-                SUM(CASE WHEN date_care <= ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire
+                SUM(CASE WHEN date_care <= ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire
             ", [
                 $today,           // customer_care_today
                 $today,           // customer_care_pending
