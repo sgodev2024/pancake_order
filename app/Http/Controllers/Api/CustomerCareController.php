@@ -41,13 +41,13 @@ class CustomerCareController extends Controller
         $query = CustomerCare::query()->latest("date_care");
         // Apply date filter theo type
         match ($type) {
-            'customer_care_today'   => $query->where("date_care", today()),
-            'customer_care_pending' => $query->where("date_care", today()),
+            'customer_care_today'   => $query->where("date_care", date("Y-m-d")),
+            'customer_care_pending' => $query->where("date_care", '>', date("Y-m-d")),
             'customer_care_in_week' => $query->whereBetween("date_care", [
                                             Carbon::now()->startOfWeek()->format("Y-m-d"),
                                             Carbon::now()->endOfWeek()->format("Y-m-d"),
                                         ]),
-            'customer_care_expire'  => $query->where("date_care", "<=", today())
+            'customer_care_expire'  => $query->where("date_care", "<=", date("Y-m-d"))
                                             ->where("status", 1),
         };
 
@@ -104,5 +104,42 @@ class CustomerCareController extends Controller
             'success' => true,
             'message' => 'Đã xóa thành công'
         ], 200); // Có thể dùng 204 No Content nếu không muốn trả về body
+    }
+
+    public function overview()
+    {
+        try {
+            $today = today()->format("Y-m-d");
+            $startOfWeek = Carbon::now()->startOfWeek()->format("Y-m-d");
+            $endOfWeek = Carbon::now()->endOfWeek()->format("Y-m-d");
+
+            $overview = CustomerCare::selectRaw("
+                SUM(CASE WHEN date_care = ? THEN 1 ELSE 0 END) as customer_care_today,
+                SUM(CASE WHEN date_care > ? THEN 1 ELSE 0 END) as customer_care_pending,
+                SUM(CASE WHEN date_care BETWEEN ? AND ? THEN 1 ELSE 0 END) as customer_care_in_week,
+                SUM(CASE WHEN date_care <= ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire
+            ", [
+                $today,           // customer_care_today
+                $today,           // customer_care_pending
+                $startOfWeek,     // customer_care_in_week (start)
+                $endOfWeek,       // customer_care_in_week (end)
+                $today,           // customer_care_expire
+            ])->first();
+
+            return response()->json([
+                "success" => true,
+                "data" => [
+                    "customer_care_today"   => (int) $overview->customer_care_today,
+                    "customer_care_pending" => (int) $overview->customer_care_pending,
+                    "customer_care_in_week" => (int) $overview->customer_care_in_week,
+                    "customer_care_expire"  => (int) $overview->customer_care_expire,
+                ]
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => "Vui lòng thử lại"
+            ]);
+        }
     }
 }

@@ -72,6 +72,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('users', UserController::class);
 
     Route::apiResource('customer-cares', CustomerCareController::class);
+
+    Route::get("overview", [CustomerCareController::class, "overview"]);
 });
 
 Route::prefix("webhook")->group(function() {
