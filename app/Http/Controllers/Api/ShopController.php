@@ -42,7 +42,7 @@ class ShopController extends Controller implements HasMiddleware
         try {
             return response()->json([
                 "success" => true,
-                "data"    => Shop::select("id", "name", "pancake_shop_id")
+                "data"    => Shop::select("id", "name", "pancake_shop_id", "care_cycle_days")
                                  ->with(["users" => function ($q) {
                                     $q->select("users.id", "users.name", "users.email");
                                  }])
@@ -90,9 +90,9 @@ class ShopController extends Controller implements HasMiddleware
                             "updated_at"        => now()
                         ]);
                     }
-                    $this->getEmployee($shop);
-                    $this->getCustomer($shop);
-                    $this->getOrder($shop);
+                    //$this->getEmployee($shop);
+                    //$this->getCustomer($shop);
+                    //$this->getOrder($shop);
                     $this->getProduct($shop);
                 }
             }
