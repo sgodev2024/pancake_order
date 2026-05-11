@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\PermissionGroupController;
 use App\Http\Controllers\Api\PermissionController;
+use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\RolePermissionController;
 use App\Http\Controllers\Api\ShopController;
@@ -69,6 +70,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 
     Route::apiResource("orders", OrderController::class);
     Route::apiResource("customers", CustomerController::class);
+    Route::apiResource("products", ProductController::class);
 
     Route::apiResource('users', UserController::class);
 
