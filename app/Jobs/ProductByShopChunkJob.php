@@ -53,7 +53,7 @@ class ProductByShopChunkJob implements ShouldQueue
                 GetProductByShopJob::dispatch(
                     $response["data"],
                     $this->shop_id
-                )->onQueue("get-order");
+                )->onQueue("get-product");
             }
         }
 

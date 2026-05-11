@@ -173,7 +173,7 @@ class ShopController extends Controller implements HasMiddleware
                         $chunk,
                         $page_size,
                         $this->apiUrl
-                    )->onQueue("get-order-chunk");
+                    )->onQueue("get-product-chunk");
                 }
             }
             
