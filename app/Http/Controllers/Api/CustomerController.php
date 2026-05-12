@@ -55,8 +55,10 @@ class CustomerController extends Controller implements HasMiddleware
             $query->when($request->filled('search'), function ($q) use ($request) {
                 $search = $request->search;
                 $q->where(function ($sub) use ($search) {
-                    $sub->where('name', 'like', "{$search}%")
-                        ->orWhere('phone_numbers', 'like', "%{$search}%");
+                    $sub->where(function ($q_sub) use ($search) {
+                        $q_sub->where('name', 'like', "{$search}%")
+                              ->orWhere('phone_numbers', 'like', "%{$search}%");
+                    });
                 });
             });
             if (isset($inputs["date_start"])) {
@@ -67,9 +69,11 @@ class CustomerController extends Controller implements HasMiddleware
             }
             if (!is_admin()) {
                 $user = auth()->user();
-                $query->where("user_creator_id", $user->pancake_user_id)
-                      ->orWhere("user_care_id", $user->pancake_user_id)
-                      ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+                $query->where(function ($q) use ($user) {
+                            $q->where("user_creator_id", $user->pancake_user_id)
+                            ->orWhere("user_care_id", $user->pancake_user_id)
+                            ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+                        });
             }
             $pageNumber = $inputs["page"];
             $page_size  = $inputs["page_size"] ?? 30;

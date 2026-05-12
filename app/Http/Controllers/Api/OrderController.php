@@ -31,8 +31,10 @@ class OrderController extends Controller
                                     ->wherePivot('is_manager', 1)
                                     ->exists();
                 if (!$isManager) {
-                    $query->where("user_creator_id", $user->pancake_user_id)
-                          ->orWhere("user_care_id", $user->pancake_user_id);
+                    $query->where(function ($q) use ($user) {
+                        $q->where("user_creator_id", $user->pancake_user_id)
+                              ->orWhere("user_care_id", $user->pancake_user_id);
+                    });
                 }
                 
             }
