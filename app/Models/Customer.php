@@ -21,4 +21,9 @@ class Customer extends Model
         'pancake_full_data'  => 'array',
         'phone_numbers'      => 'array'
     ];
+
+    public function shop()
+    {
+        return $this->belongsTo(Shop::class);
+    }
 }

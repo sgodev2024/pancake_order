@@ -36,10 +36,14 @@ class CustomerController extends Controller implements HasMiddleware
             // 1. Khởi tạo query từ relationship
             $query = Customer::query();
             $query->where("shop_id", $inputs["shop_id"]);
+            $query->with(["shop" => function ($q) {
+                $q->select("shops.id", "shops.name");
+            }]);
             // 2. Select các trường cụ thể cần lấy để tối ưu performance
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
             $query->select([
-                'id', 
+                'id',
+                'shop_id',
                 'name', 
                 'phone_numbers',
                 'pancake_full_data',
