@@ -29,8 +29,8 @@ class CustomerController extends Controller implements HasMiddleware
                 "page",
                 "page_size",
                 "shop_id",
-                "date_start",
-                "date_end",
+                "date_from",
+                "date_to",
                 "search"
             );
             // 1. Khởi tạo query từ relationship
@@ -61,11 +61,11 @@ class CustomerController extends Controller implements HasMiddleware
                     });
                 });
             });
-            if (isset($inputs["date_start"])) {
-                $query->where("created_at", ">=", $inputs["date_start"] . " 00:00:00");
+            if (isset($inputs["date_from"])) {
+                $query->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
             }
-            if (isset($inputs["date_end"])) {
-                $query->where("created_at", "<=", $inputs["date_end"] . " 23:59:59");
+            if (isset($inputs["date_to"])) {
+                $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
             if (!is_admin()) {
                 $user = auth()->user();

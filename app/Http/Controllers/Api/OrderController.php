@@ -18,8 +18,8 @@ class OrderController extends Controller
                 "received_at_shop",
                 "page",
                 "page_size",
-                "date_start",
-                "date_end"
+                "date_from",
+                "date_to"
             );
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
@@ -48,11 +48,11 @@ class OrderController extends Controller
                     $query->where('orders.status', $inputs['status']);
                 }
             }
-            if (isset($inputs["date_start"])) {
-                $query->where("created_at", ">=", $inputs["date_start"] . " 00:00:00");
+            if (isset($inputs["date_from"])) {
+                $query->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
             }
-            if (isset($inputs["date_end"])) {
-                $query->where("created_at", "<=", $inputs["date_end"] . " 23:59:59");
+            if (isset($inputs["date_to"])) {
+                $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
             // Lọc theo received_at_shop (thường là boolean 0/1)
             if (isset($inputs['received_at_shop']) && $inputs['received_at_shop'] !== '') {
