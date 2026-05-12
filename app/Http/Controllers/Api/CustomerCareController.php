@@ -40,7 +40,13 @@ class CustomerCareController extends Controller
     private function buildQuery(string $type, $user, array $inputs)
     {
         $query = CustomerCare::query()->latest("date_care");
-        // Apply date filter theo type
+        if (isset($inputs["shop_id"])) {
+            $query->where("shop_id", $inputs["shop_id"]);
+        } else {
+            if (!is_admin()) {
+                $query->whereIn("shop_id", $user->shops()->select("shops.id"));
+            }
+        }
         match ($type) {
             'customer_care_today'   => $query->where("date_care", date("Y-m-d")),
             'customer_care_pending' => $query->where("date_care", '>', date("Y-m-d")),
@@ -52,23 +58,15 @@ class CustomerCareController extends Controller
                                             ->where("status", 0),
         };
 
-        return $query->where(fn($q) => $this->applyAccessFilter($q, $user, $inputs["shop_id"]));
+        return $query->where(fn($q) => $this->applyAccessFilter($q, $user));
     }
 
-    private function applyAccessFilter($q, $user, $shopId): void
+    private function applyAccessFilter($q, $user): void
     {
         if (is_admin()) return;
-
-        $isManager = $user->shops()
-                        ->where('shop_id', $shopId)
-                        ->wherePivot('is_manager', 1)
-                        ->exists();
-
-        if (!$isManager) {
-            $q->where("user_creator_id", $user->pancake_user_id)
-            ->orWhere("user_care_id", $user->pancake_user_id)
-            ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
-        }
+        $q->where("user_creator_id", $user->pancake_user_id)
+        ->orWhere("user_care_id", $user->pancake_user_id)
+        ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
     }
 
     public function update(Request $request, CustomerCare $customer_care)

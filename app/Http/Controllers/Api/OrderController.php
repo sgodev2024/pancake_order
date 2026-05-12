@@ -21,22 +21,21 @@ class OrderController extends Controller
                 "date_from",
                 "date_to"
             );
+            $user = auth()->user();
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
-            $query->where("shop_id", $inputs["shop_id"]);
-            if (!is_admin()) {
-                $user = auth()->user();
-                $isManager = $user->shops()
-                                    ->where('shop_id', $inputs["shop_id"])
-                                    ->wherePivot('is_manager', 1)
-                                    ->exists();
-                if (!$isManager) {
-                    $query->where(function ($q) use ($user) {
-                        $q->where("user_creator_id", $user->pancake_user_id)
-                              ->orWhere("user_care_id", $user->pancake_user_id);
-                    });
+            if (isset($inputs["shop_id"])) {
+                $query->where("shop_id", $inputs["shop_id"]);
+            } else {
+                if (!is_admin()) {
+                    $query->whereIn("shop_id", $user->shops()->select("shops.id"));
                 }
-                
+            }
+            if (!is_admin()) {
+                $query->where(function ($q) use ($user) {
+                            $q->where("user_creator_id", $user->pancake_user_id)
+                                ->orWhere("user_care_id", $user->pancake_user_id);
+                        });
             }
             // 2. XỬ LÝ LỌC (FILTERING)
             // Lọc theo status

@@ -33,9 +33,16 @@ class CustomerController extends Controller implements HasMiddleware
                 "date_to",
                 "search"
             );
+            $user = auth()->user();
             // 1. Khởi tạo query từ relationship
             $query = Customer::query();
-            $query->where("shop_id", $inputs["shop_id"]);
+            if (isset($inputs["shop_id"])) {
+                $query->where("shop_id", $inputs["shop_id"]);
+            } else {
+                if (!is_admin()) {
+                    $query->whereIn("shop_id", $user->shops()->select("shops.id"));
+                }
+            }
             $query->with(["shop" => function ($q) {
                 $q->select("shops.id", "shops.name");
             }]);
@@ -68,7 +75,6 @@ class CustomerController extends Controller implements HasMiddleware
                 $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
             if (!is_admin()) {
-                $user = auth()->user();
                 $query->where(function ($q) use ($user) {
                             $q->where("user_creator_id", $user->pancake_user_id)
                             ->orWhere("user_care_id", $user->pancake_user_id)
