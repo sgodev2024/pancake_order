@@ -87,7 +87,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     $order->user_creator_id,
                     $order->user_care_id,
                     $order->user_assigning_seller_id
-                );
+                )->onQueue("add-customer-care");
             }
             Log::channel("pancake-webhook-error")->info("=================Thành công GetOrderFromWebhookJob==============");
             return;
