@@ -41,12 +41,14 @@ class GetProductByShopJob implements ShouldQueue
         try {
             $insertData = [];
             foreach ($this->datas as $data_item) {
-                $insertData[] = [
-                    "shop_id"            => $this->shop_id,
-                    "pancake_product_id" => $data_item["id"],
-                    "name"               => $data_item["product"]["name"],
-                    "pancake_full_data"  => json_encode($data_item)
-                ];
+                if (!empty($data_item["id"])) {
+                    $insertData[] = [
+                        "shop_id"            => $this->shop_id,
+                        "pancake_product_id" => $data_item["id"],
+                        "name"               => $data_item["product"]["name"],
+                        "pancake_full_data"  => json_encode($data_item)
+                    ];
+                }
             }
             Product::insert($insertData);
 

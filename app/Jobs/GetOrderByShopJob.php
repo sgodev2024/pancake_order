@@ -45,7 +45,7 @@ class GetOrderByShopJob implements ShouldQueue
             $insertData = [];
             $orderService = new OrderService();
             foreach ($this->datas as $data_item) {
-                if (!empty($data_item["order_number_vtp"])) {
+                if (!empty($data_item["partner"]["order_number_vtp"])) {
                     $insertData[] = $orderService->getOrderItem($data_item, $this->shop_id);
                 }
             }

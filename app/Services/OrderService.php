@@ -17,7 +17,7 @@ class OrderService
         
         return [
             "shop_id"                  => $shop_id,
-            "order_number_vtp"         => $data_item["order_number_vtp"] ?? NULL,
+            "order_number_vtp"         => $data_item["partner"]["order_number_vtp"] ?? NULL,
             "pancake_order_id"         => $data_item["id"],
             "total_quantity"           => $total_quantity,
             "cod"                      => $data_item["cod"] ?? 0,
