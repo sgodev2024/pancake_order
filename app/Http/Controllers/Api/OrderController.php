@@ -76,6 +76,7 @@ class OrderController extends Controller
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
             $query->select([
                 'id', 
+                'shop_id',
                 'order_number_vtp', 
                 'total_quantity',
                 'cod',
