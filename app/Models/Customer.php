@@ -14,7 +14,8 @@ class Customer extends Model
         "fb_id",
         "name",
         "phone_numbers",
-        "pancake_full_data"
+        "pancake_full_data",
+        "assigned_user_id"
     ];
 
     protected $casts = [

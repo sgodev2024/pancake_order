@@ -55,6 +55,7 @@ class GetCustomerByShopJob implements ShouldQueue
                     $time = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
                     $insertData[] = [
                         'shop_id'             => $this->shop_id,
+                        'assigned_user_id'    => $data_item["assigned_user_id"],
                         'pancake_customer_id' => $pancake_customer_id,
                         'fb_id'               => $data_item['fb_id'] ?? null,
                         'name'                => $data_item['name'] ?? null,
