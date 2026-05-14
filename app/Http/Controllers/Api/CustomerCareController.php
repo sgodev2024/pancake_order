@@ -47,7 +47,7 @@ class CustomerCareController extends Controller
                 $query->whereIn("shop_id", $user->shops()->select("shops.id"));
             }
         }
-        if ($inputs["status"]) {
+        if (isset($inputs["status"])) {
             $query->where("status", $inputs["status"]);
         }
         match ($type) {
