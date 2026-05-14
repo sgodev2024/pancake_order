@@ -82,15 +82,15 @@ class CustomerCareController extends Controller
                 ]);
             }
             $note = $request->note ?? NULL;
-            $date_care = $request->date ?? NULL;
+            $time_care = $request->date ?? NULL;
             if ($customer_care->status == 1 && $request->status == 0) {
                 $note = NULL;
-                $date_care = NULL;
+                $time_care = NULL;
             }
             $customer_care->update([
                 "status"    => $request->status,
                 "note"      => $note,
-                "date_care" => $date_care
+                "time_care" => $time_care
             ]);
 
             return response()->json([

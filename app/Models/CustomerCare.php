@@ -20,7 +20,8 @@ class CustomerCare extends Model
         "user_creator_id",
         "user_care_id",
         "user_assigning_seller_id",
-        "status"
+        "status",
+        "time_care"
     ];
 
     public function shop()
