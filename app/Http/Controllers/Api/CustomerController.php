@@ -74,13 +74,13 @@ class CustomerController extends Controller implements HasMiddleware
             if (isset($inputs["date_to"])) {
                 $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
-            if (!is_admin()) {
-                $query->where(function ($q) use ($user) {
-                            $q->where("user_creator_id", $user->pancake_user_id)
-                            ->orWhere("user_care_id", $user->pancake_user_id)
-                            ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
-                        });
-            }
+            // if (!is_admin()) {
+            //     $query->where(function ($q) use ($user) {
+            //                 $q->where("user_creator_id", $user->pancake_user_id)
+            //                 ->orWhere("user_care_id", $user->pancake_user_id)
+            //                 ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+            //             });
+            // }
             $pageNumber = $inputs["page"];
             $page_size  = $inputs["page_size"] ?? 30;
             // 4. Sắp xếp và Phân trang (Lấy 30 records mỗi trang)
