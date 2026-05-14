@@ -24,6 +24,11 @@ class OrderController extends Controller
             $user = auth()->user();
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
+            $query->with([
+                "shop" => function ($query) {
+                    $query->select("id", "name");
+                }
+            ]);
             if (isset($inputs["shop_id"])) {
                 $query->where("shop_id", $inputs["shop_id"]);
             } else {
