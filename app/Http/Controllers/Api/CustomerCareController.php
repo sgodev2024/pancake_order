@@ -13,7 +13,7 @@ class CustomerCareController extends Controller
     public function index(Request $request)
     {
         try {
-            $inputs = $request->only("type", "page", "shop_id");
+            $inputs = $request->only("type", "page", "shop_id", "status");
             $user = auth()->user();
             $result = $this->buildQuery($inputs["type"], $user, $inputs)
                            ->with(["shop" => fn($q) => $q->select("id", "name")])
