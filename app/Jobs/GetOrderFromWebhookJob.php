@@ -44,12 +44,15 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     $order->update($result);
                 } else {
                     $order = Order::create($result);
-                    SendZnsJob::dispatch(
-                        $customer["phone_numbers"] ?? NULL,
-                        $this->data["bill_phone_number"] ?? NULL,
-                        $customer,
-                        $this->data["shipping_address"]
-                    )->onQueue("send-zns");
+                    if (!empty($this->data["bill_phone_number"])) {
+                        SendZnsJob::dispatch(
+                            $customer["phone_numbers"] ?? NULL,
+                            $this->data["bill_phone_number"] ?? NULL,
+                            $customer,
+                            $this->data["shipping_address"]
+                        )->onQueue("send-zns");
+                    }
+                    
                 }
                 $customer_exist = Customer::select("id", "phone_numbers", "pancake_customer_id", "name")->where("pancake_customer_id", $customer["id"])->first();
                 if (!$customer_exist) {

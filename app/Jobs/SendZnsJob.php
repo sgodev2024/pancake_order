@@ -39,14 +39,14 @@ class SendZnsJob implements ShouldQueue
     {
         return;
         try {
-            $new_phones = [];
-            $customer = $this->customer;
-            if (!empty($this->phone_numbers)) {
-                $new_phones = [...$this->phone_numbers];
-            }
-            if (!empty($this->bill_phone_number)) {
-                $new_phones = [...$new_phones, $this->bill_phone_number];
-            }
+            $new_phones = [$this->bill_phone_number];
+            // $customer = $this->customer;
+            // if (!empty($this->phone_numbers)) {
+            //     $new_phones = [...$this->phone_numbers];
+            // }
+            // if (!empty($this->bill_phone_number)) {
+            //     $new_phones = [...$new_phones, $this->bill_phone_number];
+            // }
             if (!empty($new_phones)) {
                 $unique_phones = array_values(array_unique($new_phones));
                 foreach ($unique_phones as $phone_number) {
