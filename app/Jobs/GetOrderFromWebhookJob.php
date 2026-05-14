@@ -36,7 +36,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
             if ($shop) {
                 $orderService = new OrderService();
                 $result = $orderService->getOrderItem($this->data, $shop->id);
-                if ($result["code"] > 0) {
+                if ($result["cod"] > 0) {
                     $order = Order::select("id")->where("pancake_order_id", $result["pancake_order_id"])->first();
                     $customer = $this->data["customer"];
                     if ($order) {
