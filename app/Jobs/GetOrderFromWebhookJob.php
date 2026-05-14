@@ -61,18 +61,18 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         "phone_numbers"       => $customer["phone_numbers"] ?? [$this->data["bill_phone_number"]],
                     ]);
                 } else {
-                    $new_phones = $customer["phone_numbers"] ?? [$customer["bill_phone_number"]];
+                    //$new_phones = $customer["phone_numbers"] ?? [$customer["bill_phone_number"]];
                     // 1. Lấy mảng sđt cũ (nếu null thì trả về mảng rỗng để tránh lỗi)
-                    $old_phones = $customer_exist->phone_numbers ?? [];
+                    //$old_phones = $customer_exist->phone_numbers ?? [];
                     
                     // 2. Gộp mảng cũ với số mới
-                    $merged_phones = [...$old_phones, ...$new_phones];
+                    //$merged_phones = [...$old_phones, ...$new_phones];
                     
                     // 3. Loại bỏ các số trùng lặp và reset lại index (key) của mảng
-                    $unique_phones = array_values(array_unique($merged_phones));
+                    //$unique_phones = array_values(array_unique($merged_phones));
                     $customer_exist->update([
                         "name"          => $customer["name"],
-                        "phone_numbers" => $unique_phones
+                        "phone_numbers" => [$this->data["bill_phone_number"] ?? ""]//$unique_phones
                     ]);
                 }
                 AddCustomerCareJob::dispatch(
