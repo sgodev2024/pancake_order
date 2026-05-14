@@ -50,9 +50,16 @@ class UserController extends Controller implements HasMiddleware
                         }
                         if (isset($inputs["search"])) {
                             $searchTerm = $inputs["search"] . "%";
-                            $q->where("email", "like", $searchTerm)
-                              ->orWhere("name", "like", $searchTerm)
-                              ->orWhere("phone_number", "like", $searchTerm);
+                            $q->where(function ($query) use ($searchTerm) {
+                                $query->where("email", "like", $searchTerm)
+                                ->orWhere("name", "like", $searchTerm)
+                                ->orWhere("phone_number", "like", $searchTerm);
+                            });
+                        }
+                        if (isset($inputs["shop_id"])) {
+                            $q->whereHas("shops", function ($query) use ($inputs) {
+                                $query->where("shops.id", $inputs["shop_id"]);
+                            });
                         }
                      })
                      ->select("id", "name", "phone_number", "email", "role_id", "pancake_full_data")

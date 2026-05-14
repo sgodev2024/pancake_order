@@ -90,6 +90,7 @@ class OrderController extends Controller
             $pageNumber = $inputs["page"];
             $page_size = $inputs["page_size"] ?? 30;
             // 4. Sắp xếp và Phân trang (Lấy 30 records mỗi trang)
+            $total_revenue = (clone $query)->sum('cod');
             $orders = $query->latest('created_at')->paginate($page_size, ['*'], 'page', $pageNumber);
 
             return response()->json([
@@ -100,6 +101,7 @@ class OrderController extends Controller
                     'per_page'     => $orders->perPage(),
                     'total_items'  => $orders->total(),
                     'total_pages'  => $orders->lastPage(),
+                    'total_revenue' => $total_revenue
                 ]
             ]);
         } catch (\Throwable $th) {

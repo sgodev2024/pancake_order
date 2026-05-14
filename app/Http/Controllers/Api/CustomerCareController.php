@@ -47,6 +47,9 @@ class CustomerCareController extends Controller
                 $query->whereIn("shop_id", $user->shops()->select("shops.id"));
             }
         }
+        if ($inputs["status"]) {
+            $query->where("status", $inputs["status"]);
+        }
         match ($type) {
             'customer_care_today'   => $query->where("date_care", date("Y-m-d")),
             'customer_care_pending' => $query->where("date_care", '>', date("Y-m-d")),
@@ -78,8 +81,16 @@ class CustomerCareController extends Controller
                     "message" => "Không tồn tại"
                 ]);
             }
+            $note = $request->note ?? NULL;
+            $date_care = $request->date ?? NULL;
+            if ($customer_care->status == 1 && $request->status == 0) {
+                $note = NULL;
+                $date_care = NULL;
+            }
             $customer_care->update([
-                "status" => $request->status
+                "status"    => $request->status,
+                "note"      => $note,
+                "date_care" => $date_care
             ]);
 
             return response()->json([
@@ -136,7 +147,7 @@ class CustomerCareController extends Controller
             ->first();
             $date_start = date("Y-m-d 00:00:00");
             $date_end   = date("Y-m-d 23:59:59");
-            $total_order_today = Order::whereBetween("created_at", [$date_start, $date_end])
+            $query = Order::whereBetween("created_at", [$date_start, $date_end])
                                     ->where(function ($q) use ($user, $shop_ids) {
                                         if (!is_admin()) {
                                             $q->whereIn("shop_id", $shop_ids)
@@ -147,7 +158,11 @@ class CustomerCareController extends Controller
                                             });
                                         }
                                     })
-                                    ->count();
+                                    ->selectRaw("
+                                        COUNT(*) as total_order_today,
+                                        COALESCE(SUM(cod), 0) as total_revenue
+                                    ")
+                                    ->first();
 
             return response()->json([
                 "success" => true,
@@ -156,7 +171,8 @@ class CustomerCareController extends Controller
                     "customer_care_pending" => (int) $overview->customer_care_pending,
                     "customer_care_in_week" => (int) $overview->customer_care_in_week,
                     "customer_care_expire"  => (int) $overview->customer_care_expire,
-                    "total_order_today"     => $total_order_today
+                    "total_order_today"     => $query->total_order_today,
+                    "total_revenue"         => $query->total_revenue
                 ]
             ]);
         } catch (\Throwable $th) {

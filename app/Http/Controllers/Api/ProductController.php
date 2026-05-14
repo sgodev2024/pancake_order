@@ -31,6 +31,11 @@ class ProductController extends Controller
             );
             // 1. Khởi tạo query từ relationship
             $query = Product::query();
+            $query->with([
+                "shop" => function ($q) {
+                    $q->select("id", "name");
+                }
+            ]);
             if (isset($inputs["shop_id"])) {
                 $query->where("shop_id", $inputs["shop_id"]);
             }

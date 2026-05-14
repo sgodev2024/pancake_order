@@ -14,4 +14,9 @@ class Product extends Model
         "pancake_product_id",
         "pancake_full_data"
     ];
+
+    public function shop()
+    {
+        return $this->belongsTo(Shop::class);
+    }
 }
