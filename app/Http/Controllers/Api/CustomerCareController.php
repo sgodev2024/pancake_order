@@ -100,7 +100,7 @@ class CustomerCareController extends Controller
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => false,
-                "message" => "Vui lòng thử lại"
+                "message" => $th->getMessage()
             ]);
         }
     }
