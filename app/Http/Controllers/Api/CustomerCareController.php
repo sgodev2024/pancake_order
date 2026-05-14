@@ -67,9 +67,9 @@ class CustomerCareController extends Controller
     private function applyAccessFilter($q, $user): void
     {
         if (is_admin()) return;
-        $q->where("user_creator_id", $user->pancake_user_id)
-        ->orWhere("user_care_id", $user->pancake_user_id)
-        ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+        // $q->where("user_creator_id", $user->pancake_user_id)
+        // ->orWhere("user_care_id", $user->pancake_user_id)
+        // ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
     }
 
     public function update(Request $request, CustomerCare $customer_care)
