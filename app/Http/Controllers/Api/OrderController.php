@@ -29,6 +29,7 @@ class OrderController extends Controller
                     $query->select("id", "name");
                 }
             ]);
+            $query->where("code", ">", 0);
             if (isset($inputs["shop_id"])) {
                 $query->where("shop_id", $inputs["shop_id"]);
             } else {
