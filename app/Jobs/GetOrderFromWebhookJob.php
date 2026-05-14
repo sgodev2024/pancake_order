@@ -47,7 +47,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     if (!empty($this->data["bill_phone_number"])) {
                         SendZnsJob::dispatch(
                             $customer["phone_numbers"] ?? NULL,
-                            $this->data["bill_phone_number"] ?? NULL,
+                            $this->data["bill_phone_number"],
                             $customer,
                             $this->data["shipping_address"]
                         )->onQueue("send-zns");
