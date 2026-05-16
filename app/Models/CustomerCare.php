@@ -23,7 +23,8 @@ class CustomerCare extends Model
         "status",
         "time_care",
         "is_accept",
-        "user_accept_id"
+        "user_accept_id",
+        "total_edit"
     ];
 
     public function shop()

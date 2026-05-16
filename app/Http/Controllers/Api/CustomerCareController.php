@@ -91,10 +91,11 @@ class CustomerCareController extends Controller
             $is_manager = is_manager($user_id);
             $is_admin   = is_admin($user_id);
             $customer_care->update([
-                "status"    => $request->status,
-                "note"      => $note,
-                "time_care" => $time_care,
-                "is_accept" => ($customer_care->status == 1 && $request->status == 0 && ($is_manager || $is_admin)) ? 1 : 0
+                "status"     => $request->status,
+                "note"       => $note,
+                "time_care"  => $time_care,
+                "is_accept"  => ($customer_care->total_edit == 0 || $is_manager || $is_admin) ? 1 : 0,
+                "total_edit" => $customer_care->total_edit + 1
             ]);
             if (!empty($request->next_date_care)) {
                 CustomerCare::create([
