@@ -112,7 +112,7 @@ class UserController extends Controller implements HasMiddleware
         // 3. Giữ lại những ID đang có
         $shopIds = $validatedData['shop_ids'];
         if (!empty($shopIds)) {
-            $user->shops()->sync($shopIds);
+            $user->shops()->attach($shopIds);
         }
         // 4. Trả về response (HTTP 201 Created)
         return response()->json([
@@ -163,10 +163,8 @@ class UserController extends Controller implements HasMiddleware
         if (isset($validatedData['password'])) {
             $validatedData['password'] = Hash::make($validatedData['password']);
         }
-        $shopIds = $validatedData['shop_ids'];
-        if (!empty($shopIds)) {
-            $user->shops()->sync($shopIds);
-        }
+        $shopIds = $validatedData['shop_ids'] ?? [];
+        $user->shops()->sync($shopIds);
         // 3. Cập nhật dữ liệu
         $user->update($validatedData);
 
