@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
+use App\Models\Order;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -95,7 +96,25 @@ class UserController extends Controller implements HasMiddleware
         } catch (\Throwable $th) {
             return response()->json([
                 'success' => true,
-                'data' => $th->getMessage()
+                'message' => $th->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getOrder($pancake_user_id)
+    {
+        try {
+            $orders = Order::where("user_creator_id", $pancake_user_id)
+                           ->get();
+
+            return response()->json([
+                "success" => true,
+                "data"    => $orders
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => true,
+                'message' => $th->getMessage()
             ], 500);
         }
     }

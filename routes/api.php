@@ -74,6 +74,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource("products", ProductController::class);
 
     Route::apiResource('users', UserController::class);
+    Route::get("users/{pancake_user_id}/orders", [UserController::class, "getOrder"]);
 
     Route::apiResource('customer-cares', CustomerCareController::class);
     Route::post('customer-cares/{id}/accept', [CustomerCareController::class, "accept"]);
