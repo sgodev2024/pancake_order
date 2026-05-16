@@ -15,6 +15,10 @@ class Product extends Model
         "pancake_full_data"
     ];
 
+    protected $casts = [
+        'pancake_full_data'  => 'array'
+    ];
+
     public function shop()
     {
         return $this->belongsTo(Shop::class);
