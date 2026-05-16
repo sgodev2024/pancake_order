@@ -87,7 +87,7 @@ class CustomerCareController extends Controller
             //     $note = NULL;
             //     $time_care = NULL;
             // }
-            $user_id = auth()->ids;
+            $user_id = auth()->id();
             $is_manager = is_manager($user_id);
             $is_admin   = is_admin($user_id);
             $customer_care->update([
@@ -130,7 +130,7 @@ class CustomerCareController extends Controller
             $customer_care = CustomerCare::find($id);
             $customer_care->update([
                 "is_accept"      => $request->is_accept,
-                "user_accept_id" => auth()->ids
+                "user_accept_id" => auth()->id()
             ]);
 
             return response()->json([

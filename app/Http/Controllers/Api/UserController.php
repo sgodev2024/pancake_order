@@ -146,7 +146,9 @@ class UserController extends Controller implements HasMiddleware
             'email'        => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
             'password'     => 'sometimes|string|min:6',
             'phone_number' => 'sometimes|string|min:10',
-            'role_id'      => 'required|exists:roles,id'
+            'role_id'      => 'required|exists:roles,id',
+            'shop_ids'     => 'nullable|array',
+            'shop_ids.*'   => 'exists:shops,id',
         ]);
 
         if ($validator->fails()) {
@@ -161,7 +163,10 @@ class UserController extends Controller implements HasMiddleware
         if (isset($validatedData['password'])) {
             $validatedData['password'] = Hash::make($validatedData['password']);
         }
-
+        $shopIds = $validatedData['shop_ids'];
+        if (!empty($shopIds)) {
+            $user->shops()->sync($shopIds);
+        }
         // 3. Cập nhật dữ liệu
         $user->update($validatedData);
 
