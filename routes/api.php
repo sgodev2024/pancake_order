@@ -70,6 +70,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 
     Route::apiResource("orders", OrderController::class);
     Route::apiResource("customers", CustomerController::class);
+    Route::get("customers/{pancake_customer_id}/orders", [CustomerController::class, "getOrder"]);
     Route::apiResource("products", ProductController::class);
 
     Route::apiResource('users', UserController::class);

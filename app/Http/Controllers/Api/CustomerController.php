@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\Customer;
+use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
@@ -53,9 +54,11 @@ class CustomerController extends Controller implements HasMiddleware
                 'shop_id',
                 'name', 
                 'phone_numbers',
+                'pancake_customer_id',
                 'pancake_full_data',
                 'created_at'
             ]);
+            $query->withCount("orders");
 
             // 3. Xử lý các điều kiện lọc (Filters)
             // Lọc theo từ khóa tìm kiếm (Tên hoặc Số điện thoại)
@@ -93,6 +96,53 @@ class CustomerController extends Controller implements HasMiddleware
                     'total_pages'  => $customers->lastPage(),
                 ],
             ], 200);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getOrder($pancake_order_id)
+    {
+        try {
+            $orders = Order::where("pancake_customer_id", $pancake_order_id)
+                            ->with([
+                                "shop" => function ($query) {
+                                    $query->select("id", "name");
+                                },
+                                "user_creator",
+                                "user_care",
+                                "user_assigning"
+                            ])
+                            ->select([
+                                'id', 
+                                'shop_id',
+                                'order_number_vtp', 
+                                'total_quantity',
+                                'cod',
+                                'cash',
+                                'note',
+                                'created_at',
+                                'status',
+                                'status_vtp',
+                                'pancake_full_data',
+                                'received_at_shop',
+                                'customer_name',
+                                'customer_phone',
+                                'customer_address',
+                                'pancake_order_id',
+                                'user_creator_id',
+                                'user_care_id',
+                                'user_assigning_seller_id'
+                            ])
+                           ->get();
+
+            return response()->json([
+                "success" => true,
+                "data"    => $orders
+            ]);
         } catch (\Throwable $th) {
             return response()->json([
                 'success' => false,
