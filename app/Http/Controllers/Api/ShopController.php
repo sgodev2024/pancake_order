@@ -88,7 +88,7 @@ class ShopController extends Controller implements HasMiddleware
                             "name"              => $shop_item["name"],
                             "api_key"           => $inputs["api_key"],
                             "care_cycle_days"   => $inputs["care_cycle_days"] ?? 5,
-                            "pancake_full_data" => json_encode($shop_item),
+                            "pancake_full_data" => $shop_item,
                             "created_at"        => now(),
                             "updated_at"        => now()
                         ]);

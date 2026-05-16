@@ -69,6 +69,6 @@ class User extends Authenticatable
 
     public function orders()
     {
-        return $this->hasMany(Order::class, "pancake_customer_id", "pancake_user_id");
+        return $this->hasMany(Order::class, "user_creator_id", "pancake_user_id");
     }
 }
