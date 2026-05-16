@@ -101,15 +101,39 @@ class UserController extends Controller implements HasMiddleware
         }
     }
 
-    public function getOrder($pancake_user_id)
+    public function getOrder(Request $request, $pancake_user_id)
     {
         try {
+            $inputs = $request->only("page");
             $orders = Order::where("user_creator_id", $pancake_user_id)
-                           ->get();
+                           ->select(
+                                'id', 
+                                'shop_id',
+                                'order_number_vtp', 
+                                'total_quantity',
+                                'cod',
+                                'cash',
+                                'note',
+                                'status',
+                                'status_vtp',
+                                'customer_name',
+                                'customer_phone',
+                                'customer_address',
+                                'pancake_order_id',
+                                'created_at',
+                                'pancake_full_data',
+                           )
+                           ->paginate(50, ['*'], 'page', $inputs["page"] ?? 1);
 
             return response()->json([
                 "success" => true,
-                "data"    => $orders
+                "data" => [
+                    'items' => $orders->items(),
+                    'current_page' => $orders->currentPage(),
+                    'per_page'     => $orders->perPage(),
+                    'total_items'  => $orders->total(),
+                    'total_pages'  => $orders->lastPage(),
+                ]
             ]);
         } catch (\Throwable $th) {
             return response()->json([
