@@ -78,7 +78,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('customer-cares', CustomerCareController::class);
     Route::post('customer-cares/{id}/accept', [CustomerCareController::class, "accept"]);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
-    Route::get('customer-care/{id}/orders', [CustomerCareController::class, "getOrder"]);
+    Route::get('customer-cares/{id}/orders', [CustomerCareController::class, "getOrder"]);
 
     Route::get("overview", [CustomerCareController::class, "overview"]);
 
