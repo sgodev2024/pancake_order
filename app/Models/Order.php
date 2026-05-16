@@ -40,4 +40,22 @@ class Order extends Model
     {
         return $this->belongsTo(Shop::class);
     }
+
+    public function user_creator()
+    {
+        return $this->belongsTo(User::class, "user_creator_id", "pancake_user_id")
+                    ->select("id", "name", "pancake_user_id");
+    }
+
+    public function user_care()
+    {
+        return $this->belongsTo(User::class, "user_care_id", "pancake_user_id")
+                    ->select("id", "name", "pancake_user_id");
+    }
+
+    public function user_assigning()
+    {
+        return $this->belongsTo(User::class, "user_assigning_seller_id", "pancake_user_id")
+                    ->select("id", "name", "pancake_user_id");
+    }
 }

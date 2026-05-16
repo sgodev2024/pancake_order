@@ -34,7 +34,7 @@ class UserController extends Controller implements HasMiddleware
      */
     public function index(Request $request)
     {
-        $inputs = $request->only("role_id");
+        $inputs = $request->only("role_id", "date");
         // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
         $users = User::with([
                         "shops" => function ($q) {
@@ -42,6 +42,11 @@ class UserController extends Controller implements HasMiddleware
                         },
                         "role" => function ($query) {
                             $query->select("name", "id");
+                        },
+                        "orders" => function ($q) use ($inputs) {
+                            if (isset($inputs["date"])) {
+                                $q->whereBetween("orders.created_at", [$inputs["date"] . " 00:00:00", $inputs["date"] . " 23:59:59"]);
+                            }
                         }
                      ])
                      ->where(function ($q) use ($inputs) {
@@ -83,7 +88,9 @@ class UserController extends Controller implements HasMiddleware
             'email'        => 'required|string|email|max:255|unique:users,email',
             'password'     => 'required|string|min:6',
             'phone_number' => 'required|string|min:10',
-            'role_id'      => 'required|exists:roles,id'
+            'role_id'      => 'required|exists:roles,id',
+            'shop_ids'     => 'nullable|array',
+            'shop_ids.*'   => 'exists:shops,id',
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -99,7 +106,14 @@ class UserController extends Controller implements HasMiddleware
 
         // 3. Tạo user mới
         $user = User::create($validatedData);
-
+        // Hàm sync() sẽ tự động:
+        // 1. Thêm những ID mới
+        // 2. Xóa những ID cũ không có trong mảng gửi lên
+        // 3. Giữ lại những ID đang có
+        $shopIds = $validatedData['shop_ids'];
+        if (!empty($shopIds)) {
+            $user->shops()->sync($shopIds);
+        }
         // 4. Trả về response (HTTP 201 Created)
         return response()->json([
             'success' => true,

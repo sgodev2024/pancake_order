@@ -36,7 +36,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
             if ($shop) {
                 $orderService = new OrderService();
                 $result = $orderService->getOrderItem($this->data, $shop->id);
-                if ($result["cod"] > 0) {
+                // if ($result["cod"] > 0) {
                     $order = Order::select("id")->where("pancake_order_id", $result["pancake_order_id"])->first();
                     $customer = $this->data["customer"];
                     if ($order) {
@@ -81,20 +81,22 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             "phone_numbers"    => [$this->data["bill_phone_number"] ?? ""]//$unique_phones
                         ]);
                     }
-                    AddCustomerCareJob::dispatch(
-                        $shop->id,
-                        $shop->care_cycle_days,
-                        $order->pancake_order_id,
-                        $order->created_at,
-                        $customer_exist->name,
-                        $customer_exist->phone_numbers,
-                        $customer["new_full_address"] ?? NULL,
-                        $customer_exist->pancake_customer_id,
-                        $order->user_creator_id,
-                        $order->user_care_id,
-                        $order->user_assigning_seller_id
-                    )->onQueue("add-customer-care");
-                }
+                    if ($is_new_order) {
+                        AddCustomerCareJob::dispatch(
+                            $shop->id,
+                            $shop->care_cycle_days,
+                            $order->pancake_order_id,
+                            $order->created_at,
+                            $customer_exist->name,
+                            $customer_exist->phone_numbers,
+                            $customer["new_full_address"] ?? NULL,
+                            $customer_exist->pancake_customer_id,
+                            $order->user_creator_id,
+                            $order->user_care_id,
+                            $order->user_assigning_seller_id
+                        )->onQueue("add-customer-care");
+                    }
+                // }
             }
             Log::channel("pancake-webhook-error")->info("=================Thành công GetOrderFromWebhookJob==============");
             return;

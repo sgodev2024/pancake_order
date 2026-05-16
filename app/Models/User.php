@@ -66,4 +66,9 @@ class User extends Authenticatable
     {
         return $this->belongsTo(Role::class);
     }
+
+    public function orders()
+    {
+        return $this->hasMany(Order::class, "pancake_customer_id", "pancake_user_id");
+    }
 }

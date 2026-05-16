@@ -44,7 +44,10 @@ class ShopController extends Controller implements HasMiddleware
                 "success" => true,
                 "data"    => Shop::select("id", "name", "pancake_shop_id", "care_cycle_days")
                                  ->with(["users" => function ($q) {
-                                    $q->select("users.id", "users.name", "users.email");
+                                    $q->select("users.id", "users.name", "users.email", "users.role_id")
+                                      ->with(["role" => function ($query) {
+                                        $query->select("roles.id", "roles.name");
+                                      }]);
                                  }])
                                  ->where(function ($q) {
                                     if (!is_admin()) {

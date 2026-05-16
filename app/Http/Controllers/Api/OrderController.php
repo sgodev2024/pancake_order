@@ -27,9 +27,11 @@ class OrderController extends Controller
             $query->with([
                 "shop" => function ($query) {
                     $query->select("id", "name");
-                }
+                },
+                "user_creator",
+                "user_care",
+                "user_assigning"
             ]);
-            $query->where("cod", ">", 0);
             if (isset($inputs["shop_id"])) {
                 $query->where("shop_id", $inputs["shop_id"]);
             } else {
@@ -91,7 +93,10 @@ class OrderController extends Controller
                 'customer_name',
                 'customer_phone',
                 'customer_address',
-                'pancake_order_id'
+                'pancake_order_id',
+                'user_creator_id',
+                'user_care_id',
+                'user_assigning_seller_id'
             ]);
             
             $pageNumber = $inputs["page"];

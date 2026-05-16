@@ -83,23 +83,97 @@ class CustomerCareController extends Controller
             }
             $note = $request->note ?? NULL;
             $time_care = $request->date ?? NULL;
-            if ($customer_care->status == 1 && $request->status == 0) {
-                $note = NULL;
-                $time_care = NULL;
-            }
+            // if ($customer_care->status == 1 && $request->status == 0) {
+            //     $note = NULL;
+            //     $time_care = NULL;
+            // }
+            $user_id = auth()->ids;
+            $is_manager = is_manager($user_id);
+            $is_admin   = is_admin($user_id);
             $customer_care->update([
                 "status"    => $request->status,
                 "note"      => $note,
-                "time_care" => $time_care
+                "time_care" => $time_care,
+                "is_accept" => ($customer_care->status == 1 && $request->status == 0 && ($is_manager || $is_admin)) ? 1 : 0
             ]);
+            if (!empty($request->next_date_care)) {
+                CustomerCare::create([
+                    "shop_id"                   => $customer_care->shop_id,
+                    "pancake_customer_id"       => $customer_care->pancake_customer_id,
+                    "pancake_order_id"          => $customer_care->pancake_order_id,
+                    "customer_phones"           => $customer_care->customer_phones,
+                    "customer_name"             => $customer_care->customer_name,
+                    "customer_addresss"         => $customer_care->customer_addresss,
+                    "date_care"                 => $request->next_date_care,
+                    "user_creator_id"           => $customer_care->user_creator_id,
+                    "user_care_id"              => $customer_care->user_care_id,
+                    "user_assigning_seller_id"  => $customer_care->user_assigning_seller_id,
+                    "is_accept"                 => 0
+                ]);
+            }
 
             return response()->json([
                 "success" => true,
-                "message" => "Cập nhật thành công"
+                "message" => ($customer_care->status == 1 && $request->status == 0 && !$is_admin && !$is_manager) ? "Đợi Admin hoặc quản lý duyệt" : "Cập nhật thành công"
             ]);
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => false,
+                "message" => $th->getMessage()
+            ]);
+        }
+    }
+
+    public function accept($id, Request $request)
+    {
+        try {
+            $customer_care = CustomerCare::find($id);
+            $customer_care->update([
+                "is_accept"      => $request->is_accept,
+                "user_accept_id" => auth()->ids
+            ]);
+
+            return response()->json([
+                "success" => true,
+                "message" => "Duyệt thành công"
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => true,
+                "message" => $th->getMessage()
+            ]);
+        }
+    }
+
+    public function getHistory($id)
+    {
+        try {
+            $customer_care = CustomerCare::find($id);
+
+            return response()->json([
+                "success" => true,
+                "data"    => CustomerCare::where("pancake_customer_id", $customer_care->pancake_customer_id)->get()
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => true,
+                "message" => $th->getMessage()
+            ]);
+        }
+    }
+
+    public function getOrder($id)
+    {
+        try {
+            $customer_care = CustomerCare::find($id);
+
+            return response()->json([
+                "success" => true,
+                "data"    => Order::where("pancake_customer_id", $customer_care->pancake_customer_id)->get()
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => true,
                 "message" => $th->getMessage()
             ]);
         }
@@ -126,15 +200,35 @@ class CustomerCareController extends Controller
             $shop_ids = $user->shops()->pluck('shops.id');
             $overview = CustomerCare::selectRaw("
                 SUM(CASE WHEN date_care = ? THEN 1 ELSE 0 END) as customer_care_today,
+                SUM(CASE WHEN date_care = ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_today_done,
+
                 SUM(CASE WHEN date_care > ? THEN 1 ELSE 0 END) as customer_care_pending,
+                SUM(CASE WHEN date_care > ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_pending_done,
+
                 SUM(CASE WHEN date_care BETWEEN ? AND ? THEN 1 ELSE 0 END) as customer_care_in_week,
-                SUM(CASE WHEN date_care <= ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire
+                SUM(CASE WHEN date_care BETWEEN ? AND ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_in_week_done,
+
+                SUM(CASE WHEN date_care <= ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire,
+                SUM(CASE WHEN date_care <= ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire_done
             ", [
-                $today,           // customer_care_today
-                $today,           // customer_care_pending
-                $startOfWeek,     // customer_care_in_week (start)
-                $endOfWeek,       // customer_care_in_week (end)
-                $today,           // customer_care_expire
+                // today
+                $today,
+                $today,
+
+                // pending
+                $today,
+                $today,
+
+                // week
+                $startOfWeek,
+                $endOfWeek,
+
+                $startOfWeek,
+                $endOfWeek,
+
+                // expire
+                $today,
+                $today,
             ])
             ->when(!is_admin(), function ($q) use ($user, $shop_ids) {
                 $q->whereIn("shop_id", $shop_ids)
@@ -144,6 +238,7 @@ class CustomerCareController extends Controller
                         ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
                 });
             })
+            ->where("is_accept", 1)
             ->first();
             $date_start = date("Y-m-d 00:00:00");
             $date_end   = date("Y-m-d 23:59:59");
@@ -151,7 +246,7 @@ class CustomerCareController extends Controller
                                     ->where(function ($q) use ($user, $shop_ids) {
                                         if (!is_admin()) {
                                             $q->whereIn("shop_id", $shop_ids)
-                                            ->where(function($q2) use ($user) {
+                                              ->where(function($q2) use ($user) {
                                                 $q2->where("user_creator_id", $user->pancake_user_id)
                                                     ->orWhere("user_care_id", $user->pancake_user_id)
                                                     ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
@@ -167,12 +262,16 @@ class CustomerCareController extends Controller
             return response()->json([
                 "success" => true,
                 "data" => [
-                    "customer_care_today"   => (int) $overview->customer_care_today,
-                    "customer_care_pending" => (int) $overview->customer_care_pending,
-                    "customer_care_in_week" => (int) $overview->customer_care_in_week,
-                    "customer_care_expire"  => (int) $overview->customer_care_expire,
-                    "total_order_today"     => $query->total_order_today,
-                    "total_revenue"         => $query->total_revenue
+                    "customer_care_today"        => (int) $overview->customer_care_today,
+                    "customer_care_today_done"   => (int) $overview->customer_care_today_done,
+                    "customer_care_pending"      => (int) $overview->customer_care_pending,
+                    "customer_care_pending_done" => (int) $overview->customer_care_pending_done,
+                    "customer_care_in_week"      => (int) $overview->customer_care_in_week,
+                    "customer_care_in_week_done" => (int) $overview->customer_care_in_week_done,
+                    "customer_care_expire"       => (int) $overview->customer_care_expire,
+                    "customer_care_expire_done"  => (int) $overview->customer_care_expire_done,
+                    "total_order_today"          => $query->total_order_today,
+                    "total_revenue"              => $query->total_revenue
                 ]
             ]);
         } catch (\Throwable $th) {

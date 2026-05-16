@@ -18,6 +18,20 @@ function is_admin($user_id = NULL)
     }
 }
 
+function is_manager($user_id = NULL)
+{
+    if (!empty($user_id)) {
+        $user = User::find($user_id);
+
+        return $user->role_id == 2 ? true : false;
+    } else {
+        if (auth()->user()->role_id == 2) {
+            return true;
+        }
+        return false;
+    }
+}
+
 function can_access($pms_param)
 {
     $pms = Permission::where("slug", $pms_param)->first();
