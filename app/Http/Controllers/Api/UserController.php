@@ -35,7 +35,7 @@ class UserController extends Controller implements HasMiddleware
     public function index(Request $request)
     {
         try {
-            $inputs = $request->only("role_id", "date");
+            $inputs = $request->only("role_id", "date", "page", "search");
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $users = User::with([
                             "shops" => function ($q) {
@@ -43,13 +43,25 @@ class UserController extends Controller implements HasMiddleware
                             },
                             "role" => function ($query) {
                                 $query->select("name", "id");
-                            },
-                            "orders" => function ($q) use ($inputs) {
-                                if (isset($inputs["date"])) {
-                                    $q->whereBetween("orders.created_at", [$inputs["date"] . " 00:00:00", $inputs["date"] . " 23:59:59"]);
-                                }
                             }
                         ])
+                        ->select("id", "name", "phone_number", "email", "role_id", "pancake_user_id")
+                        ->withCount(['orders' => function ($q) use ($inputs) {
+                            if (isset($inputs["date"])) {
+                                $q->whereBetween("orders.created_at", [
+                                    $inputs["date"] . " 00:00:00",
+                                    $inputs["date"] . " 23:59:59"
+                                ]);
+                            }
+                        }])
+                        ->withSum(['orders' => function ($q) use ($inputs) {
+                            if (isset($inputs["date"])) {
+                                $q->whereBetween("orders.created_at", [
+                                    $inputs["date"] . " 00:00:00",
+                                    $inputs["date"] . " 23:59:59"
+                                ]);
+                            }
+                        }], 'cod')
                         ->where(function ($q) use ($inputs) {
                             if (isset($inputs["role_id"])) {
                                 $q->where("role_id", $inputs["role_id"]);
@@ -68,12 +80,17 @@ class UserController extends Controller implements HasMiddleware
                                 });
                             }
                         })
-                        ->select("id", "name", "phone_number", "email", "role_id", "pancake_full_data", "pancake_user_id")
-                        ->paginate(30);
-            
+                        ->paginate(30, ['*'], 'page', $inputs["page"] ?? 1);
+
             return response()->json([
                 'success' => true,
-                'data' => $users
+                'data' => [
+                    'items' => $users->items(),
+                    'current_page' => $users->currentPage(),
+                    'per_page'     => $users->perPage(),
+                    'total_items'  => $users->total(),
+                    'total_pages'  => $users->lastPage(),
+                ]
             ], 200);
         } catch (\Throwable $th) {
             return response()->json([
