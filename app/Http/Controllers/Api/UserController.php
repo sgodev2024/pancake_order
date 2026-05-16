@@ -34,46 +34,53 @@ class UserController extends Controller implements HasMiddleware
      */
     public function index(Request $request)
     {
-        $inputs = $request->only("role_id", "date");
-        // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
-        $users = User::with([
-                        "shops" => function ($q) {
-                            $q->select("shops.id", "shops.name");
-                        },
-                        "role" => function ($query) {
-                            $query->select("name", "id");
-                        },
-                        "orders" => function ($q) use ($inputs) {
-                            if (isset($inputs["date"])) {
-                                $q->whereBetween("orders.created_at", [$inputs["date"] . " 00:00:00", $inputs["date"] . " 23:59:59"]);
+        try {
+            $inputs = $request->only("role_id", "date");
+            // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
+            $users = User::with([
+                            "shops" => function ($q) {
+                                $q->select("shops.id", "shops.name");
+                            },
+                            "role" => function ($query) {
+                                $query->select("name", "id");
+                            },
+                            "orders" => function ($q) use ($inputs) {
+                                if (isset($inputs["date"])) {
+                                    $q->whereBetween("orders.created_at", [$inputs["date"] . " 00:00:00", $inputs["date"] . " 23:59:59"]);
+                                }
                             }
-                        }
-                     ])
-                     ->where(function ($q) use ($inputs) {
-                        if (isset($inputs["role_id"])) {
-                            $q->where("role_id", $inputs["role_id"]);
-                        }
-                        if (isset($inputs["search"])) {
-                            $searchTerm = $inputs["search"] . "%";
-                            $q->where(function ($query) use ($searchTerm) {
-                                $query->where("email", "like", $searchTerm)
-                                ->orWhere("name", "like", $searchTerm)
-                                ->orWhere("phone_number", "like", $searchTerm);
-                            });
-                        }
-                        if (isset($inputs["shop_id"])) {
-                            $q->whereHas("shops", function ($query) use ($inputs) {
-                                $query->where("shops.id", $inputs["shop_id"]);
-                            });
-                        }
-                     })
-                     ->select("id", "name", "phone_number", "email", "role_id", "pancake_full_data", "pancake_user_id")
-                     ->paginate(30);
-        
-        return response()->json([
-            'success' => true,
-            'data' => $users
-        ], 200);
+                        ])
+                        ->where(function ($q) use ($inputs) {
+                            if (isset($inputs["role_id"])) {
+                                $q->where("role_id", $inputs["role_id"]);
+                            }
+                            if (isset($inputs["search"])) {
+                                $searchTerm = $inputs["search"] . "%";
+                                $q->where(function ($query) use ($searchTerm) {
+                                    $query->where("email", "like", $searchTerm)
+                                    ->orWhere("name", "like", $searchTerm)
+                                    ->orWhere("phone_number", "like", $searchTerm);
+                                });
+                            }
+                            if (isset($inputs["shop_id"])) {
+                                $q->whereHas("shops", function ($query) use ($inputs) {
+                                    $query->where("shops.id", $inputs["shop_id"]);
+                                });
+                            }
+                        })
+                        ->select("id", "name", "phone_number", "email", "role_id", "pancake_full_data", "pancake_user_id")
+                        ->paginate(30);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $users
+            ], 200);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => true,
+                'data' => $th->getMessage()
+            ], 500);
+        }
     }
 
     /**
