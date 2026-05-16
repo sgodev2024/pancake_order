@@ -67,7 +67,7 @@ class UserController extends Controller implements HasMiddleware
                             });
                         }
                      })
-                     ->select("id", "name", "phone_number", "email", "role_id", "pancake_full_data")
+                     ->select("id", "name", "phone_number", "email", "role_id", "pancake_full_data", "pancake_user_id")
                      ->paginate(30);
         
         return response()->json([
