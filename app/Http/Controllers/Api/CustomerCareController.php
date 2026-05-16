@@ -107,8 +107,7 @@ class CustomerCareController extends Controller
                     "date_care"                 => $request->next_date_care,
                     "user_creator_id"           => $customer_care->user_creator_id,
                     "user_care_id"              => $customer_care->user_care_id,
-                    "user_assigning_seller_id"  => $customer_care->user_assigning_seller_id,
-                    "is_accept"                 => 0
+                    "user_assigning_seller_id"  => $customer_care->user_assigning_seller_id
                 ]);
             }
 
