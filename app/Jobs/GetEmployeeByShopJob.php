@@ -49,7 +49,7 @@ class GetEmployeeByShopJob implements ShouldQueue
                     $user["email"] = ($user["fb_id"] ? $user["fb_id"] : rand()) . "@gmail.com";
                 }
                 unset($user["id"]);
-                $user["pancake_full_data"] = json_encode($data_item);
+                $user["pancake_full_data"] = $data_item;
                 $user["password"] = Hash::make("12345678");
                 $user["role_id"] = 3; // 1 = admin, 2= manager, 3=nhân viên
                 $user_exist = User::where("pancake_user_id", $user["pancake_user_id"])->first();
