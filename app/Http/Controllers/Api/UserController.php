@@ -37,6 +37,7 @@ class UserController extends Controller implements HasMiddleware
     {
         try {
             $inputs = $request->only("role_id", "date", "page", "search");
+            $user = auth()->user();
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $users = User::with([
                             "shops" => function ($q) {
@@ -63,7 +64,7 @@ class UserController extends Controller implements HasMiddleware
                                 ]);
                             }
                         }], 'cod')
-                        ->where(function ($q) use ($inputs) {
+                        ->where(function ($q) use ($inputs, $user) {
                             if (isset($inputs["role_id"])) {
                                 $q->where("role_id", $inputs["role_id"]);
                             }
@@ -73,6 +74,11 @@ class UserController extends Controller implements HasMiddleware
                                     $query->where("email", "like", $searchTerm)
                                     ->orWhere("name", "like", $searchTerm)
                                     ->orWhere("phone_number", "like", $searchTerm);
+                                });
+                            }
+                            if (!is_admin($user->id)) {
+                                $q->whereHas("shops", function ($query) use ($user){
+                                    $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
                                 });
                             }
                             if (isset($inputs["shop_id"])) {

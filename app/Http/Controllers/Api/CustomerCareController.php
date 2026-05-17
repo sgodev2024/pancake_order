@@ -13,7 +13,7 @@ class CustomerCareController extends Controller
     public function index(Request $request)
     {
         try {
-            $inputs = $request->only("type", "page", "shop_id", "status");
+            $inputs = $request->only("type", "page", "shop_id", "status", "user_id");
             $user = auth()->user();
             $result = $this->buildQuery($inputs["type"], $user, $inputs)
                            ->with(["shop" => fn($q) => $q->select("id", "name")])
@@ -47,6 +47,13 @@ class CustomerCareController extends Controller
                 $query->whereIn("shop_id", $user->shops()->select("shops.id"));
             }
         }
+        if (isset($inputs["user_id"])) {
+            $query->where(function ($q) use ($inputs) {
+                    $q->where("user_creator_id", $inputs["user_id"])
+                      ->orWhere("user_care_id", $inputs["user_id"])
+                      ->orWhere("user_assigning_seller_id", $inputs["user_id"]);
+                });
+        }
         if (isset($inputs["status"])) {
             $query->where("status", $inputs["status"]);
         }
@@ -66,10 +73,12 @@ class CustomerCareController extends Controller
 
     private function applyAccessFilter($q, $user): void
     {
-        if (is_admin()) return;
-        $q->where("user_creator_id", $user->pancake_user_id)
-        ->orWhere("user_care_id", $user->pancake_user_id)
-        ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+        if (is_admin() || is_manager()) return;
+        $q->where(function ($query) use ($user) {
+            $query->where("user_creator_id", $user->pancake_user_id)
+                  ->orWhere("user_care_id", $user->pancake_user_id)
+                  ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+        });
     }
 
     public function update(Request $request, CustomerCare $customer_care)

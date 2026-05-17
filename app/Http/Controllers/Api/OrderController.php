@@ -19,7 +19,8 @@ class OrderController extends Controller
                 "page",
                 "page_size",
                 "date_from",
-                "date_to"
+                "date_to",
+                "user_id"
             );
             $user = auth()->user();
             // 1. Khởi tạo query từ relationship
@@ -39,11 +40,17 @@ class OrderController extends Controller
                     $query->whereIn("shop_id", $user->shops()->select("shops.id"));
                 }
             }
-            if (!is_admin()) {
+            if (!is_admin() && !is_manager()) {
                 $query->where(function ($q) use ($user) {
                             $q->where("user_creator_id", $user->pancake_user_id)
-                                ->orWhere("user_care_id", $user->pancake_user_id);
+                              ->orWhere("user_care_id", $user->pancake_user_id);
                         });
+            }
+            if (isset($inputs["user_id"])) {
+                $query->where(function ($q) use ($inputs) {
+                        $q->where("user_creator_id", $inputs["user_id"])
+                            ->orWhere("user_care_id", $inputs["user_id"]);
+                    });
             }
             // 2. XỬ LÝ LỌC (FILTERING)
             // Lọc theo status
