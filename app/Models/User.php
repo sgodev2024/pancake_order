@@ -27,7 +27,8 @@ class User extends Authenticatable
         'fb_id',
         'phone_number',
         'pancake_full_data',
-        'avatar_url'
+        'avatar_url',
+        'is_first_login'
     ];
 
     /**

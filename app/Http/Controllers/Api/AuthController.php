@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -23,13 +24,34 @@ class AuthController extends Controller
             // 2. Lấy đối tượng user
             $user = Auth::user();
 
+            // Đăng nhập lần đầu → token scope hạn chế
+            if ($user->is_first_login) {
+                $token = $user->createToken('PancakeManagementToken', ['change-password']);
+                $expiresAt = $token->token->expires_at->toDateTimeString();
+
+                return response()->json([
+                    'success'                 => true,
+                    'require_password_change' => true,
+                    'message'                 => 'Vui lòng đổi mật khẩu trước khi tiếp tục',
+                    'access_token'            => $token->accessToken,
+                    'token_type'              => 'Bearer',
+                    'expires_at'              => $expiresAt,
+                    'user' => [
+                        'id'    => $user->id,
+                        'name'  => $user->name,
+                        'email' => $user->email,
+                    ]
+                ], 200);
+            }
+
             // 3. Tạo Token (Đây là lúc Passport vào cuộc)
             // 'Personal Access Token' là tên định danh cho token, bạn đặt là gì cũng được
-            $token = $user->createToken('PancakeManagementToken');
+            $token = $user->createToken('PancakeManagementToken', ['full-access']);
             $expiresAt = $token->token->expires_at->toDateTimeString();
 
             return response()->json([
                 'success' => true,
+                'require_password_change' => false,
                 'message' => 'Đăng nhập thành công',
                 'access_token' => $token->accessToken,
                 'token_type' => 'Bearer',
@@ -123,6 +145,62 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Đăng xuất thành công, token đã được vô hiệu hóa'
+        ], 200);
+    }
+
+    public function changeFirstPassword(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'current_password' => 'required|string',
+            'new_password' => 'required|string|confirmed|min:6',
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+        $inputs = $request->only(
+            "current_password",
+            "new_password"
+        );
+        $user = $request->user();
+        // Kiểm tra token có đúng scope không
+        if (!$user->tokenCan('change-password') && !$user->tokenCan('full-access')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không có quyền thực hiện.'
+            ], 403);
+        }
+
+        // Kiểm tra mật khẩu hiện tại
+        if (!Hash::check($inputs["current_password"], $user->password)) {
+            return response()->json([
+                'message' => 'Mật khẩu hiện tại không đúng.',
+            ], 422);
+        }
+
+        // Không cho đặt mật khẩu giống cũ
+        if (Hash::check($inputs["new_password"], $user->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Mật khẩu mới không được trùng mật khẩu cũ.',
+            ], 422);
+        }
+
+        // Cập nhật mật khẩu và tắt cờ first login
+        $user->update([
+            'password'       => Hash::make($inputs["new_password"]),
+            'is_first_login' => false,
+        ]);
+
+        // Thu hồi token cũ (scope hạn chế), cấp token mới đầy đủ
+        $user->tokens()->delete();
+        $token = $user->createToken('auth_token', ['full-access'])->accessToken;
+
+        return response()->json([
+            'success'      => true,
+            'message'      => 'Đổi mật khẩu thành công.',
+            'access_token' => $token,
+            'token_type'   => 'Bearer',
+            'user'         => $user->only('id', 'name', 'email'),
         ], 200);
     }
 }

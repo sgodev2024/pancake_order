@@ -20,6 +20,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Passport::tokensCan([
+            'change-password' => 'Chỉ được phép đổi mật khẩu lần đầu',
+            'full-access'     => 'Toàn quyền truy cập',
+        ]);
         // Đăng ký các route cần thiết cho Passport
         // Bạn có thể tùy chỉnh thời gian hết hạn của token ở đây
         Passport::tokensExpireIn(now()->addDays(15));

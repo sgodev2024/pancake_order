@@ -31,6 +31,8 @@ Route::prefix('v1/auth')->group(function () {
     
     // Đăng nhập lấy Token
     Route::post('login', [AuthController::class, 'login']);
+
+    Route::post('/change-first-password', [AuthController::class, 'changeFirstPassword']);
     
     // Quên mật khẩu (Gửi mail reset)
     Route::post('forgot-password', [AuthController::class, 'forgotPassword']);
