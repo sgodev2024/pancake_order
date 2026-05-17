@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 
@@ -150,57 +151,70 @@ class AuthController extends Controller
 
     public function changeFirstPassword(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'current_password' => 'required|string',
-            'new_password' => 'required|string|confirmed|min:6',
-        ]);
-        if ($validator->fails()) {
-            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
-        }
-        $inputs = $request->only(
-            "current_password",
-            "new_password"
-        );
-        $user = $request->user();
-        // Kiểm tra token có đúng scope không
-        if (!$user->tokenCan('change-password') && !$user->tokenCan('full-access')) {
+        try {
+            DB::beginTransaction();
+            $validator = Validator::make($request->all(), [
+                'current_password' => 'required|string',
+                'new_password' => 'required|string|confirmed|min:6',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+            $inputs = $request->only(
+                "current_password",
+                "new_password"
+            );
+            $user = $request->user();
+            // Kiểm tra token có đúng scope không
+            if (!$user->tokenCan('change-password') && !$user->tokenCan('full-access')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không có quyền thực hiện.'
+                ], 403);
+            }
+
+            // Kiểm tra mật khẩu hiện tại
+            if (!Hash::check($inputs["current_password"], $user->password)) {
+                return response()->json([
+                    'message' => 'Mật khẩu hiện tại không đúng.',
+                ], 422);
+            }
+
+            // Không cho đặt mật khẩu giống cũ
+            if (Hash::check($inputs["new_password"], $user->password)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Mật khẩu mới không được trùng mật khẩu cũ.',
+                ], 422);
+            }
+
+            // Cập nhật mật khẩu và tắt cờ first login
+            $user->update([
+                'password'       => Hash::make($inputs["new_password"]),
+                'is_first_login' => false,
+            ]);
+
+            // Thu hồi token cũ (scope hạn chế), cấp token mới đầy đủ
+            $user->tokens()->delete();
+            $token = $user->createToken('auth_token', ['full-access']);
+            $expiresAt = $token->token->expires_at->toDateTimeString();
+            DB::commit();
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Không có quyền thực hiện.'
-            ], 403);
-        }
+                'success'      => true,
+                'expires_at'   => $expiresAt,
+                'message'      => 'Đổi mật khẩu thành công.',
+                'access_token' => $token->accessToken,
+                'token_type'   => 'Bearer',
+                'user'         => $user->only('id', 'name', 'email'),
+            ], 200);
+        } catch (\Throwable $th) {
+            DB::rollBack();
 
-        // Kiểm tra mật khẩu hiện tại
-        if (!Hash::check($inputs["current_password"], $user->password)) {
             return response()->json([
-                'message' => 'Mật khẩu hiện tại không đúng.',
-            ], 422);
+                "success" => false,
+                "message" => $th->getMessage()
+            ]);
         }
-
-        // Không cho đặt mật khẩu giống cũ
-        if (Hash::check($inputs["new_password"], $user->password)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Mật khẩu mới không được trùng mật khẩu cũ.',
-            ], 422);
-        }
-
-        // Cập nhật mật khẩu và tắt cờ first login
-        $user->update([
-            'password'       => Hash::make($inputs["new_password"]),
-            'is_first_login' => false,
-        ]);
-
-        // Thu hồi token cũ (scope hạn chế), cấp token mới đầy đủ
-        $user->tokens()->delete();
-        $token = $user->createToken('auth_token', ['full-access'])->accessToken;
-
-        return response()->json([
-            'success'      => true,
-            'message'      => 'Đổi mật khẩu thành công.',
-            'access_token' => $token,
-            'token_type'   => 'Bearer',
-            'user'         => $user->only('id', 'name', 'email'),
-        ], 200);
     }
 }
