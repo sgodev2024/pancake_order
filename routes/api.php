@@ -31,8 +31,6 @@ Route::prefix('v1/auth')->group(function () {
     
     // Đăng nhập lấy Token
     Route::post('login', [AuthController::class, 'login']);
-
-    Route::post('/change-first-password', [AuthController::class, 'changeFirstPassword']);
     
     // Quên mật khẩu (Gửi mail reset)
     Route::post('forgot-password', [AuthController::class, 'forgotPassword']);
@@ -43,7 +41,7 @@ Route::prefix('v1/auth')->group(function () {
 
 // --- Nhóm các Route Private (Yêu cầu Passport Token) ---
 Route::middleware('auth:api')->prefix('v1')->group(function () {
-    
+    Route::post('/change-first-password', [AuthController::class, 'changeFirstPassword']);
     // Nhóm tài khoản (Profile)
     Route::prefix('me')->group(function () {
         // Lấy thông tin tài khoản đang đăng nhập
