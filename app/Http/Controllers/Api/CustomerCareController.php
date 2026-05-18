@@ -13,7 +13,7 @@ class CustomerCareController extends Controller
     public function index(Request $request)
     {
         try {
-            $inputs = $request->only("type", "page", "shop_id", "status", "user_id");
+            $inputs = $request->only("type", "page", "shop_id", "status", "user_id", "is_accept");
             $user = auth()->user();
             $result = $this->buildQuery($inputs["type"], $user, $inputs)
                            ->with(["shop" => fn($q) => $q->select("id", "name")])
@@ -40,6 +40,9 @@ class CustomerCareController extends Controller
     private function buildQuery(string $type, $user, array $inputs)
     {
         $query = CustomerCare::query()->latest("date_care");
+        if (isset($inputs["is_accept"])) {
+            $query->where("is_accept", $inputs["is_accept"]);
+        }
         if (isset($inputs["shop_id"])) {
             $query->where("shop_id", $inputs["shop_id"]);
         } else {
@@ -161,7 +164,11 @@ class CustomerCareController extends Controller
 
             return response()->json([
                 "success" => true,
-                "data"    => CustomerCare::where("pancake_customer_id", $customer_care->pancake_customer_id)->get()
+                "data"    => CustomerCare::where("pancake_customer_id", $customer_care->pancake_customer_id)
+                                          ->with(["shop", function ($q) {
+                                            $q->select("shops.id", "shops.name");
+                                          }])
+                                          ->get()
             ]);
         } catch (\Throwable $th) {
             return response()->json([
@@ -178,7 +185,16 @@ class CustomerCareController extends Controller
 
             return response()->json([
                 "success" => true,
-                "data"    => Order::where("pancake_customer_id", $customer_care->pancake_customer_id)->get()
+                "data"    => Order::where("pancake_customer_id", $customer_care->pancake_customer_id)
+                                   ->with([
+                                        "shop", function ($q) {
+                                            $q->select("shops.id", "shops.name");
+                                        },
+                                        "user_creator",
+                                        "user_care",
+                                        "user_assigning"
+                                   ])
+                                  ->get()
             ]);
         } catch (\Throwable $th) {
             return response()->json([
