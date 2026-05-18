@@ -50,7 +50,6 @@ class GetOrderFromWebhookJob implements ShouldQueue
                                 $customer["phone_numbers"] ?? NULL,
                                 $this->data["bill_phone_number"],
                                 $customer,
-                                $this->data["shipping_address"]
                             )->onQueue("send-zns");
                         }
                         
@@ -63,7 +62,8 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             "pancake_customer_id" => $customer["id"],
                             "fb_id"               => $customer["fb_id"],
                             "name"                => $customer["name"],
-                            "phone_numbers"       => $customer["phone_numbers"] ?? [$this->data["bill_phone_number"]],
+                            "phone_numbers"       => !empty($this->data["bill_phone_number"]) ? [$this->data["bill_phone_number"]] : $customer["phone_numbers"],
+                            "pancake_full_data"   => $customer
                         ]);
                     } else {
                         //$new_phones = $customer["phone_numbers"] ?? [$customer["bill_phone_number"]];
@@ -76,7 +76,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         // 3. Loại bỏ các số trùng lặp và reset lại index (key) của mảng
                         //$unique_phones = array_values(array_unique($merged_phones));
                         $customer_exist->update([
-                            "assigned_user_id" => $this->data["assigning_care_id"] ?? NULL,
+                            "assigned_user_id" => $customer["assigned_user_id"] ?? NULL,
                             "name"             => $customer["name"],
                             "phone_numbers"    => [$this->data["bill_phone_number"] ?? ""]//$unique_phones
                         ]);
@@ -89,7 +89,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             $order->created_at,
                             $customer_exist->name,
                             $customer_exist->phone_numbers,
-                            $customer["new_full_address"] ?? NULL,
+                            $customer["shop_customer_addresses"][0]["full_address"] ?? NULL,
                             $customer_exist->pancake_customer_id,
                             $order->user_creator_id,
                             $order->user_care_id,
@@ -98,7 +98,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     }
                 // }
             }
-            Log::channel("pancake-webhook-error")->info("=================Thành công GetOrderFromWebhookJob==============");
+            Log::channel("pancake-webhook-success")->info("=================Thành công GetOrderFromWebhookJob==============");
             return;
         } catch (\Throwable $th) {
             Log::channel("pancake-webhook-error")->info("=================Lỗi GetOrderFromWebhookJob==============");

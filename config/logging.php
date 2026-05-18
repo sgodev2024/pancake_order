@@ -81,6 +81,14 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'pancake-webhook-success' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/pancake-webhook-success.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => env('LOG_DAILY_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
         'zns' => [
             'driver' => 'daily',
             'path' => storage_path('logs/zns.log'),

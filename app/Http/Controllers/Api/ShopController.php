@@ -94,9 +94,9 @@ class ShopController extends Controller implements HasMiddleware
                         ]);
                     }
                     $this->getEmployee($shop);
-                    //$this->getCustomer($shop);
-                    //$this->getOrder($shop);
-                    //$this->getProduct($shop);
+                    $this->getCustomer($shop);
+                    $this->getOrder($shop);
+                    $this->getProduct($shop);
                 }
             }
             return response()->json([
