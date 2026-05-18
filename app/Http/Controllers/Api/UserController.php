@@ -39,7 +39,7 @@ class UserController extends Controller implements HasMiddleware
             $inputs = $request->only("role_id", "date", "page", "search");
             $user = auth()->user();
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
-            $users = User::with([
+            $queries = User::with([
                             "shops" => function ($q) {
                                 $q->select("shops.id", "shops.name");
                             },
@@ -86,9 +86,29 @@ class UserController extends Controller implements HasMiddleware
                                     $query->where("shops.id", $inputs["shop_id"]);
                                 });
                             }
-                        })
-                        ->paginate(30, ['*'], 'page', $inputs["page"] ?? 1);
-
+                        });
+            if (!empty($inputs["is_all"])) {
+                $users = $queries->get();
+                $total_user = count($users);
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'items' => $users,
+                        'current_page' => 1,
+                        'per_page'     => $total_user,
+                        'total_items'  => $total_user,
+                        'total_pages'  => 1,
+                    ]
+                ], 200);
+            }
+            // Ngược lại phân trang
+            $users = $queries->paginate(
+                30,
+                ['*'],
+                'page',
+                $inputs["page"] ?? 1
+            );
             return response()->json([
                 'success' => true,
                 'data' => [
