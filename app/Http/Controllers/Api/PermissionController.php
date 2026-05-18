@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Validation\Rule;
 
 class PermissionController extends Controller implements HasMiddleware
 {
@@ -37,7 +38,12 @@ class PermissionController extends Controller implements HasMiddleware
         $validator = Validator::make($request->all(), [
             'permission_group_id' => 'required|exists:permission_groups,id',
             'name' => 'required|string|max:255',
-            'slug' => 'required|string|unique:permissions,slug',
+            'slug' => [
+                'required',
+                'string',
+                // Bỏ qua các bản ghi đã bị xóa mềm khi check unique
+                Rule::unique('permissions', 'slug')->withoutTrashed() 
+            ],
         ]);
 
         if ($validator->fails()) {
