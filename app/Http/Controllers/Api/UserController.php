@@ -36,7 +36,7 @@ class UserController extends Controller implements HasMiddleware
     public function index(Request $request)
     {
         try {
-            $inputs = $request->only("role_id", "date", "page", "search");
+            $inputs = $request->only("role_id", "date", "page", "search", "is_all");
             $user = auth()->user();
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $queries = User::with([
