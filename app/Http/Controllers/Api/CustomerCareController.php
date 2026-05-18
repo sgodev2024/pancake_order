@@ -165,9 +165,11 @@ class CustomerCareController extends Controller
             return response()->json([
                 "success" => true,
                 "data"    => CustomerCare::where("pancake_customer_id", $customer_care->pancake_customer_id)
-                                          ->with(["shop", function ($q) {
-                                            $q->select("shops.id", "shops.name");
-                                          }])
+                                          ->with([
+                                                "shop" => function ($q) {
+                                                    $q->select("shops.id", "shops.name");
+                                                }
+                                          ])
                                           ->get()
             ]);
         } catch (\Throwable $th) {
@@ -187,7 +189,7 @@ class CustomerCareController extends Controller
                 "success" => true,
                 "data"    => Order::where("pancake_customer_id", $customer_care->pancake_customer_id)
                                    ->with([
-                                        "shop", function ($q) {
+                                        "shop" => function ($q) {
                                             $q->select("shops.id", "shops.name");
                                         },
                                         "user_creator",
