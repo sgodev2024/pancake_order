@@ -46,6 +46,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::prefix('me')->group(function () {
         // Lấy thông tin tài khoản đang đăng nhập
         Route::get('/', [AuthController::class, 'profile']);
+        Route::put('/update', [UserController::class, "updateProfile"]);
         
         // Cập nhật thông tin cá nhân
         //Route::put('update', [AuthController::class, 'updateProfile']);

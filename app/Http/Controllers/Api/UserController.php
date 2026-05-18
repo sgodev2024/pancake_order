@@ -227,16 +227,34 @@ class UserController extends Controller implements HasMiddleware
         ], 200);
     }
 
-    /**
-     * Cập nhật thông tin user (Update)
-     * PUT/PATCH /api/users/{user}
-     */
-    public function update(Request $request, User $user)
+    public function updateProfile(Request $request)
+    {
+        try {
+            $user = auth()->user();
+            $validator = $this->validateData($request, $user->id);
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Dữ liệu không hợp lệ',
+                    'errors'  => $validator->errors()
+                ], 422);
+            }
+
+            return $this->updateUser($validator, $user);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
+            ]);
+        }
+    }
+
+    public function validateData($request, $user_id)
     {
         // 1. Validate dữ liệu đầu vào (cho phép null nếu chỉ update 1 vài field)
         $validator = Validator::make($request->all(), [
             'name'         => 'sometimes|string|max:255',
-            'email'        => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
+            'email'        => 'sometimes|string|email|max:255|unique:users,email,' . $user_id,
             'password'     => 'sometimes|string|min:6',
             'phone_number' => 'sometimes|string|min:10',
             'role_id'      => 'required|exists:roles,id',
@@ -244,6 +262,17 @@ class UserController extends Controller implements HasMiddleware
             'shop_ids.*'   => 'exists:shops,id',
         ]);
 
+        return $validator;
+    }
+
+    /**
+     * Cập nhật thông tin user (Update)
+     * PUT/PATCH /api/users/{user}
+     */
+    public function update(Request $request, User $user)
+    {
+        // 1. Validate dữ liệu đầu vào (cho phép null nếu chỉ update 1 vài field)
+        $validator = $this->validateData($request, $user->id);
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
@@ -251,6 +280,12 @@ class UserController extends Controller implements HasMiddleware
                 'errors'  => $validator->errors()
             ], 422);
         }
+        
+        return $this->updateUser($validator, $user);
+    }
+
+    public function updateUser($validator, $user)
+    {
         $validatedData = $validator->validated();
         // 2. Nếu có update mật khẩu thì cần mã hóa lại
         if (isset($validatedData['password'])) {
