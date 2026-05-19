@@ -97,7 +97,7 @@ class UserController extends Controller implements HasMiddleware
                 }
             })
             ->latest();
-            $userIds = (clone $queries)->pluck('users.id');
+            $userIds = (clone $queries)->pluck('users.pancake_user_id');
             $total_cod = Order::whereIn('user_creator_id', $userIds)
                                 ->when(isset($inputs["date"]), function ($q) use ($inputs) {
                                     $q->whereBetween("created_at", [
