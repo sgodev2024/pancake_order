@@ -82,7 +82,7 @@ class CustomerCareController extends Controller
                                         ]),
             'customer_care_expire'  => $query->where("date_care", "<=", date("Y-m-d"))
                                              ->where("status", 0),
-            'customer_care_edit'    => $query->where("total_edit", ">", 0)->where("is_accept", 0)
+            'customer_care_edit'    => $query->where("total_edit", ">", 1)->where("is_accept", 0)
         };
 
         return $query->where(fn($q) => $this->applyAccessFilter($q, $user));
@@ -253,8 +253,8 @@ class CustomerCareController extends Controller
                 SUM(CASE WHEN date_care <= ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire,
                 SUM(CASE WHEN date_care <= ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire_done,
 
-                SUM(CASE WHEN total_edit > 0  THEN 1 ELSE 0 END) as customer_care_edit,
-                SUM(CASE WHEN total_edit > 0 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
+                SUM(CASE WHEN total_edit > 1  THEN 1 ELSE 0 END) as customer_care_edit,
+                SUM(CASE WHEN total_edit > 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
             ", [
                 // today
                 $today,
