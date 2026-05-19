@@ -39,7 +39,7 @@ class UserController extends Controller implements HasMiddleware
             $user = auth()->user();
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $queries = User::with([
-                            "shops" => function ($q) {
+                            "shops" => function ($q) use ($inputs) {
                                 $q->select("shops.id", "shops.name");
                                 if (($inputs["page_name"] ?? null) == "report_page") {
                                     $q->with([

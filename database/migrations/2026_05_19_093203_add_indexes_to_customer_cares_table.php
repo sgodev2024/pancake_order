@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('customer_cares', function (Blueprint $table) {
-            $table->string("customer_phones")->nullable()->change();
+            $table->string("customer_phones", 1000)->nullable()->change();
             // Sort + filter chính (date_care dùng cho cả ORDER BY lẫn WHERE)
             $table->index(['shop_id', 'date_care']);
             $table->index(['shop_id', 'status', 'date_care']);
