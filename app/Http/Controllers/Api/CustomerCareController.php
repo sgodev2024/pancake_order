@@ -21,7 +21,8 @@ class CustomerCareController extends Controller
                                     $q->select("shops.id", "shops.name")
                                       ->with([
                                         "users" => function ($query) {
-                                            $query->select("users.id", "users.role_id", "users.name");
+                                            $query->select("users.id", "users.role_id", "users.name")
+                                                 ->where("users.role_id", 2);
                                         }
                                       ]);
                                 }
@@ -248,7 +249,7 @@ class CustomerCareController extends Controller
                 SUM(CASE WHEN date_care <= ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire,
                 SUM(CASE WHEN date_care <= ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire_done,
 
-                SUM(CASE WHEN total_edit > 1 AND is_accept = 0 THEN 1 ELSE 0 END) as customer_care_edit,
+                SUM(CASE WHEN total_edit > 1  THEN 1 ELSE 0 END) as customer_care_edit,
                 SUM(CASE WHEN total_edit > 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
             ", [
                 // today
