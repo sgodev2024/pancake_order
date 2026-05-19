@@ -97,6 +97,15 @@ class UserController extends Controller implements HasMiddleware
                 }
             })
             ->latest();
+            $userIds = (clone $queries)->pluck('users.id');
+            $total_cod = Order::whereIn('user_creator_id', $userIds)
+                                ->when(isset($inputs["date"]), function ($q) use ($inputs) {
+                                    $q->whereBetween("created_at", [
+                                        $inputs["date"] . " 00:00:00",
+                                        $inputs["date"] . " 23:59:59"
+                                    ]);
+                                })
+                                ->sum('cod');
             if (!empty($inputs["is_all"])) {
                 $users = $queries->get();
                 $total_user = count($users);
@@ -104,6 +113,7 @@ class UserController extends Controller implements HasMiddleware
                 return response()->json([
                     'success' => true,
                     'data' => [
+                        'total_cod' => $total_cod,
                         'items' => $users,
                         'current_page' => 1,
                         'per_page'     => $total_user,
@@ -122,6 +132,7 @@ class UserController extends Controller implements HasMiddleware
             return response()->json([
                 'success' => true,
                 'data' => [
+                    'total_cod' => $total_cod,
                     'items' => $users->items(),
                     'current_page' => $users->currentPage(),
                     'per_page'     => $users->perPage(),
