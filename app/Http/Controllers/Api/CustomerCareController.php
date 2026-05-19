@@ -82,7 +82,7 @@ class CustomerCareController extends Controller
                                         ]),
             'customer_care_expire'  => $query->where("date_care", "<=", date("Y-m-d"))
                                              ->where("status", 0),
-            'customer_care_edit'    => $query->where("total_edit", ">", 0)
+            'customer_care_edit'    => $query->where("total_edit", ">", 0)->where("is_accept", 0)
         };
 
         return $query->where(fn($q) => $this->applyAccessFilter($q, $user));
