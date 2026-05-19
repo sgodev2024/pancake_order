@@ -36,7 +36,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
             if ($shop) {
                 $orderService = new OrderService();
                 $result = $orderService->getOrderItem($this->data, $shop->id);
-                // if ($result["cod"] > 0) {
+                if (!empty($result["order_number_vtp"])) {
                     $order = Order::select("id")->where("pancake_order_id", $result["pancake_order_id"])->first();
                     $customer = $this->data["customer"];
                     if ($order) {
@@ -47,7 +47,6 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $order = Order::create($result);
                         if (!empty($this->data["bill_phone_number"])) {
                             SendZnsJob::dispatch(
-                                $customer["phone_numbers"] ?? NULL,
                                 $this->data["bill_phone_number"],
                                 $customer,
                             )->onQueue("send-zns");
@@ -62,7 +61,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             "pancake_customer_id" => $customer["id"],
                             "fb_id"               => $customer["fb_id"],
                             "name"                => $customer["name"],
-                            "phone_numbers"       => !empty($this->data["bill_phone_number"]) ? [$this->data["bill_phone_number"]] : $customer["phone_numbers"],
+                            "phone_numbers"       => !empty($this->data["bill_phone_number"]) ? $this->data["bill_phone_number"] : implode(",", ($customer["phone_numbers"] ?? [])),
                             "pancake_full_data"   => $customer
                         ]);
                     } else {
@@ -78,7 +77,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $customer_exist->update([
                             "assigned_user_id" => $customer["assigned_user_id"] ?? NULL,
                             "name"             => $customer["name"],
-                            "phone_numbers"    => [$this->data["bill_phone_number"] ?? ""]//$unique_phones
+                            "phone_numbers"    => $this->data["bill_phone_number"] ?? $customer_exist->phone_numbers//$unique_phones
                         ]);
                     }
                     if ($is_new_order) {
@@ -96,7 +95,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             $order->user_assigning_seller_id
                         )->onQueue("add-customer-care");
                     }
-                // }
+                }
             }
             Log::channel("pancake-webhook-success")->info("=================Thành công GetOrderFromWebhookJob==============");
             return;

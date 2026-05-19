@@ -19,8 +19,7 @@ class Customer extends Model
     ];
 
     protected $casts = [
-        'pancake_full_data'  => 'array',
-        'phone_numbers'      => 'array'
+        'pancake_full_data'  => 'array'
     ];
 
     public function shop()

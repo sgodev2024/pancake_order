@@ -31,7 +31,7 @@ class OrderService
             "pancake_full_data"        => json_encode($data_item),
             "received_at_shop"         => $data_item["received_at_shop"],
             "customer_name"            => $data_item["customer"]["name"] ?? NULL,
-            "customer_phone"           => !empty($data_item["customer"]["phone_numbers"]) ? implode(",", $data_item["customer"]["phone_numbers"]) : NULL,
+            "customer_phone"           => $data_item["bill_phone_number"] ?? NULL,
             "customer_address"         => $data_item["shipping_address"]["full_address"] ?? NULL,
             "created_at"               => $created_at,
             "updated_at"               => $updated_at

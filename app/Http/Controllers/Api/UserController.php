@@ -35,19 +35,27 @@ class UserController extends Controller implements HasMiddleware
     public function index(Request $request)
     {
         try {
-            $inputs = $request->only("role_id", "date", "page", "search", "is_all");
+            $inputs = $request->only("role_id", "date", "page", "search", "is_all", "page_name");
             $user = auth()->user();
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $queries = User::with([
                             "shops" => function ($q) {
                                 $q->select("shops.id", "shops.name");
+                                if (($inputs["page_name"] ?? null) == "report_page") {
+                                    $q->with([
+                                        "users" => function ($query) {
+                                            $query->select("users.id", "users.role_id", "users.name");
+                                        }
+                                    ]);
+                                }
                             },
                             "role" => function ($query) {
                                 $query->select("name", "id");
                             }
                         ])
-                        ->select("id", "name", "phone_number", "email", "role_id", "pancake_user_id")
-                        ->withCount(['orders' => function ($q) use ($inputs) {
+                        ->select("id", "name", "phone_number", "email", "role_id", "pancake_user_id");
+            if (($inputs["page_name"] ?? null) == "report_page") {
+                $queries->withCount(['orders' => function ($q) use ($inputs) {
                             if (isset($inputs["date"])) {
                                 $q->whereBetween("orders.created_at", [
                                     $inputs["date"] . " 00:00:00",
@@ -62,30 +70,32 @@ class UserController extends Controller implements HasMiddleware
                                     $inputs["date"] . " 23:59:59"
                                 ]);
                             }
-                        }], 'cod')
-                        ->where(function ($q) use ($inputs, $user) {
-                            if (isset($inputs["role_id"])) {
-                                $q->where("role_id", $inputs["role_id"]);
-                            }
-                            if (isset($inputs["search"])) {
-                                $searchTerm = $inputs["search"] . "%";
-                                $q->where(function ($query) use ($searchTerm) {
-                                    $query->where("email", "like", $searchTerm)
-                                    ->orWhere("name", "like", $searchTerm)
-                                    ->orWhere("phone_number", "like", $searchTerm);
-                                });
-                            }
-                            if (!is_admin($user->id)) {
-                                $q->whereHas("shops", function ($query) use ($user){
-                                    $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
-                                });
-                            }
-                            if (isset($inputs["shop_id"])) {
-                                $q->whereHas("shops", function ($query) use ($inputs) {
-                                    $query->where("shops.id", $inputs["shop_id"]);
-                                });
-                            }
-                        });
+                        }], 'cod');
+            }    
+            $queries->where(function ($q) use ($inputs, $user) {
+                if (isset($inputs["role_id"])) {
+                    $q->where("role_id", $inputs["role_id"]);
+                }
+                if (isset($inputs["search"])) {
+                    $searchTerm = $inputs["search"] . "%";
+                    $q->where(function ($query) use ($searchTerm) {
+                        $query->where("email", "like", $searchTerm)
+                        ->orWhere("name", "like", $searchTerm)
+                        ->orWhere("phone_number", "like", $searchTerm);
+                    });
+                }
+                if (!is_admin()) {
+                    $q->whereHas("shops", function ($query) use ($user){
+                        $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
+                    });
+                }
+                if (isset($inputs["shop_id"])) {
+                    $q->whereHas("shops", function ($query) use ($inputs) {
+                        $query->where("shops.id", $inputs["shop_id"]);
+                    });
+                }
+            })
+            ->latest();
             if (!empty($inputs["is_all"])) {
                 $users = $queries->get();
                 $total_user = count($users);
@@ -322,5 +332,28 @@ class UserController extends Controller implements HasMiddleware
             'success' => true,
             'message' => 'Đã xóa user thành công'
         ], 200); // Có thể dùng 204 No Content nếu không muốn trả về body
+    }
+
+    public function getAllUser()
+    {
+        try {
+            $queries = User::query();
+            $user = auth()->user();
+            if (!is_admin()) {
+                $queries->whereHas("shops", function ($query) use ($user){
+                    $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
+                });
+            }
+
+            return response()->json([
+                "success" => true,
+                "data"    => $queries->select("id", "name")->latest()->get()
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
+            ]);
+        }
     }
 }

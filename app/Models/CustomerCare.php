@@ -24,15 +24,12 @@ class CustomerCare extends Model
         "time_care",
         "is_accept",
         "user_accept_id",
-        "total_edit"
+        "total_edit",
+        "reason"
     ];
 
     public function shop()
     {
         return $this->belongsTo(Shop::class);
     }
-
-    protected $casts = [
-        'customer_phones' => 'array'
-    ];
 }

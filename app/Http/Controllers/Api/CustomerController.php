@@ -67,7 +67,7 @@ class CustomerController extends Controller implements HasMiddleware
                 $q->where(function ($sub) use ($search) {
                     $sub->where(function ($q_sub) use ($search) {
                         $q_sub->where('name', 'like', "{$search}%")
-                              ->orWhere('phone_numbers', 'like', "%{$search}%");
+                              ->orWhere('phone_numbers', 'like', "{$search}%");
                     });
                 });
             });

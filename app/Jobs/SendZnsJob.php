@@ -12,8 +12,6 @@ class SendZnsJob implements ShouldQueue
 {
     use Queueable;
 
-    protected $phone_numbers;
-
     protected $bill_phone_number;
 
     protected $customer;
@@ -22,12 +20,10 @@ class SendZnsJob implements ShouldQueue
      * Create a new job instance.
      */
     public function __construct(
-        $phone_numbers,
         $bill_phone_number,
         $customer
     )
     {
-        $this->phone_numbers = $phone_numbers;
         $this->bill_phone_number = $bill_phone_number;
         $this->customer = $customer;
     }

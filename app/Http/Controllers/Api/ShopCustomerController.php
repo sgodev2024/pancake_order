@@ -30,7 +30,7 @@ class ShopCustomerController extends Controller
                 $search = $request->search;
                 $q->where(function ($sub) use ($search) {
                     $sub->where('customers.name', 'like', "{$search}%")
-                        ->orWhere('customers.phone_numbers', 'like', "%{$search}%");
+                        ->orWhere('customers.phone_numbers', 'like', "{$search}%");
                 });
             });
 

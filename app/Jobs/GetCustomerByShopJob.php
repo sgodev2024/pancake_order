@@ -51,7 +51,7 @@ class GetCustomerByShopJob implements ShouldQueue
             $insertData = [];
             foreach ($this->datas as $data_item) {
                 $pancake_customer_id = $data_item['id'];
-                if (!isset($existingIds[$pancake_customer_id])) {
+                if (!isset($existingIds[$pancake_customer_id]) && $data_item["order_count"] > 0) {
                     $time = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
                     $insertData[] = [
                         'shop_id'             => $this->shop_id,
@@ -59,7 +59,7 @@ class GetCustomerByShopJob implements ShouldQueue
                         'pancake_customer_id' => $pancake_customer_id,
                         'fb_id'               => $data_item['fb_id'] ?? null,
                         'name'                => $data_item['name'] ?? null,
-                        'phone_numbers'       => !empty($data_item['phone_numbers']) ? json_encode($data_item['phone_numbers']) : json_encode([]),
+                        'phone_numbers'       => !empty($data_item["phone_numbers"]) ? implode(",", $data_item["phone_numbers"]) : NULL,
                         'pancake_full_data'   => json_encode($data_item),
                         'created_at'          => $time,
                         'updated_at'          => $time,

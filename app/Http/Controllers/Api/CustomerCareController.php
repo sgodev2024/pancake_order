@@ -16,7 +16,16 @@ class CustomerCareController extends Controller
             $inputs = $request->only("type", "page", "shop_id", "status", "user_id", "is_accept");
             $user = auth()->user();
             $result = $this->buildQuery($inputs["type"], $user, $inputs)
-                           ->with(["shop" => fn($q) => $q->select("id", "name")])
+                           ->with([
+                                "shop" => function ($q) {
+                                    $q->select("shops.id", "shops.name")
+                                      ->with([
+                                        "users" => function ($query) {
+                                            $query->select("users.id", "users.role_id", "users.name");
+                                        }
+                                      ]);
+                                }
+                            ])
                            ->paginate(30, ['*'], 'page', $inputs["page"]);
 
             return response()->json([
@@ -142,6 +151,7 @@ class CustomerCareController extends Controller
             $customer_care = CustomerCare::find($id);
             $customer_care->update([
                 "is_accept"      => $request->is_accept,
+                "reason"         => $request->reason ?? NULL,
                 "user_accept_id" => auth()->id()
             ]);
 
@@ -236,7 +246,10 @@ class CustomerCareController extends Controller
                 SUM(CASE WHEN date_care BETWEEN ? AND ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_in_week_done,
 
                 SUM(CASE WHEN date_care <= ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire,
-                SUM(CASE WHEN date_care <= ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire_done
+                SUM(CASE WHEN date_care <= ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire_done,
+
+                SUM(CASE WHEN total_edit > 1 AND is_accept = 0 THEN 1 ELSE 0 END) as customer_care_edit,
+                SUM(CASE WHEN total_edit > 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
             ", [
                 // today
                 $today,
@@ -289,16 +302,18 @@ class CustomerCareController extends Controller
             return response()->json([
                 "success" => true,
                 "data" => [
-                    "customer_care_today"        => (int) $overview->customer_care_today,
-                    "customer_care_today_done"   => (int) $overview->customer_care_today_done,
-                    "customer_care_pending"      => (int) $overview->customer_care_pending,
-                    "customer_care_pending_done" => (int) $overview->customer_care_pending_done,
-                    "customer_care_in_week"      => (int) $overview->customer_care_in_week,
-                    "customer_care_in_week_done" => (int) $overview->customer_care_in_week_done,
-                    "customer_care_expire"       => (int) $overview->customer_care_expire,
-                    "customer_care_expire_done"  => (int) $overview->customer_care_expire_done,
-                    "total_order_today"          => $query->total_order_today,
-                    "total_revenue"              => $query->total_revenue
+                    "customer_care_today"         => (int) $overview->customer_care_today,
+                    "customer_care_today_done"    => (int) $overview->customer_care_today_done,
+                    "customer_care_pending"       => (int) $overview->customer_care_pending,
+                    "customer_care_pending_done"  => (int) $overview->customer_care_pending_done,
+                    "customer_care_in_week"       => (int) $overview->customer_care_in_week,
+                    "customer_care_in_week_done"  => (int) $overview->customer_care_in_week_done,
+                    "customer_care_expire"        => (int) $overview->customer_care_expire,
+                    "customer_care_expire_done"   => (int) $overview->customer_care_expire_done,
+                    "customer_care_edit"          => (int) $overview->customer_care_edit,
+                    "customer_care_edit_accepted" => (int) $overview->customer_care_edit_accepted,
+                    "total_order_today"           => $query->total_order_today,
+                    "total_revenue"               => $query->total_revenue
                 ]
             ]);
         } catch (\Throwable $th) {
