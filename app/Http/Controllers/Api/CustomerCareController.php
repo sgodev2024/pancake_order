@@ -25,7 +25,10 @@ class CustomerCareController extends Controller
                                                  ->where("users.role_id", 2);
                                         }
                                       ]);
-                                }
+                                },
+                                "user_creator",
+                                "user_care",
+                                "user_assigning"
                             ])
                            ->paginate(30, ['*'], 'page', $inputs["page"]);
 
