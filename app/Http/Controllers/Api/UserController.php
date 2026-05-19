@@ -44,7 +44,8 @@ class UserController extends Controller implements HasMiddleware
                                 if (($inputs["page_name"] ?? null) == "report_page") {
                                     $q->with([
                                         "users" => function ($query) {
-                                            $query->select("users.id", "users.role_id", "users.name");
+                                            $query->select("users.id", "users.role_id", "users.name")
+                                                  ->where("users.role_id", 2);
                                         }
                                     ]);
                                 }
