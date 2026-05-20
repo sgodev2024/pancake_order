@@ -3,9 +3,11 @@
 namespace App\Jobs;
 
 use App\Mail\UserCredentialsMail;
+use App\Models\Setting;
 use App\Models\Shop;
 use App\Models\ShopUser;
 use App\Models\User;
+use App\Services\MailConfigService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Hash;
@@ -43,6 +45,7 @@ class GetEmployeeByShopJob implements ShouldQueue
      */
     public function handle(): void
     {
+        MailConfigService::setDynamicConfig();
         foreach ($this->datas as $data_item) {
             try {
                 $user = $data_item["user"];
