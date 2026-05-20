@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Mail\UserCredentialsMail;
 use App\Models\Shop;
 use App\Models\ShopUser;
 use App\Models\User;
@@ -9,6 +10,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 class GetEmployeeByShopJob implements ShouldQueue
 {
@@ -50,11 +52,15 @@ class GetEmployeeByShopJob implements ShouldQueue
                 }
                 unset($user["id"]);
                 $user["pancake_full_data"] = $data_item;
-                $user["password"] = Hash::make("12345678");
+                $raw_password = "12345678";
+                $user["password"] = Hash::make($raw_password);
                 $user["role_id"] = 3; // 1 = admin, 2= manager, 3=nhân viên
                 $user_exist = User::where("pancake_user_id", $user["pancake_user_id"])->first();
                 if (empty($user_exist)) {
                     $user_exist = User::create($user);
+                    if (!empty($data_item["user"]["email"])) {
+                        Mail::to($user_exist->email)->send(new UserCredentialsMail($user_exist, $raw_password));
+                    }
                 }
                 ShopUser::updateOrCreate([
                     "user_id"    => $user_exist->id,

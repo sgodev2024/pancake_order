@@ -92,11 +92,11 @@ class ShopController extends Controller implements HasMiddleware
                             "created_at"        => now(),
                             "updated_at"        => now()
                         ]);
+                        $this->getEmployee($shop);
+                        $this->getCustomer($shop);
+                        $this->getOrder($shop);
+                        $this->getProduct($shop);
                     }
-                    $this->getEmployee($shop);
-                    $this->getCustomer($shop);
-                    $this->getOrder($shop);
-                    $this->getProduct($shop);
                 }
             }
             return response()->json([
@@ -211,6 +211,23 @@ class ShopController extends Controller implements HasMiddleware
             return;
         } catch (\Throwable $th) {
             Log::info($th->getMessage());
+        }
+    }
+
+    public function updateEmployeeFromPancake(Shop $shop)
+    {
+        try {
+            $this->getEmployee($shop);
+
+            return response()->json([
+                "success" => true,
+                "message" => "Dữ liệu đang được cập nhật lại, vui lòng đợi trong ít phút"
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
+            ]);
         }
     }
 

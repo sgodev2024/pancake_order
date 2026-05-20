@@ -1,0 +1,82 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Setting;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
+
+class SettingController extends Controller
+{
+    public function show($code)
+    {
+        try {
+            $setting = Setting::where("code", $code)->first();
+
+            return response()->json([
+                "success" => true,
+                "data"    => [
+                    "setting" => $setting ? $setting->data : NULL,
+                    "image"   => $setting ? asset("uploads/images/$setting->image") : NULL
+                ]
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
+            ]);
+        }
+    }
+
+    public function store(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'data'  => ['required'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+        ], [
+            'data.required'  => 'Dữ liệu không được để trống.',
+            'image.image'    => 'File phải là định dạng ảnh.',
+            'image.mimes'    => 'Chỉ chấp nhận jpg, jpeg, png, webp.',
+            'image.max'      => 'Ảnh không được vượt quá 5MB.',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                "success" => false,
+                "message" => "Dữ liệu không hợp lệ",
+                "errors"  => $validator->errors()
+            ], 422);
+        }
+        $setting = Setting::where("code", $request->code)->first();
+        if (!$setting) {
+            $setting = Setting::create([
+                "code"  => $request->code,
+                "data"  => $request->data,
+                "image" => $this->storeImage($request->image)
+            ]);
+        } else {
+            if (!empty($request->image)) {
+                unlink(public_path("uploads/images/$setting->image"));
+            }
+            $setting->update([
+                "data" => $request->data,
+                "image" => !empty($request->image) ? $this->storeImage($request->image) : $setting->image
+            ]);
+        }
+
+        return response()->json([
+            "success" => true,
+            "message" => "Cập nhật thành công"
+        ]);
+    }
+
+    public function storeImage($image)
+    {
+        if (!empty($image)) {
+            $image->move("uploads/images", $image->getClientOriginalName());
+        }
+
+        return NULL;
+    }
+}

@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\RolePermissionController;
+use App\Http\Controllers\Api\SettingController;
 use App\Http\Controllers\Api\ShopController;
 use App\Http\Controllers\Api\ShopCustomerController;
 use App\Http\Controllers\Api\ShopOrderController;
@@ -64,6 +65,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('permissions', PermissionController::class);
     Route::apiResource('role-permissions', RolePermissionController::class);
     
+    Route::post("shops/{shop_id}/update-employee-from-pancake", [ShopController::class, 'updateEmployeeFromPancake']);
     Route::apiResource('shops', ShopController::class);
     Route::apiResource('shops.customers', ShopCustomerController::class);
     Route::apiResource('shops.orders', ShopOrderController::class);
@@ -82,7 +84,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post('customer-cares/{id}/accept', [CustomerCareController::class, "accept"]);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
     Route::get('customer-cares/{id}/orders', [CustomerCareController::class, "getOrder"]);
-
+    Route::apiResource('settings', SettingController::class);
     Route::get("overview", [CustomerCareController::class, "overview"]);
 
     Route::put("api-key", function () {
