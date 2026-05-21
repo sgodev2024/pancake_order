@@ -62,8 +62,9 @@ class SettingController extends Controller
                 "image" => $this->storeImage($request->image)
             ]);
         } else {
-            if (!empty($request->image)) {
-                unlink(public_path("uploads/images/$setting->image"));
+            $oldImage = public_path("uploads/images/{$setting->image}");
+            if (!empty($request->image) && file_exists($oldImage)) {
+                unlink($oldImage);
             }
             $setting->update([
                 "data" => $request->data,
@@ -80,7 +81,7 @@ class SettingController extends Controller
     public function storeImage($image)
     {
         if (!empty($image)) {
-            $image->move("uploads/images", $image->getClientOriginalName());
+            $image->move(public_path("uploads/images"), $image->getClientOriginalName());
         }
 
         return NULL;
