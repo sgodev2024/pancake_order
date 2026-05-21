@@ -13,18 +13,28 @@ class SettingController extends Controller
     {
         try {
             $setting = Setting::where("code", $code)->first();
-            if ($setting->code == "smtp" && !auth()->check()) {
+            if ($setting) {
+                if ($setting->code == "smtp" && !auth()->check()) {
+                    return response()->json([
+                        "success" => false,
+                        "message" => "Bạn không có quyền"
+                    ]);
+                }
+
                 return response()->json([
-                    "success" => false,
-                    "message" => "Bạn không có quyền"
+                    "success" => true,
+                    "data"    => [
+                        "setting" => $setting->data,
+                        "image"   => asset("uploads/images/$setting->image")
+                    ]
                 ]);
             }
-
+            
             return response()->json([
-                "success" => true,
+                "success" => false,
                 "data"    => [
-                    "setting" => $setting ? $setting->data : NULL,
-                    "image"   => $setting ? asset("uploads/images/$setting->image") : NULL
+                    "setting" => NULL,
+                    "image"   => NULL
                 ]
             ]);
         } catch (\Throwable $th) {
@@ -37,45 +47,52 @@ class SettingController extends Controller
 
     public function store(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'data'  => ['required'],
-            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
-        ], [
-            'data.required'  => 'Dữ liệu không được để trống.',
-            'image.image'    => 'File phải là định dạng ảnh.',
-            'image.mimes'    => 'Chỉ chấp nhận jpg, jpeg, png, webp.',
-            'image.max'      => 'Ảnh không được vượt quá 5MB.',
-        ]);
+        try {
+            $validator = Validator::make($request->all(), [
+                'data'  => ['required'],
+                'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            ], [
+                'data.required'  => 'Dữ liệu không được để trống.',
+                'image.image'    => 'File phải là định dạng ảnh.',
+                'image.mimes'    => 'Chỉ chấp nhận jpg, jpeg, png, webp.',
+                'image.max'      => 'Ảnh không được vượt quá 5MB.',
+            ]);
 
-        if ($validator->fails()) {
+            if ($validator->fails()) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Dữ liệu không hợp lệ",
+                    "errors"  => $validator->errors()
+                ], 422);
+            }
+            $setting = Setting::where("code", $request->code)->first();
+            if (!$setting) {
+                $setting = Setting::create([
+                    "code"  => $request->code,
+                    "data"  => $request->data,
+                    "image" => $this->storeImage($request->image)
+                ]);
+            } else {
+                $oldImage = public_path("uploads/images/{$setting->image}");
+                if (!empty($request->image) && file_exists($oldImage)) {
+                    unlink($oldImage);
+                }
+                $setting->update([
+                    "data" => $request->data,
+                    "image" => !empty($request->image) ? $this->storeImage($request->image) : $setting->image
+                ]);
+            }
+
+            return response()->json([
+                "success" => true,
+                "message" => "Cập nhật thành công"
+            ]);
+        } catch (\Throwable $th) {
             return response()->json([
                 "success" => false,
-                "message" => "Dữ liệu không hợp lệ",
-                "errors"  => $validator->errors()
-            ], 422);
-        }
-        $setting = Setting::where("code", $request->code)->first();
-        if (!$setting) {
-            $setting = Setting::create([
-                "code"  => $request->code,
-                "data"  => $request->data,
-                "image" => $this->storeImage($request->image)
-            ]);
-        } else {
-            $oldImage = public_path("uploads/images/{$setting->image}");
-            if (!empty($request->image) && file_exists($oldImage)) {
-                unlink($oldImage);
-            }
-            $setting->update([
-                "data" => $request->data,
-                "image" => !empty($request->image) ? $this->storeImage($request->image) : $setting->image
+                "message" => $th->getMessage()
             ]);
         }
-
-        return response()->json([
-            "success" => true,
-            "message" => "Cập nhật thành công"
-        ]);
     }
 
     public function storeImage($image)
