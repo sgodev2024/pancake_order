@@ -13,6 +13,12 @@ class SettingController extends Controller
     {
         try {
             $setting = Setting::where("code", $code)->first();
+            if ($setting->code == "smtp" && !auth()->check()) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Bạn không có quyền"
+                ]);
+            }
 
             return response()->json([
                 "success" => true,

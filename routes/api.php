@@ -39,7 +39,7 @@ Route::prefix('v1/auth')->group(function () {
     // Reset mật khẩu mới
     Route::post('reset-password', [AuthController::class, 'resetPassword']);
 });
-
+Route::apiResource('/v1/settings/{code}', [SettingController::class, "show"]);
 // --- Nhóm các Route Private (Yêu cầu Passport Token) ---
 Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post('/change-first-password', [AuthController::class, 'changeFirstPassword']);
@@ -84,7 +84,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post('customer-cares/{id}/accept', [CustomerCareController::class, "accept"]);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
     Route::get('customer-cares/{id}/orders', [CustomerCareController::class, "getOrder"]);
-    Route::apiResource('settings', SettingController::class);
+    Route::post("settings", [SettingController::class, "store"]);
     Route::get("overview", [CustomerCareController::class, "overview"]);
 
     Route::put("api-key", function () {
