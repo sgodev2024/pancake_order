@@ -14,7 +14,7 @@ class SettingController extends Controller
         try {
             $setting = Setting::where("code", $code)->first();
             if ($setting) {
-                if ($setting->code == "smtp" && !auth()->check()) {
+                if ($setting->code == "smtp" && !auth("api")->check()) {
                     return response()->json([
                         "success" => false,
                         "message" => "Bạn không có quyền"
