@@ -82,6 +82,8 @@ class SettingController extends Controller
     {
         if (!empty($image)) {
             $image->move(public_path("uploads/images"), $image->getClientOriginalName());
+
+            return $image->getClientOriginalName();
         }
 
         return NULL;
