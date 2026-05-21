@@ -39,7 +39,7 @@ Route::prefix('v1/auth')->group(function () {
     // Reset mật khẩu mới
     Route::post('reset-password', [AuthController::class, 'resetPassword']);
 });
-Route::apiResource('/v1/settings/{code}', [SettingController::class, "show"]);
+Route::get('/v1/settings/{code}', [SettingController::class, "show"]);
 // --- Nhóm các Route Private (Yêu cầu Passport Token) ---
 Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post('/change-first-password', [AuthController::class, 'changeFirstPassword']);
