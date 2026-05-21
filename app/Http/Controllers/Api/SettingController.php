@@ -31,7 +31,7 @@ class SettingController extends Controller
             }
             
             return response()->json([
-                "success" => false,
+                "success" => true,
                 "data"    => [
                     "setting" => NULL,
                     "image"   => NULL
