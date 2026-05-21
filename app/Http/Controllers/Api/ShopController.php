@@ -37,19 +37,32 @@ class ShopController extends Controller implements HasMiddleware
         $this->apiUrl = env("PANCAKE_API_V1");
     }
 
-    public function index()
+    public function index(Request $request)
     {
         try {
+            $inputs = $request->only("date_from", "date_to");
             return response()->json([
                 "success" => true,
                 "data"    => Shop::select("id", "name", "pancake_shop_id", "care_cycle_days")
-                                 ->with(["users" => function ($q) {
-                                    $q->select("users.id", "users.name", "users.email", "users.role_id")
-                                      ->with(["role" => function ($query) {
-                                        $query->select("roles.id", "roles.name");
-                                      }]);
-                                 }])
-                                 ->where(function ($q) {
+                                 ->with([
+                                    "users" => function ($q) {
+                                        $q->select("users.id", "users.name", "users.email", "users.role_id")
+                                        ->with(["role" => function ($query) {
+                                            $query->select("roles.id", "roles.name");
+                                        }]);
+                                    }
+                                 ])
+                                 ->withSum([
+                                    "orders as total_cod" => function ($q) use ($inputs) {
+                                        if (!empty($inputs["date_from"])) {
+                                            $q->whereDate("created_at", ">=", $inputs["date_from"]);
+                                        }
+                                        if (!empty($inputs["date_to"])) {
+                                            $q->whereDate("created_at", "<=", $inputs["date_to"]);
+                                        }
+                                    }
+                                ], "cod")
+                                 ->where(function ($q) use ($inputs) {
                                     if (!is_admin()) {
                                         // Lọc các shop mà danh sách users của nó có chứa user đang đăng nhập
                                         $q->whereHas('users', function ($userQuery) {
