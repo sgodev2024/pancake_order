@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\ShopOrderController;
 use App\Http\Controllers\Api\ShopUserController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\WebhookController;
+use App\Http\Controllers\Api\LoyaltyTierController;
 use App\Models\ApiKey;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -86,6 +87,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('customer-cares/{id}/orders', [CustomerCareController::class, "getOrder"]);
     Route::post("settings", [SettingController::class, "store"]);
     Route::get("overview", [CustomerCareController::class, "overview"]);
+
+    Route::apiResource('loyalty-tiers', LoyaltyTierController::class);
 
     Route::put("api-key", function () {
         ApiKey::updateOrCreate(
