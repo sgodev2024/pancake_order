@@ -14,7 +14,15 @@ class CustomerCareController extends Controller
     public function index(Request $request)
     {
         try {
-            $inputs = $request->only("type", "page", "shop_id", "status", "user_id", "is_accept");
+            $inputs = $request->only(
+                "type",
+                "page",
+                "shop_id",
+                "status",
+                "user_id",
+                "is_accept",
+                "is_confirm_care"
+            );
             $user = auth()->user();
             $result = $this->buildQuery($inputs["type"], $user, $inputs)
                            ->with([
@@ -64,6 +72,9 @@ class CustomerCareController extends Controller
                 $query->whereIn("shop_id", $user->shops()->select("shops.id"));
             }
         }
+        if (isset($inputs["is_confirm_care"])) {
+            $query->where("is_confirm_care", $inputs["is_confirm_care"]);
+        }
         if (isset($inputs["user_id"])) {
             $query->where(function ($q) use ($inputs) {
                     $q->where("user_creator_id", $inputs["user_id"])
@@ -92,16 +103,13 @@ class CustomerCareController extends Controller
     private function applyAccessFilter($q, $user): void
     {
         if (is_admin() || is_manager()) return;
-        $q->where("is_confirm_care", 0); // lấy những thằng chưa xác nhận cskh nếu không phải admin hoặc manager
         $q->where(function ($query) use ($user) {
             $query->where(function ($query1) use ($user) {
                         $query1->where("user_creator_id", $user->pancake_user_id)
                             ->orWhere("user_care_id", $user->pancake_user_id)
                             ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
                   })
-                  ->orWhereHas("customer_assigneds", function ($q2) use ($user) {
-                    $q2->where("customer_assigneds.pancake_user_id", $user->pancake_user_id);
-                  });
+                  ->orWhereHas("users");
         });
     }
 
