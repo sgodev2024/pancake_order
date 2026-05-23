@@ -10,7 +10,7 @@ class MailConfigService
     public static function setDynamicConfig()
     {
         try {
-            $setting = Setting::where('code', 'setting_general')->first();
+            $setting = Setting::where('code', 'smtp')->first();
             if ($setting) {
                 $data = $setting->data;
                 config([
