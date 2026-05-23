@@ -43,7 +43,7 @@ class ShopController extends Controller implements HasMiddleware
             $inputs = $request->only("date_from", "date_to");
             return response()->json([
                 "success" => true,
-                "data"    => Shop::select("id", "name", "pancake_shop_id", "care_cycle_days")
+                "data"    => Shop::select("id", "name", "pancake_shop_id", "care_cycle_days", "created_at")
                                  ->with([
                                     "users" => function ($q) {
                                         $q->select("users.id", "users.name", "users.email", "users.role_id")
