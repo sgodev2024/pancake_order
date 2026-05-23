@@ -7,6 +7,7 @@ use App\Models\CustomerCare;
 use App\Models\Order;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class CustomerCareController extends Controller
 {
@@ -91,10 +92,16 @@ class CustomerCareController extends Controller
     private function applyAccessFilter($q, $user): void
     {
         if (is_admin() || is_manager()) return;
+        $q->where("is_confirm_care", 0); // lấy những thằng chưa xác nhận cskh nếu không phải admin hoặc manager
         $q->where(function ($query) use ($user) {
-            $query->where("user_creator_id", $user->pancake_user_id)
-                  ->orWhere("user_care_id", $user->pancake_user_id)
-                  ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+            $query->where(function ($query1) use ($user) {
+                        $query1->where("user_creator_id", $user->pancake_user_id)
+                            ->orWhere("user_care_id", $user->pancake_user_id)
+                            ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+                  })
+                  ->orWhereHas("customer_assigneds", function ($q2) use ($user) {
+                    $q2->where("customer_assigneds.pancake_user_id", $user->pancake_user_id);
+                  });
         });
     }
 
@@ -325,6 +332,61 @@ class CustomerCareController extends Controller
             return response()->json([
                 "success" => false,
                 "message" => "Vui lòng thử lại"
+            ]);
+        }
+    }
+
+    public function assign(Request $request, $customer_care_id)
+    {
+        try {
+            $inputs = $request->only(
+                "pancake_user_ids"
+            );
+            $customer_care = CustomerCare::find($customer_care_id);
+            if (!$customer_care) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Lịch chăm sóc này không tồn tại"
+                ]);
+            }
+            $customer_care->users()->sync(
+                collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
+                    $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
+                ])->toArray()
+            );
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
+            ]);
+        }
+    }
+
+    /** User confirm nhận cskh */
+    public function confirmCare($customer_care_id)
+    {
+        try {
+            DB::beginTransaction();
+            $customer_care = CustomerCare::find($customer_care_id);
+            if (!$customer_care) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Lịch chăm sóc này không tồn tại"
+                ]);
+            }
+            $customer_care->update([
+                "is_confirm_care" => true,
+                "user_creator_id" => auth()->user()->pancake_user_id
+            ]);
+            $customer_care->users()->detach();
+            DB::commit();
+            
+        } catch (\Throwable $th) {
+            DB::rollback();
+            
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
             ]);
         }
     }

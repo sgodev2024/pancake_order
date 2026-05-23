@@ -25,7 +25,8 @@ class CustomerCare extends Model
         "is_accept",
         "user_accept_id",
         "total_edit",
-        "reason"
+        "reason",
+        "is_confirm_care"
     ];
 
     public function shop()
@@ -49,5 +50,11 @@ class CustomerCare extends Model
     {
         return $this->belongsTo(User::class, "user_assigning_seller_id", "pancake_user_id")
                     ->select("id", "name", "pancake_user_id");
+    }
+
+    public function users()
+    {
+        return $this->belongsToMany(User::class, 'customer_assigneds', 'customer_care_id', 'pancake_user_id')
+                    ->withPivot('pancake_customer_id');
     }
 }

@@ -80,11 +80,14 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get("users/all-user", [UserController::class, "getAllUser"]);
     Route::apiResource('users', UserController::class);
     Route::get("users/{pancake_user_id}/orders", [UserController::class, "getOrder"]);
-
-    Route::apiResource('customer-cares', CustomerCareController::class);
+    
+    Route::post('customer-cares/{id}/confirm', [CustomerCareController::class, "confirmCare"]);
+    Route::post('customer-cares/{id}/assign', [CustomerCareController::class, "assign"]);
     Route::post('customer-cares/{id}/accept', [CustomerCareController::class, "accept"]);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
     Route::get('customer-cares/{id}/orders', [CustomerCareController::class, "getOrder"]);
+    Route::apiResource('customer-cares', CustomerCareController::class);
+    
     Route::post("settings", [SettingController::class, "store"]);
     Route::get("overview", [CustomerCareController::class, "overview"]);
 
