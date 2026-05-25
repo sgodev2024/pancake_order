@@ -349,14 +349,19 @@ class UserController extends Controller implements HasMiddleware
         ], 200); // Có thể dùng 204 No Content nếu không muốn trả về body
     }
 
-    public function getAllUser()
+    public function getAllUser(Request $request)
     {
         try {
+            $inputs = $request->only("shop_id");
             $queries = User::query();
             $user = auth()->user();
             if (!is_admin()) {
-                $queries->whereHas("shops", function ($query) use ($user){
-                    $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
+                $queries->whereHas("shops", function ($query) use ($user, $inputs) {
+                    if (isset($inputs["shop_id"])) {
+                        $query->where("shops.id", $inputs["shop_id"]);
+                    } else {
+                        $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
+                    }
                 });
             }
 

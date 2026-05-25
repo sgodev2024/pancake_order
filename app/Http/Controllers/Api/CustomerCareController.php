@@ -297,7 +297,10 @@ class CustomerCareController extends Controller
                   ->where(function ($q2) use ($user) {
                     $q2->where("user_creator_id", $user->pancake_user_id)
                         ->orWhere("user_care_id", $user->pancake_user_id)
-                        ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+                        ->orWhere("user_assigning_seller_id", $user->pancake_user_id)
+                        ->orWhereHas("users", function ($q3) use ($user) {
+                            $q3->where("users.pancake_user_id", $user->pancake_user_id);
+                        });
                 });
             })
             ->where("is_accept", 1)
