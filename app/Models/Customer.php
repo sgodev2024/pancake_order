@@ -36,6 +36,6 @@ class Customer extends Model
 
     public function loyalty_tier()
     {
-        return $this->belongsTo(LoyaltyTier::class)->select("id", "name");
+        return $this->belongsTo(LoyaltyTier::class)->select("id", "name", "discount_percent");
     }
 }
