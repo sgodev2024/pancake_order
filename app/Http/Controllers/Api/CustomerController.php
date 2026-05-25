@@ -54,6 +54,7 @@ class CustomerController extends Controller implements HasMiddleware
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
             $query->select([
                 'id',
+                'purchased_amount',
                 'shop_id',
                 'name', 
                 'phone_numbers',

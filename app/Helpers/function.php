@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\LoyaltyTier;
 use App\Models\Permission;
 use App\Models\RolePermission;
 use App\Models\User;
@@ -43,4 +44,13 @@ function can_access($pms_param)
     if (!$role_pms) { return false; }
 
     return true;
+}
+
+function get_loyalty_tier($purchased_amount)
+{
+    $loyaltyTier = LoyaltyTier::where("min_order_value", "<=", $purchased_amount)
+                                ->where("max_order_value", ">=", $purchased_amount)
+                                ->first();
+    
+    return $loyaltyTier->id ?? NULL;
 }

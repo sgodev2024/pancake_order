@@ -62,6 +62,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             "purchased_amount"    => $customer["purchased_amount"] ?? 0,
                             "pancake_customer_id" => $customer["id"],
                             "fb_id"               => $customer["fb_id"],
+                            'loyalty_tier_id'     => get_loyalty_tier($customer["purchased_amount"] ?? 0),
                             "name"                => $customer["name"],
                             "phone_numbers"       => !empty($this->data["bill_phone_number"]) ? $this->data["bill_phone_number"] : implode(",", ($customer["phone_numbers"] ?? [])),
                             "pancake_full_data"   => $customer
@@ -79,6 +80,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $customer_exist->update([
                             "assigned_user_id" => $customer["assigned_user_id"] ?? NULL,
                             "name"             => $customer["name"],
+                            'loyalty_tier_id'  => get_loyalty_tier($customer["purchased_amount"] ?? 0),
                             "purchased_amount" => $customer["purchased_amount"] ?? $customer_exist->purchased_amount,
                             "phone_numbers"    => $this->data["bill_phone_number"] ?? $customer_exist->phone_numbers//$unique_phones
                         ]);
