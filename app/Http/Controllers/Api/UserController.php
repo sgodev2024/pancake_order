@@ -362,7 +362,7 @@ class UserController extends Controller implements HasMiddleware
 
             return response()->json([
                 "success" => true,
-                "data"    => $queries->select("id", "name")->latest()->get()
+                "data"    => $queries->select("id", "name", "pancake_user_id")->latest()->get()
             ]);
         } catch (\Throwable $th) {
             return response()->json([
