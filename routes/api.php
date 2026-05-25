@@ -25,7 +25,10 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
-
+Route::get('/test', function () {
+    $t = \App\Models\CustomerCare::find(31);
+    dd($t->users);
+});
 // --- Nhóm các Route Public (Không cần Token) ---
 Route::prefix('v1/auth')->group(function () {
     // Đăng ký tài khoản mới

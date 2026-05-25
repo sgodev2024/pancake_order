@@ -109,7 +109,9 @@ class CustomerCareController extends Controller
                                ->orWhere("user_care_id", $user->pancake_user_id)
                                ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
                   })
-                  ->orWhereHas("users");
+                  ->orWhereHas("users", function ($q) use ($user) {
+                    $q->where("users.pancake_user_id", $user->pancake_user_id);
+                  });
         });
     }
 
