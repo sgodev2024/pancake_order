@@ -10,12 +10,14 @@ class Customer extends Model
 
     protected $fillable = [
         "shop_id",
+        "loyalty_tier_id",
         "pancake_customer_id",
         "fb_id",
         "name",
         "phone_numbers",
         "pancake_full_data",
-        "assigned_user_id"
+        "assigned_user_id",
+        "purchased_amount"
     ];
 
     protected $casts = [
@@ -30,5 +32,10 @@ class Customer extends Model
     public function orders()
     {
         return $this->hasMany(Order::class, "pancake_customer_id", "pancake_customer_id");
+    }
+
+    public function loyalty_tier()
+    {
+        return $this->belongsTo(LoyaltyTier::class)->select("id", "name");
     }
 }

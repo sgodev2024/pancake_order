@@ -3,13 +3,23 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\PermissionCheckMiddleware;
 use Illuminate\Http\Request;
 use App\Models\LoyaltyTier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Routing\Controllers\Middleware;
 
 class LoyaltyTierController extends Controller
 {
+    public static function middleware(): array
+    {
+        return [
+            // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
+            new Middleware(PermissionCheckMiddleware::class . ':create-update-destroy-loyalty-tier', only: ['index', 'store', 'update', 'destroy', 'show'])
+        ];
+    }
+
     // GET /api/v1/loyalty-tiers
     public function index(): JsonResponse
     {

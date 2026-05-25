@@ -44,9 +44,12 @@ class CustomerController extends Controller implements HasMiddleware
                     $query->whereIn("shop_id", $user->shops()->select("shops.id"));
                 }
             }
-            $query->with(["shop" => function ($q) {
-                $q->select("shops.id", "shops.name");
-            }]);
+            $query->with([
+                "shop" => function ($q) {
+                    $q->select("shops.id", "shops.name");
+                },
+                "loyalty_tier"
+            ]);
             // 2. Select các trường cụ thể cần lấy để tối ưu performance
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
             $query->select([

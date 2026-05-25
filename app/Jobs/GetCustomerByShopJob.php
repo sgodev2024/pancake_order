@@ -59,6 +59,7 @@ class GetCustomerByShopJob implements ShouldQueue
                         'pancake_customer_id' => $pancake_customer_id,
                         'fb_id'               => $data_item['fb_id'] ?? null,
                         'name'                => $data_item['name'] ?? null,
+                        'purchased_amount'    => $data_item["purchased_amount"] ?? 0,
                         'phone_numbers'       => !empty($data_item["phone_numbers"]) ? implode(",", $data_item["phone_numbers"]) : NULL,
                         'pancake_full_data'   => json_encode($data_item),
                         'created_at'          => $time,

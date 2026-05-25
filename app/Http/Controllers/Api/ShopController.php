@@ -27,6 +27,7 @@ class ShopController extends Controller implements HasMiddleware
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
             new Middleware(PermissionCheckMiddleware::class . ':create-shop', only: ['store']),
+            new Middleware(PermissionCheckMiddleware::class . ':delete-shop', only: ['destroy']),
             new Middleware(PermissionCheckMiddleware::class . ':update-shop', only: ['update']),
             // new Middleware(PermissionCheckMiddleware::class . ':list-shop', only: ['index']),
         ];
@@ -255,5 +256,11 @@ class ShopController extends Controller implements HasMiddleware
             )->onQueue("get-employee");
         }
         return;
+    }
+
+    public function destroy(Shop $shop)
+    {
+        $shop->delete();
+        return response()->json(['success' => true, 'message' => 'Đã xóa Shop thành công'], 200);
     }
 }

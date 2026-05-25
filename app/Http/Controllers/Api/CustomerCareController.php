@@ -389,6 +389,10 @@ class CustomerCareController extends Controller
             $customer_care->users()->detach();
             DB::commit();
             
+            return response()->json([
+                "success" => true,
+                "message" => "Nhận thành công"
+            ]);
         } catch (\Throwable $th) {
             DB::rollback();
             
