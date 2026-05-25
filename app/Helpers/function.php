@@ -51,6 +51,10 @@ function get_loyalty_tier($purchased_amount)
     $loyaltyTier = LoyaltyTier::where("min_order_value", "<=", $purchased_amount)
                                 ->where("max_order_value", ">=", $purchased_amount)
                                 ->first();
-    
+    if (!$loyaltyTier) {
+        $loyaltyTier = LoyaltyTier::where("min_order_value", "<=", $purchased_amount)
+                                ->whereNull("max_order_value")
+                                ->first();
+    }
     return $loyaltyTier->id ?? NULL;
 }

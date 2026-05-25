@@ -103,11 +103,6 @@ class CustomerCareController extends Controller
     private function applyAccessFilter($q, $user): void
     {
         if (is_admin() || is_manager()) return;
-        $q->where(function($query) {
-            $query->whereNotNull("user_creator_id")
-                  ->orWhereNotNull("user_care_id")
-                  ->orWhereNotNull("user_assigning_seller_id");
-        });
         $q->where(function ($query) use ($user) {
             $query->where(function ($query1) use ($user) {
                         $query1->where("user_creator_id", $user->pancake_user_id)
