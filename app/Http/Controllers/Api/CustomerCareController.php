@@ -362,6 +362,11 @@ class CustomerCareController extends Controller
                     $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
                 ])->toArray()
             );
+
+            return response()->json([
+                "success" => true,
+                "message" => "Phân công thành công"
+            ]);
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => false,
