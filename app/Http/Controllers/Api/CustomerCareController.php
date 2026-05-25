@@ -384,6 +384,12 @@ class CustomerCareController extends Controller
     public function confirmCare($customer_care_id)
     {
         try {
+            if (is_admin()) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Nhận CSKH chỉ dành cho nhân viên của cửa hàng"
+                ]);
+            }
             DB::beginTransaction();
             $customer_care = CustomerCare::find($customer_care_id);
             if (!$customer_care) {
