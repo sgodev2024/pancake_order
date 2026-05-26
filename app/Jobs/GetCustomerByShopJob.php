@@ -42,16 +42,11 @@ class GetCustomerByShopJob implements ShouldQueue
     public function handle(): void
     {
         try {
-            $now = now();
-            $pancakeIds = collect($this->datas)->pluck('id')->filter()->toArray();
-            $existingIds = Customer::where('shop_id', $this->shop_id)
-                                    ->whereIn('pancake_customer_id', $pancakeIds)
-                                    ->pluck('id', 'pancake_customer_id')
-                                    ->toArray();
             $insertData = [];
             foreach ($this->datas as $data_item) {
                 $pancake_customer_id = $data_item['id'];
-                if (!isset($existingIds[$pancake_customer_id]) && $data_item["order_count"] > 0) {
+                $customer = Customer::where("shop_id", $this->shop_id)->where("pancake_customer_id", $pancake_customer_id)->first();
+                if (!$customer && $data_item["order_count"] > 0) {
                     $time = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
                     $insertData[] = [
                         'shop_id'             => $this->shop_id,
