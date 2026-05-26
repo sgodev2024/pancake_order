@@ -106,11 +106,11 @@ class ShopController extends Controller implements HasMiddleware
                             "created_at"        => now(),
                             "updated_at"        => now()
                         ]);
-                        $this->getEmployee($shop);
-                        $this->getCustomer($shop);
-                        $this->getOrder($shop);
-                        $this->getProduct($shop);
                     }
+                    $this->getEmployee($shop);
+                    $this->getCustomer($shop);
+                    $this->getOrder($shop);
+                    $this->getProduct($shop);
                 }
             }
             return response()->json([

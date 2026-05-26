@@ -9,7 +9,7 @@ class OrderService
     public function getOrderItem($data_item, $shop_id)
     {
         $total_quantity = 0;
-        if ($data_item["items_length"] > 0) {
+        if (!empty($data_item["items"])) {
             $total_quantity = collect($data_item["items"])->sum("quantity");
         }
         $created_at = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
