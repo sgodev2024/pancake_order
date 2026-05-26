@@ -148,7 +148,7 @@ class ShopController extends Controller implements HasMiddleware
     {
         Log::info("======================getCustomer=====================");
         try {
-            $page_size = 500;
+            $page_size = 20;
             $response = Http::get($this->apiUrl . "shops/{$shop->pancake_shop_id}/customers?api_key={$shop->api_key}&page_size={$page_size}&page_number=1")->json();
             if (!empty($response["total_pages"])) {
                 $total_pages = $response["total_pages"];
@@ -176,7 +176,7 @@ class ShopController extends Controller implements HasMiddleware
     {
         Log::info("======================getProduct=====================");
         try {
-            $page_size = 500;
+            $page_size = 20;
             $response = Http::get($this->apiUrl . "shops/{$shop->pancake_shop_id}/products/variations?api_key={$shop->api_key}&page_size={$page_size}&page_number=1")->json();
             if (!empty($response["total_pages"])) {
                 $total_pages = $response["total_pages"];
@@ -204,7 +204,7 @@ class ShopController extends Controller implements HasMiddleware
     {
         Log::info("======================getOrder=====================");
         try {
-            $page_size = 500;
+            $page_size = 20;
             $response = Http::get($this->apiUrl . "shops/{$shop->pancake_shop_id}/orders?api_key={$shop->api_key}&page_size={$page_size}&page_number=1")->json();
             if (!empty($response["total_pages"])) {
                 $total_pages = $response["total_pages"];
