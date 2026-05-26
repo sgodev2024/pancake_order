@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Validation\Rule;
 
 class RoleController extends Controller implements HasMiddleware
 {
@@ -48,19 +49,30 @@ class RoleController extends Controller implements HasMiddleware
     // 2. Thêm Role mới
     public function store(Request $request)
     {
-        $request->merge([
-            'slug' => Str::slug($request->input('name'))
-        ]);
+        
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|unique:roles,name|max:255',
-            'slug' => 'required|string|unique:roles,slug|max:255',
+            'code' => [
+                'required',
+                'string',
+                'regex:/^[a-z0-9-]+$/',
+                // Bỏ qua các bản ghi đã bị xóa mềm khi check unique
+                Rule::unique('roles', 'slug')->withoutTrashed() 
+            ],
+        ], [
+            'name.unique'   => 'Tên quyền đã tồn tại',
+            'name.required' => 'Tên quyền là bắt buộc',
+            'code.required' => 'Mã quyền là bắt buộc',
+            'code.regex'    => 'Mã quyền chỉ được chứa chữ thường không dấu, số và dấu -',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
-
-        $role = Role::create($request->only('name', 'slug'));
+        $role = Role::create([
+            "name" => $request->name,
+            "slug" => $request->code
+        ]);
         return response()->json(['success' => true, 'data' => $role], 201);
     }
 
