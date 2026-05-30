@@ -32,7 +32,8 @@ class CustomerController extends Controller implements HasMiddleware
                 "shop_id",
                 "date_from",
                 "date_to",
-                "search"
+                "search",
+                "loyalty_tier_id"
             );
             $user = auth()->user();
             // 1. Khởi tạo query từ relationship
@@ -43,6 +44,9 @@ class CustomerController extends Controller implements HasMiddleware
                 if (!is_admin()) {
                     $query->whereIn("shop_id", $user->shops()->select("shops.id"));
                 }
+            }
+            if (isset($inputs["loyalty_tier_id"])) {
+                $query->where("loyalty_tier_id", $inputs["loyalty_tier_id"]);
             }
             $query->with([
                 "shop" => function ($q) {
