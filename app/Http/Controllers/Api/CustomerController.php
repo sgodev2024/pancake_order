@@ -64,7 +64,8 @@ class CustomerController extends Controller implements HasMiddleware
                 'phone_numbers',
                 'pancake_customer_id',
                 'pancake_full_data',
-                'created_at'
+                'created_at',
+                'loyalty_tier_id'
             ]);
             $query->withCount("orders");
 
