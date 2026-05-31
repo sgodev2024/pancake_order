@@ -23,4 +23,9 @@ class LoyaltyTier extends Model
         'max_order_value'  => 'decimal:2',
         'is_active'        => 'boolean',
     ];
+
+    public function customers()
+    {
+        return $this->hasMany(Customer::class)->select("id", "loyalty_tier_id", "name");
+    }
 }

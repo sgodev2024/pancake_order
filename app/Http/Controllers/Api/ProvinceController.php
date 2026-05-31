@@ -1,0 +1,63 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Province;
+use Illuminate\Http\Request;
+
+class ProvinceController extends Controller
+{
+    public function index()
+    {
+        return response()->json([
+            "success" => true,
+            "data"    => Province::all()
+        ]);
+    }
+
+    public function report(Request $request)
+    {
+        try {
+            $inputs = $request->only("date_from", "date_to", "province_id", "shop_id");
+            $provinces = Province::query();
+            if (isset($inputs["province_id"])) {
+                $provinces->where("id", $inputs["province_id"]);
+            }
+            $provinces->withCount(["orders" => function ($q) use ($inputs) {
+                if (isset($inputs["shop_id"])) {
+                    $q->where("orders.shop_id", $inputs["shop_id"]);
+                }
+                if (isset($inputs["date_from"])) {
+                    $q->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+                }
+                if (isset($inputs["date_to"])) {
+                    $q->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+                }
+            }]);
+            $provinces->withSum([
+                "orders as total_cod" => function ($q) use ($inputs) {
+                    if (isset($inputs["shop_id"])) {
+                        $q->where("orders.shop_id", $inputs["shop_id"]);
+                    }
+                    if (!empty($inputs["date_from"])) {
+                        $q->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+                    }
+                    if (!empty($inputs["date_to"])) {
+                        $q->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+                    }
+                }
+            ], "cod");
+
+            return response()->json([
+                "success" => true,
+                "data"    => $provinces->get()
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => true,
+                "message" => $th->getMessage()
+            ]);
+        }
+    }
+}

@@ -13,6 +13,7 @@ class Order extends Model
 
     protected $fillable = [
         "shop_id",
+        "province_id",
         "pancake_order_id",
         "order_number_vtp",
         "total_quantity",

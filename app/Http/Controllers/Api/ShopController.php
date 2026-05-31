@@ -42,37 +42,43 @@ class ShopController extends Controller implements HasMiddleware
     {
         try {
             $inputs = $request->only("date_from", "date_to");
+            $shops = Shop::query();
+            $shops->with([
+                "users" => function ($q) {
+                    $q->select("users.id", "users.name", "users.email", "users.role_id")
+                    ->with(["role" => function ($query) {
+                        $query->select("roles.id", "roles.name");
+                    }]);
+                }
+            ]);
+            $shops->withSum([
+                "orders as total_cod" => function ($q) use ($inputs) {
+                    if (!empty($inputs["date_from"])) {
+                        $q->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+                    }
+                    if (!empty($inputs["date_to"])) {
+                        $q->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+                    }
+                }
+            ], "cod");
+            $shops->withCount(["orders" => function ($q) use ($inputs) {
+                if (!empty($inputs["date_from"])) {
+                    $q->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+                }
+                if (!empty($inputs["date_to"])) {
+                    $q->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+                }
+            }]);
+            if (!is_admin()) {
+                $shops->whereHas('users', function ($userQuery) {
+                    $userQuery->where('users.id', auth()->id());
+                });
+            }
+            $shops->addSelect(["id", "name", "pancake_shop_id", "care_cycle_days", "created_at"]);
+
             return response()->json([
                 "success" => true,
-                "data"    => Shop::select("id", "name", "pancake_shop_id", "care_cycle_days", "created_at")
-                                 ->with([
-                                    "users" => function ($q) {
-                                        $q->select("users.id", "users.name", "users.email", "users.role_id")
-                                        ->with(["role" => function ($query) {
-                                            $query->select("roles.id", "roles.name");
-                                        }]);
-                                    }
-                                 ])
-                                 ->withSum([
-                                    "orders as total_cod" => function ($q) use ($inputs) {
-                                        if (!empty($inputs["date_from"])) {
-                                            $q->whereDate("created_at", ">=", $inputs["date_from"]);
-                                        }
-                                        if (!empty($inputs["date_to"])) {
-                                            $q->whereDate("created_at", "<=", $inputs["date_to"]);
-                                        }
-                                    }
-                                ], "cod")
-                                 ->where(function ($q) use ($inputs) {
-                                    if (!is_admin()) {
-                                        // Lọc các shop mà danh sách users của nó có chứa user đang đăng nhập
-                                        $q->whereHas('users', function ($userQuery) {
-                                            $userQuery->where('users.id', auth()->id());
-                                        });
-                                    }
-                                 })
-                                 ->latest()
-                                 ->get()
+                "data"    => $shops->latest()->get()
             ]);
         } catch (\Throwable $th) {
             return response()->json([ 
@@ -225,6 +231,35 @@ class ShopController extends Controller implements HasMiddleware
             return;
         } catch (\Throwable $th) {
             Log::info($th->getMessage());
+        }
+    }
+
+    public function getDataPancake(Request $request, Shop $shop)
+    {
+        try {
+            $type = $request->type;
+            switch ($type) {
+                case 'employee':
+                    $this->getEmployee($shop);
+                    break;
+                case 'order':
+                    $this->getOrder($shop);
+                    break;
+                case 'product':
+                    $this->getProduct($shop);
+                case 'customer':
+                    $this->getCustomer($shop);
+            }
+
+            return response()->json([
+                "success" => true,
+                "message" => "Dữ liệu đang được lấy, vui lòng đợi trong ít phút"
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
+            ]);
         }
     }
 

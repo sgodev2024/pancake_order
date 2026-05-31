@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\ShopUserController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\WebhookController;
 use App\Http\Controllers\Api\LoyaltyTierController;
+use App\Http\Controllers\Api\ProvinceController;
 use App\Models\ApiKey;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -70,6 +71,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('role-permissions', RolePermissionController::class);
     
     Route::post("shops/{shop_id}/update-employee-from-pancake", [ShopController::class, 'updateEmployeeFromPancake']);
+    Route::post("shops/{shop_id}/get-data-pancake", [ShopController::class, 'getDataPancake']);
     Route::apiResource('shops', ShopController::class);
     Route::apiResource('shops.customers', ShopCustomerController::class);
     Route::apiResource('shops.orders', ShopOrderController::class);
@@ -90,6 +92,9 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
     Route::get('customer-cares/{id}/orders', [CustomerCareController::class, "getOrder"]);
     Route::apiResource('customer-cares', CustomerCareController::class);
+
+    Route::get('provinces/report', [ProvinceController::class, "report"]);
+    Route::apiResource('provinces', ProvinceController::class);
     
     Route::post("settings", [SettingController::class, "store"]);
     Route::get("overview", [CustomerCareController::class, "overview"]);

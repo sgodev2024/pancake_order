@@ -21,10 +21,14 @@ class LoyaltyTierController extends Controller
     }
 
     // GET /api/v1/loyalty-tiers
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $type = $request->type ?? NULL;
         $tiers = LoyaltyTier::all();
-
+        if ($type == "report") {
+            $tiers = LoyaltyTier::with("customers")->get();
+        }
+        
         return response()->json(['success' => true, 'data' => $tiers]);
     }
 
