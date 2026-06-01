@@ -376,4 +376,62 @@ class UserController extends Controller implements HasMiddleware
             ]);
         }
     }
+
+    public function getMornitoring()
+    {
+        try {
+            $datas = [];
+            $staffs = User::query()
+                        ->select([
+                            'users.id',
+                            'users.name',
+                        ])
+                        ->selectRaw('
+                            COUNT(DISTINCT orders.id) as total_orders,
+                            COALESCE(SUM(orders.cod), 0) as total_revenue,
+                            
+                            ROUND(
+                                100.0 * COUNT(DISTINCT CASE 
+                                    WHEN customer_cares.date_care = CURDATE() 
+                                    AND customer_cares.status = 1 
+                                    THEN customer_cares.id 
+                                END)
+                                / NULLIF(COUNT(DISTINCT CASE 
+                                    WHEN customer_cares.date_care = CURDATE() 
+                                    THEN customer_cares.id 
+                                END), 0),
+                            2) as care_progress_today,
+
+                            COUNT(DISTINCT CASE 
+                                WHEN customer_cares.date_care < CURDATE() 
+                                AND customer_cares.status = 0 
+                                THEN customer_cares.id 
+                            END) as overdue_care_count
+                        ')
+                        ->leftJoin('orders', 'orders.user_creator_id', '=', 'users.id')
+                        ->leftJoin('customer_cares', 'customer_cares.user_creator_id', '=', 'users.pancake_user_id')
+                        ->groupBy('users.id', 'users.name')
+                        ->get();
+            foreach ($staffs as $staff_item) {
+                $datas[] = [
+                    "name"                => $staff_item->name,
+                    "id"                  => $staff_item->id,
+                    "total_orders"        => $staff_item->total_orders,
+                    "total_revenue"       => $staff_item->total_revenue,
+                    "care_progress_today" => $staff_item->care_progress_today,
+                    "overdue_care_count"  => $staff_item->overdue_care_count
+                ];
+            }
+
+            return response()->json([
+                "success" => true,
+                "data"    => $datas
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => true,
+                "data"    => []
+            ]);
+        }
+    }
 }

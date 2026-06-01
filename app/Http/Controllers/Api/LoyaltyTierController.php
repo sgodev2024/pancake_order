@@ -231,7 +231,10 @@ class LoyaltyTierController extends Controller
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => true,
-                "data"    => []
+                "data"    => [
+                    "total_customer_pendding_upgrade" => 0,
+                    "loyalty_tier_detail"             => []
+                ]
             ]);
         }
     }
