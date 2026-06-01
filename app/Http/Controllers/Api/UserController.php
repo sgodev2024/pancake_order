@@ -410,6 +410,7 @@ class UserController extends Controller implements HasMiddleware
                         ')
                         ->leftJoin('orders', 'orders.user_creator_id', '=', 'users.id')
                         ->leftJoin('customer_cares', 'customer_cares.user_creator_id', '=', 'users.pancake_user_id')
+                        ->whereNotNull('users.pancake_user_id')
                         ->groupBy('users.id', 'users.name')
                         ->get();
             foreach ($staffs as $staff_item) {
