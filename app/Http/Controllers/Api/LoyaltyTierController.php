@@ -123,4 +123,49 @@ class LoyaltyTierController extends Controller
             ]);
         }
     }
+
+    /**
+     * Lấy danh sách hạng
+     * Lấy tổng số khách hàng trong hạng đó
+     * Lấy tổng số tiền đã được discount đối với hạng đó
+     */
+    public function overview()
+    {
+        try {
+            $data = [];
+            $tiers = LoyaltyTier::query()
+                    ->select([
+                        'loyalty_tiers.*'
+                    ])
+                    ->where("loyalty_tiers.is_active", 1)
+                    ->selectRaw('
+                        COUNT(DISTINCT customers.id) as customer_count,
+                        COALESCE(SUM(orders.cod * orders.discount_percent / 100), 0) as total_discount_amount
+                    ')
+                    ->leftJoin('customers', 'customers.loyalty_tier_id', '=', 'loyalty_tiers.id')
+                    ->leftJoin('orders', 'orders.pancake_customer_id', '=', 'customers.pancake_customer_id')
+                    ->groupBy('loyalty_tiers.id', 'loyalty_tiers.name')
+                    ->get();
+            foreach ($tiers as $item) {
+                $data[] = [
+                    "name" => $item->name,
+                    "discount_percent"      => $item->discount_percent,
+                    "min_order_value"       => $item->min_order_value,
+                    "max_order_value"       => $item->max_order_value,
+                    "customers_count"       => $item->customer_count,
+                    "total_discount_amount" => $item->total_discount_amount
+                ];
+            }
+
+            return response()->json([
+                "success" => true,
+                "data"    => $data
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => true,
+                "data"    => []
+            ]);
+        }
+    }
 }
