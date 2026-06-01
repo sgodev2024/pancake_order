@@ -200,8 +200,8 @@ class LoyaltyTierController extends Controller
                             ')
                             ->leftJoin('customers',  function ($join) {
                                 $join->on('customers.purchased_amount', '>=', DB::raw('loyalty_tiers.min_order_value * 0.7'))
-                                    ->on('customers.purchased_amount', '<', 'loyalty_tiers.min_order_value')
-                                    ->whereColumn('customers.loyalty_tier_id', '!=', 'loyalty_tiers.id');
+                                    ->on('customers.purchased_amount', '<', 'loyalty_tiers.max_order_value')
+                                    ->on('customers.loyalty_tier_id', '!=', 'loyalty_tiers.id');
                             })
                             ->groupBy(
                                 'loyalty_tiers.id',
