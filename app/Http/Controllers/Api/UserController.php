@@ -355,16 +355,18 @@ class UserController extends Controller implements HasMiddleware
             $inputs = $request->only("shop_id");
             $queries = User::query();
             $user = auth()->user();
-            if (!is_admin()) {
-                $queries->whereHas("shops", function ($query) use ($user, $inputs) {
-                    if (isset($inputs["shop_id"])) {
-                        $query->where("shops.id", $inputs["shop_id"]);
-                    } else {
-                        $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
-                    }
+            
+            if (isset($inputs["shop_id"])) {
+                $queries->whereHas("shops", function ($query) use ($inputs) {
+                    $query->where("shops.id", $inputs["shop_id"]);
                 });
+            } else {
+                if (!is_admin()) {
+                    $queries->whereHas("shops", function ($query) use ($user) {
+                        $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
+                    });
+                }
             }
-
             return response()->json([
                 "success" => true,
                 "data"    => $queries->select("id", "name", "pancake_user_id")->latest()->get()
