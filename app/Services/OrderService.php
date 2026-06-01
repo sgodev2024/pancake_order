@@ -22,6 +22,7 @@ class OrderService
             "pancake_order_id"         => $data_item["id"],
             "total_quantity"           => $total_quantity,
             "cod"                      => $data_item["cod"] ?? 0,
+            "discount_percent"         => get_discount_by_customer($data_item["customer"]["id"]),
             "cash"                     => $data_item["cash"] ?? 0,
             "note"                     => $data_item["note"] ?? NULL,
             "user_creator_id"          => $data_item["creator"]["id"] ?? NULL,

@@ -99,6 +99,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post("settings", [SettingController::class, "store"]);
     Route::get("overview", [CustomerCareController::class, "overview"]);
 
+    Route::get("loyalty-tiers/total-discount", [LoyaltyTierController::class, "getTotalDiscount"]);
     Route::apiResource('loyalty-tiers', LoyaltyTierController::class);
 
     Route::put("api-key", function () {

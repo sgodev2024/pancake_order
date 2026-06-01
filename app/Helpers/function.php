@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Customer;
 use App\Models\LoyaltyTier;
 use App\Models\Permission;
 use App\Models\RolePermission;
@@ -57,4 +58,14 @@ function get_loyalty_tier($purchased_amount)
                                 ->first();
     }
     return $loyaltyTier->id ?? NULL;
+}
+
+function get_discount_by_customer($pancake_customer_id)
+{
+    $customer = Customer::select("id", "loyalty_tier_id")
+                        ->where("pancake_customer_id", $pancake_customer_id)
+                        ->with("loyalty_tier")
+                        ->first();
+
+    return !empty($customer->loyalty_tier) ? $customer->loyalty_tier->discount_percent : 0;
 }

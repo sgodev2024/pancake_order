@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use Illuminate\Http\Request;
 use App\Models\LoyaltyTier;
+use App\Models\Order;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\DB;
 
 class LoyaltyTierController extends Controller
 {
@@ -92,5 +94,33 @@ class LoyaltyTierController extends Controller
             'success' => true,
             'message' => 'Xóa hạng khách hàng thành công.',
         ]);
+    }
+
+    public function getTotalDiscount()
+    {
+        try {
+            $result = Order::query()
+                            ->selectRaw('
+                                SUM(cod) as total_cod,
+                                SUM(cod * discount_percent / 100) as total_discount
+                            ')
+                            ->first();
+
+            return response()->json([
+                "success" => true,
+                "data"    => [
+                    "total_discount" => $result->total_discount,
+                    "discount_rate_percent" => ($result->total_discount/$result->total_cod) * 100
+                ]
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => true,
+                "data"    => [
+                    "total_discount" => 0,
+                    "discount_rate_percent" => 0
+                ]
+            ])
+        }
     }
 }

@@ -40,20 +40,6 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     $result["pancake_full_data"] = json_decode($result["pancake_full_data"], true); // format lại vì dùng create/update
                     $order = Order::select("id")->where("pancake_order_id", $result["pancake_order_id"])->first();
                     $customer = $this->data["customer"];
-                    if ($order) {
-                        $is_new_order = false;
-                        unset($result["pancake_order_id"]);
-                        $order->update($result);
-                    } else {
-                        $order = Order::create($result);
-                        if (!empty($this->data["bill_phone_number"])) {
-                            SendZnsJob::dispatch(
-                                $this->data["bill_phone_number"],
-                                $customer,
-                            )->onQueue("send-zns");
-                        }
-                        
-                    }
                     $customer_exist = Customer::select("id", "phone_numbers", "pancake_customer_id", "name")->where("pancake_customer_id", $customer["id"])->first();
                     if (!$customer_exist) {
                         $customer_exist = Customer::create([
@@ -84,6 +70,20 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             "purchased_amount" => $customer["purchased_amount"] ?? $customer_exist->purchased_amount,
                             "phone_numbers"    => $this->data["bill_phone_number"] ?? $customer_exist->phone_numbers//$unique_phones
                         ]);
+                    }
+                    if ($order) {
+                        $is_new_order = false;
+                        unset($result["pancake_order_id"]);
+                        $order->update($result);
+                    } else {
+                        $order = Order::create($result);
+                        if (!empty($this->data["bill_phone_number"])) {
+                            SendZnsJob::dispatch(
+                                $this->data["bill_phone_number"],
+                                $customer,
+                            )->onQueue("send-zns");
+                        }
+                        
                     }
                     if ($is_new_order) {
                         AddCustomerCareJob::dispatch(

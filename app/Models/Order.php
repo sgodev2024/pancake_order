@@ -18,6 +18,7 @@ class Order extends Model
         "order_number_vtp",
         "total_quantity",
         "cod",
+        "discount_percent",
         "cash",
         "note",
         "user_creator_id", // Thông tin người tạo đơn
