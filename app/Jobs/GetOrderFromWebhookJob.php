@@ -34,8 +34,6 @@ class GetOrderFromWebhookJob implements ShouldQueue
             $shop = Shop::where("pancake_shop_id", $pancake_shop_id)->first();
             $is_new_order = true;
             if ($shop) {
-                $orderService = new OrderService();
-                $result = $orderService->getOrderItem($this->data, $shop->id);
                 if (!empty($result["order_number_vtp"])) {
                     $result["pancake_full_data"] = json_decode($result["pancake_full_data"], true); // format lại vì dùng create/update
                     $order = Order::select("id")->where("pancake_order_id", $result["pancake_order_id"])->first();
@@ -71,6 +69,8 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             "phone_numbers"    => $this->data["bill_phone_number"] ?? $customer_exist->phone_numbers//$unique_phones
                         ]);
                     }
+                    $orderService = new OrderService();
+                    $result = $orderService->getOrderItem($this->data, $shop->id);
                     if ($order) {
                         $is_new_order = false;
                         unset($result["pancake_order_id"]);

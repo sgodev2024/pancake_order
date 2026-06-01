@@ -99,11 +99,19 @@ class LoyaltyTierController extends Controller
     public function getTotalDiscount()
     {
         try {
+            $user = auth()->user();
+            $shop_ids = $user->shops()->pluck('shops.id');
+            $is_admin = is_admin();
             $result = Order::query()
                             ->selectRaw('
                                 SUM(cod) as total_cod,
                                 SUM(cod * discount_percent / 100) as total_discount
                             ')
+                            ->where(function ($query) use ($shop_ids, $is_admin) {
+                                if (!$is_admin) {
+                                    $query->whereIn("shop_id", $shop_ids);
+                                }
+                            })
                             ->first();
 
             return response()->json([
@@ -132,7 +140,10 @@ class LoyaltyTierController extends Controller
     public function overview()
     {
         try {
+            $user = auth()->user();
             $data = [];
+            $shop_ids = $user->shops()->pluck('shops.id');
+            $is_admin = is_admin();
             $tiers = LoyaltyTier::query()
                     ->select([
                         'loyalty_tiers.id',
@@ -146,8 +157,18 @@ class LoyaltyTierController extends Controller
                         COUNT(DISTINCT customers.id) as customer_count,
                         COALESCE(SUM(orders.cod * orders.discount_percent / 100), 0) as total_discount_amount
                     ')
-                    ->leftJoin('customers', 'customers.loyalty_tier_id', '=', 'loyalty_tiers.id')
-                    ->leftJoin('orders', 'orders.pancake_customer_id', '=', 'customers.pancake_customer_id')
+                    ->leftJoin('customers', function ($join) use ($is_admin, $shop_ids) {
+                        $join->on('customers.loyalty_tier_id', '=', 'loyalty_tiers.id');
+                        if (!$is_admin) {
+                            $join->whereIn('customers.shop_id', $shop_ids);
+                        }
+                    })
+                    ->leftJoin('orders', function ($join) use ($is_admin, $shop_ids) {
+                        $join->on('orders.pancake_customer_id', '=', 'customers.pancake_customer_id');
+                        if (!$is_admin) {
+                            $join->whereIn('orders.shop_id', $shop_ids);
+                        }
+                    })
                     ->groupBy(
                         'loyalty_tiers.id',
                         'loyalty_tiers.name',
@@ -187,6 +208,9 @@ class LoyaltyTierController extends Controller
     public function getCustomerPenddingUpgrade()
     {
         try {
+            $user = auth()->user();
+            $shop_ids = $user->shops()->pluck('shops.id');
+            $is_admin = is_admin();
             $data = [];
             $tiers = LoyaltyTier::query()
                             ->select([
@@ -198,10 +222,13 @@ class LoyaltyTierController extends Controller
                             ->selectRaw('
                                 COUNT(customers.id) as about_to_upgrade_count
                             ')
-                            ->leftJoin('customers',  function ($join) {
+                            ->leftJoin('customers',  function ($join) use ($is_admin, $shop_ids){
                                 $join->on('customers.purchased_amount', '>=', DB::raw('loyalty_tiers.min_order_value * 0.7'))
                                     ->on('customers.purchased_amount', '<', 'loyalty_tiers.max_order_value')
                                     ->on('customers.loyalty_tier_id', '!=', 'loyalty_tiers.id');
+                                if (!$is_admin) {
+                                    $join->whereIn('customers.shop_id', $shop_ids);
+                                }
                             })
                             ->groupBy(
                                 'loyalty_tiers.id',

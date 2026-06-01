@@ -381,6 +381,9 @@ class UserController extends Controller implements HasMiddleware
     {
         try {
             $datas = [];
+            $user = auth()->user();
+            $is_admin = is_admin();
+            $shop_ids = $user->shops()->pluck('shops.id');
             $staffs = User::query()
                         ->select([
                             'users.id',
@@ -408,8 +411,18 @@ class UserController extends Controller implements HasMiddleware
                                 THEN customer_cares.id 
                             END) as overdue_care_count
                         ')
-                        ->leftJoin('orders', 'orders.user_creator_id', '=', 'users.id')
-                        ->leftJoin('customer_cares', 'customer_cares.user_creator_id', '=', 'users.pancake_user_id')
+                        ->leftJoin('orders', function ($join) use ($is_admin, $shop_ids) {
+                            $join->on('orders.user_creator_id', '=', 'users.id');
+                            if (!$is_admin) {
+                                $join->whereIn('orders.shop_id', $shop_ids);
+                            }
+                        })
+                        ->leftJoin('customer_cares', function ($join) use ($is_admin, $shop_ids) {
+                            $join->on('customer_cares.user_creator_id', '=', 'users.pancake_user_id');
+                            if (!$is_admin) {
+                                $join->whereIn('customer_cares.shop_id', $shop_ids);
+                            }
+                        })
                         ->whereNotNull('users.pancake_user_id')
                         ->groupBy('users.id', 'users.name')
                         ->get();
