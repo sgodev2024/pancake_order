@@ -174,7 +174,64 @@ class LoyaltyTierController extends Controller
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => true,
-                "data"    => $th->getMessage()
+                "data"    => []
+            ]);
+        }
+    }
+
+    /**
+     * Tổng số khách hàng chuẩn bị tăng hạng
+     * Số khách hàng chuẩn bị tăng hạng theo từng hạng
+     * Tổng số tiền chi tiêu phải đạt 70% của mức min
+     */
+    public function getCustomerPenddingUpgrade()
+    {
+        try {
+            $data = [];
+            $tiers = LoyaltyTier::query()
+                            ->select([
+                                'loyalty_tiers.id',
+                                'loyalty_tiers.name',
+                                'loyalty_tiers.min_order_value',
+                                'loyalty_tiers.max_order_value',
+                            ])
+                            ->selectRaw('
+                                COUNT(customers.id) as about_to_upgrade_count
+                            ')
+                            ->leftJoin('customers',  function ($join) {
+                                $join->on('customers.purchased_amount', '>=', DB::raw('loyalty_tiers.min_order_value * 0.7'))
+                                    ->on('customers.purchased_amount', '<', 'loyalty_tiers.min_order_value')
+                                    ->whereColumn('customers.loyalty_tier_id', '!=', 'loyalty_tiers.id');
+                            })
+                            ->groupBy(
+                                'loyalty_tiers.id',
+                                'loyalty_tiers.name',
+                                'loyalty_tiers.min_order_value',
+                                'loyalty_tiers.max_order_value',
+                            )
+                            ->get();
+            // Tổng số khách chuẩn bị tăng hạng
+            $totalAboutToUpgrade = $tiers->sum('about_to_upgrade_count');
+            foreach ($tiers as $tier) {
+                $data[] = [
+                    "name"                   => $tier->name,                   // Tên hạng
+                    "min_order_value"        => $tier->min_order_value,        // Ngưỡng vào hạng
+                    "about_to_upgrade_count" => $tier->about_to_upgrade_count, // Số khách sắp tăng lên hạng này
+
+                ];
+            }
+
+            return response()->json([
+                "success" => true,
+                "data"    => [
+                    "total_customer_pendding_upgrade" => $totalAboutToUpgrade,
+                    "loyalty_tier_detail"             => $data
+                ]
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => true,
+                "data"    => []
             ]);
         }
     }
