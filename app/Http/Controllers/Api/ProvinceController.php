@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Province;
+use App\Models\Shop;
 use Illuminate\Http\Request;
 
 class ProvinceController extends Controller
@@ -19,8 +20,12 @@ class ProvinceController extends Controller
     public function report(Request $request)
     {
         try {
+            $shop = NULL;
             $inputs = $request->only("date_from", "date_to", "province_id", "shop_id");
             $provinces = Province::query();
+            if (isset($inputs["shop_id"])) {
+                $shop = Shop::select("id", "name", "avatar_url")->whereId($inputs["shop_id"])->first();
+            }
             if (isset($inputs["province_id"])) {
                 $provinces->where("id", $inputs["province_id"]);
             }
@@ -51,7 +56,10 @@ class ProvinceController extends Controller
 
             return response()->json([
                 "success" => true,
-                "data"    => $provinces->get()
+                "data"    => [
+                    "provinces" => $provinces->get(),
+                    "shop"      => $shop
+                ]
             ]);
         } catch (\Throwable $th) {
             return response()->json([
