@@ -82,6 +82,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get("customers/{pancake_customer_id}/orders", [CustomerController::class, "getOrder"]);
     Route::apiResource("products", ProductController::class);
 
+    Route::get("users/mornitoring", [UserController::class, "getMornitoring"]);
     Route::get("users/all-user", [UserController::class, "getAllUser"]);
     Route::apiResource('users', UserController::class);
     Route::get("users/{pancake_user_id}/orders", [UserController::class, "getOrder"]);
@@ -99,6 +100,9 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post("settings", [SettingController::class, "store"]);
     Route::get("overview", [CustomerCareController::class, "overview"]);
 
+    Route::get("loyalty-tiers/customers/pendding-upgrade", [LoyaltyTierController::class, "getCustomerPenddingUpgrade"]);
+    Route::get("loyalty-tiers/overview", [LoyaltyTierController::class, "overview"]);
+    Route::get("loyalty-tiers/total-discount", [LoyaltyTierController::class, "getTotalDiscount"]);
     Route::apiResource('loyalty-tiers', LoyaltyTierController::class);
 
     Route::put("api-key", function () {
