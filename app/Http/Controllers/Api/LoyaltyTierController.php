@@ -109,7 +109,7 @@ class LoyaltyTierController extends Controller
             return response()->json([
                 "success" => true,
                 "data"    => [
-                    "total_discount" => $result->total_discount,
+                    "total_discount" => $result->total_discount ?? 0,
                     "discount_rate_percent" => ($result->total_discount/$result->total_cod) * 100
                 ]
             ]);
