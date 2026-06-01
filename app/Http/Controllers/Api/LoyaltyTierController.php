@@ -135,7 +135,11 @@ class LoyaltyTierController extends Controller
             $data = [];
             $tiers = LoyaltyTier::query()
                     ->select([
-                        'loyalty_tiers.*'
+                        'loyalty_tiers.id',
+                        'loyalty_tiers.name',
+                        'loyalty_tiers.discount_percent',
+                        'loyalty_tiers.min_order_value',
+                        'loyalty_tiers.max_order_value'
                     ])
                     ->where("loyalty_tiers.is_active", 1)
                     ->selectRaw('
@@ -144,7 +148,13 @@ class LoyaltyTierController extends Controller
                     ')
                     ->leftJoin('customers', 'customers.loyalty_tier_id', '=', 'loyalty_tiers.id')
                     ->leftJoin('orders', 'orders.pancake_customer_id', '=', 'customers.pancake_customer_id')
-                    ->groupBy('loyalty_tiers.id', 'loyalty_tiers.name')
+                    ->groupBy(
+                        'loyalty_tiers.id',
+                        'loyalty_tiers.name',
+                        'loyalty_tiers.discount_percent',
+                        'loyalty_tiers.min_order_value',
+                        'loyalty_tiers.max_order_value',
+                    )
                     ->get();
             foreach ($tiers as $item) {
                 $data[] = [
@@ -164,7 +174,7 @@ class LoyaltyTierController extends Controller
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => true,
-                "data"    => []
+                "data"    => $th->getMessage()
             ]);
         }
     }
