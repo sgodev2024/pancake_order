@@ -120,7 +120,7 @@ class LoyaltyTierController extends Controller
                     "total_discount" => 0,
                     "discount_rate_percent" => 0
                 ]
-            ])
+            ]);
         }
     }
 }
