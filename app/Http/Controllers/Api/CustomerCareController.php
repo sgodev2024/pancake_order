@@ -35,6 +35,9 @@ class CustomerCareController extends Controller
                                         }
                                       ]);
                                 },
+                                "order" => function ($q) {
+                                    $q->select("id", "pancake_order_id", "status");
+                                },
                                 "user_creator",
                                 "user_care",
                                 "user_assigning"

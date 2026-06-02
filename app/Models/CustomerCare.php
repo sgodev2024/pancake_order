@@ -34,6 +34,11 @@ class CustomerCare extends Model
         return $this->belongsTo(Shop::class);
     }
 
+    public function order()
+    {
+        return $this->belongsTo(Order::class, "pancake_order_id", "pancake_order_id");
+    }
+
     public function user_creator()
     {
         return $this->belongsTo(User::class, "user_creator_id", "pancake_user_id")
