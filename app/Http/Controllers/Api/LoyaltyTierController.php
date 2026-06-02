@@ -179,7 +179,8 @@ class LoyaltyTierController extends Controller
                     ->get();
             foreach ($tiers as $item) {
                 $data[] = [
-                    "name" => $item->name,
+                    "id"                    => $item->id,
+                    "name"                  => $item->name,
                     "discount_percent"      => $item->discount_percent,
                     "min_order_value"       => $item->min_order_value,
                     "max_order_value"       => $item->max_order_value,
