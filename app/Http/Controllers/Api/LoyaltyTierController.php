@@ -289,6 +289,7 @@ class LoyaltyTierController extends Controller
                     'customers.name',
                     'customers.purchased_amount',
                     'customers.loyalty_tier_id',
+                    'shops.name as shop_name',
                     'current_tier.name as current_tier_name',
                     'next_tier.id     as next_tier_id',
                     'next_tier.name   as next_tier_name',
@@ -306,6 +307,7 @@ class LoyaltyTierController extends Controller
                         ->on('customers.purchased_amount', '<', 'next_tier.max_order_value')
                         ->on('customers.loyalty_tier_id', '!=', 'next_tier.id');
                 })
+                ->leftJoin('shops', 'shops.id', '=', 'customers.shop_id')
                 ->when(!$is_admin, function ($query) use ($shop_ids) {
                     $query->whereIn('customers.shop_id', $shop_ids);
                 })
@@ -320,7 +322,13 @@ class LoyaltyTierController extends Controller
 
             return response()->json([
                 "success" => true,
-                "data"    => $customers
+                'data'    => [
+                    "customers" => $customers->items(),
+                    'current_page' => $customers->currentPage(),
+                    'per_page'     => $customers->perPage(),
+                    'total_items'  => $customers->total(),
+                    'total_pages'  => $customers->lastPage(),
+                ],
             ]);
         } catch (\Throwable $th) {
             return response()->json([
