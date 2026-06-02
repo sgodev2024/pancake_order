@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
+use App\Models\Customer;
 use Illuminate\Http\Request;
 use App\Models\LoyaltyTier;
 use App\Models\Order;
@@ -263,6 +264,69 @@ class LoyaltyTierController extends Controller
                     "total_customer_pendding_upgrade" => 0,
                     "loyalty_tier_detail"             => []
                 ]
+            ]);
+        }
+    }
+
+    /**
+     * Danh sách khách hàng chuẩn bị tăng hạng
+     * Lọc theo loyalty_tier_id (hạng hiện tại) và next_tier_id (hạng sắp tăng)
+     */
+    public function getCustomerPenddingUpgradeList(Request $request)
+    {
+        try {
+            $user     = auth()->user();
+            $shop_ids = $user->shops()->pluck('shops.id');
+            $is_admin = is_admin();
+
+            // Filter params
+            $current_tier_id = $request->loyalty_tier_id;  // Hạng hiện tại của khách
+            $next_tier_id    = $request->next_tier_id;      // Hạng sắp tăng lên
+
+            $customers = Customer::query()
+                ->select([
+                    'customers.id',
+                    'customers.name',
+                    'customers.purchased_amount',
+                    'customers.loyalty_tier_id',
+                    'current_tier.name as current_tier_name',
+                    'next_tier.id     as next_tier_id',
+                    'next_tier.name   as next_tier_name',
+                    'next_tier.min_order_value as next_tier_min_order_value',
+                    'next_tier.max_order_value as next_tier_max_order_value',
+                ])
+                // ->selectRaw('
+                //     ROUND(customers.purchased_amount / next_tier.min_order_value * 100, 2) as upgrade_progress_percent
+                // ')
+                // Join hạng hiện tại
+                ->leftJoin('loyalty_tiers as current_tier', 'current_tier.id', '=', 'customers.loyalty_tier_id')
+                // Join hạng sắp tăng (purchased_amount nằm trong vùng 70% ~ 100% của hạng tiếp theo)
+                ->join('loyalty_tiers as next_tier', function ($join) {
+                    $join->on(DB::raw('customers.purchased_amount'), '>=', DB::raw('next_tier.min_order_value * 0.7'))
+                        ->on('customers.purchased_amount', '<', 'next_tier.max_order_value')
+                        ->on('customers.loyalty_tier_id', '!=', 'next_tier.id');
+                })
+                ->when(!$is_admin, function ($query) use ($shop_ids) {
+                    $query->whereIn('customers.shop_id', $shop_ids);
+                })
+                ->when($current_tier_id, function ($query) use ($current_tier_id) {
+                    $query->where('customers.loyalty_tier_id', $current_tier_id);
+                })
+                ->when($next_tier_id, function ($query) use ($next_tier_id) {
+                    $query->where('next_tier.id', $next_tier_id);
+                })
+                // ->orderBy('upgrade_progress_percent', 'desc')
+                ->paginate(30, ['*'], 'page', $request->page ?? 1);
+
+            return response()->json([
+                "success" => true,
+                "data"    => $customers
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage(),
+                "data"    => []
             ]);
         }
     }

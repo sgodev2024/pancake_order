@@ -100,6 +100,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post("settings", [SettingController::class, "store"]);
     Route::get("overview", [CustomerCareController::class, "overview"]);
 
+    Route::get("loyalty-tiers/customers/pendding-upgrade-list", [LoyaltyTierController::class, "getCustomerPenddingUpgradeList"]);
     Route::get("loyalty-tiers/customers/pendding-upgrade", [LoyaltyTierController::class, "getCustomerPenddingUpgrade"]);
     Route::get("loyalty-tiers/overview", [LoyaltyTierController::class, "overview"]);
     Route::get("loyalty-tiers/total-discount", [LoyaltyTierController::class, "getTotalDiscount"]);
