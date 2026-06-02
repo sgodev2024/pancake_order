@@ -156,7 +156,7 @@ class LoyaltyTierController extends Controller
                     ->where("loyalty_tiers.is_active", 1)
                     ->selectRaw('
                         COUNT(DISTINCT customers.id) as customer_count,
-                        COALESCE(SUM(orders.cod * orders.discount_percent / 100), 0) as total_discount_amount
+                        COALESCE(SUM(orders.cod), 0) as total_discount_amount
                     ')
                     ->leftJoin('customers', function ($join) use ($is_admin, $shop_ids) {
                         $join->on('customers.loyalty_tier_id', '=', 'loyalty_tiers.id');

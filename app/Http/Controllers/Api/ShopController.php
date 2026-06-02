@@ -234,10 +234,11 @@ class ShopController extends Controller implements HasMiddleware
         }
     }
 
-    public function getDataPancake(Request $request, Shop $shop)
+    public function getDataPancake(Request $request, $shop_id)
     {
         try {
             $type = $request->type;
+            $shop = Shop::find($shop_id);
             switch ($type) {
                 case 'employee':
                     $this->getEmployee($shop);

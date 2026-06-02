@@ -77,9 +77,9 @@ class CustomerCareController extends Controller
         }
         if (isset($inputs["user_id"])) {
             $query->where(function ($q) use ($inputs) {
-                    $q->where("user_creator_id", $inputs["user_id"])
-                      ->orWhere("user_care_id", $inputs["user_id"])
-                      ->orWhere("user_assigning_seller_id", $inputs["user_id"]);
+                    $q->where("user_creator_id", $inputs["user_id"]);
+                    //   ->orWhere("user_care_id", $inputs["user_id"])
+                    //   ->orWhere("user_assigning_seller_id", $inputs["user_id"]);
                 });
         }
         if (isset($inputs["status"])) {
@@ -92,7 +92,7 @@ class CustomerCareController extends Controller
                                             Carbon::now()->startOfWeek()->format("Y-m-d"),
                                             Carbon::now()->endOfWeek()->format("Y-m-d"),
                                         ]),
-            'customer_care_expire'  => $query->where("date_care", "<=", date("Y-m-d"))
+            'customer_care_expire'  => $query->where("date_care", "<", date("Y-m-d"))
                                              ->where("status", 0),
             'customer_care_edit'    => $query->where("total_edit", ">", 1)->where("is_accept", 0)
         };
@@ -105,9 +105,9 @@ class CustomerCareController extends Controller
         if (is_admin() || is_manager()) return;
         $q->where(function ($query) use ($user) {
             $query->where(function ($query1) use ($user) {
-                        $query1->where("user_creator_id", $user->pancake_user_id)
-                               ->orWhere("user_care_id", $user->pancake_user_id)
-                               ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+                        $query1->where("user_creator_id", $user->pancake_user_id);
+                            //    ->orWhere("user_care_id", $user->pancake_user_id)
+                            //    ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
                   })
                   ->orWhereHas("users", function ($q) use ($user) {
                     $q->where("users.pancake_user_id", $user->pancake_user_id);
@@ -267,8 +267,8 @@ class CustomerCareController extends Controller
                 SUM(CASE WHEN date_care BETWEEN ? AND ? THEN 1 ELSE 0 END) as customer_care_in_week,
                 SUM(CASE WHEN date_care BETWEEN ? AND ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_in_week_done,
 
-                SUM(CASE WHEN date_care <= ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire,
-                SUM(CASE WHEN date_care <= ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire_done,
+                SUM(CASE WHEN date_care < ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire,
+                SUM(CASE WHEN date_care < ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire_done,
 
                 SUM(CASE WHEN total_edit > 1  THEN 1 ELSE 0 END) as customer_care_edit,
                 SUM(CASE WHEN total_edit > 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
