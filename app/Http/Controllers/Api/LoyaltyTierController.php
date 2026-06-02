@@ -243,6 +243,7 @@ class LoyaltyTierController extends Controller
             $totalAboutToUpgrade = $tiers->sum('about_to_upgrade_count');
             foreach ($tiers as $tier) {
                 $data[] = [
+                    "id"                     => $tier->id,
                     "name"                   => $tier->name,                   // Tên hạng
                     "min_order_value"        => $tier->min_order_value,        // Ngưỡng vào hạng
                     "about_to_upgrade_count" => $tier->about_to_upgrade_count, // Số khách sắp tăng lên hạng này
