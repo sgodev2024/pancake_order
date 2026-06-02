@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller implements HasMiddleware
 {
@@ -382,67 +383,125 @@ class UserController extends Controller implements HasMiddleware
     public function getMornitoring()
     {
         try {
-            $datas = [];
-            $user = auth()->user();
+            $user     = auth()->user();
             $is_admin = is_admin();
             $shop_ids = $user->shops()->pluck('shops.id');
-            $staffs = User::query()
-                        ->select([
-                            'users.id',
-                            'users.name',
-                        ])
-                        ->selectRaw('
-                            COUNT(DISTINCT orders.id) as total_orders,
-                            COALESCE(SUM(orders.cod), 0) as total_revenue,
-                            
-                            ROUND(
-                                100.0 * COUNT(DISTINCT CASE 
-                                    WHEN customer_cares.date_care = CURDATE() 
-                                    AND customer_cares.status = 1 
-                                    THEN customer_cares.id 
-                                END)
-                                / NULLIF(COUNT(DISTINCT CASE 
-                                    WHEN customer_cares.date_care = CURDATE() 
-                                    THEN customer_cares.id 
-                                END), 0),
-                            2) as care_progress_today,
 
-                            COUNT(DISTINCT CASE 
-                                WHEN customer_cares.date_care < CURDATE() 
-                                AND customer_cares.status = 0 
-                                THEN customer_cares.id 
-                            END) as overdue_care_count
-                        ')
-                        ->leftJoin('orders', function ($join) use ($is_admin, $shop_ids) {
-                            $join->on('orders.user_creator_id', '=', 'users.id');
-                            if (!$is_admin) {
-                                $join->whereIn('orders.shop_id', $shop_ids);
-                            }
-                        })
-                        ->leftJoin('customer_cares', function ($join) use ($is_admin, $shop_ids) {
-                            $join->on('customer_cares.user_creator_id', '=', 'users.pancake_user_id');
-                            if (!$is_admin) {
-                                $join->whereIn('customer_cares.shop_id', $shop_ids);
-                            }
-                        })
-                        ->whereNotNull('users.pancake_user_id')
-                        ->groupBy('users.id', 'users.name')
-                        ->get();
-            foreach ($staffs as $staff_item) {
-                $datas[] = [
-                    "name"                => $staff_item->name,
-                    "id"                  => $staff_item->id,
-                    "total_orders"        => $staff_item->total_orders,
-                    "total_revenue"       => $staff_item->total_revenue,
-                    "care_progress_today" => $staff_item->care_progress_today,
-                    "overdue_care_count"  => $staff_item->overdue_care_count
-                ];
-            }
+            // Subquery 1: Thống kê orders
+            $orderStats = DB::table('orders')
+                ->select([
+                    'user_creator_id',
+                    DB::raw('COUNT(id) as total_orders'),
+                    DB::raw('COALESCE(SUM(cod), 0) as total_revenue'),
+                ])
+                ->when(!$is_admin, fn($q) => $q->whereIn('shop_id', $shop_ids))
+                ->groupBy('user_creator_id');
+
+            // Subquery 2: Thống kê customer_cares
+            $careStats = DB::table('customer_cares')
+                ->select([
+                    'user_creator_id',
+                    DB::raw('
+                        ROUND(
+                            100.0 * SUM(CASE WHEN date_care = CURDATE() AND status = 1 THEN 1 ELSE 0 END)
+                            / NULLIF(SUM(CASE WHEN date_care = CURDATE() THEN 1 ELSE 0 END), 0),
+                        2) as care_progress_today
+                    '),
+                    DB::raw('
+                        SUM(CASE WHEN date_care < CURDATE() AND status = 0 THEN 1 ELSE 0 END) 
+                        as overdue_care_count
+                    '),
+                ])
+                ->when(!$is_admin, fn($q) => $q->whereIn('shop_id', $shop_ids))
+                ->groupBy('user_creator_id');
+
+            // Query chính: JOIN với subquery đã aggregate sẵn
+            $staffs = User::query()
+                ->select([
+                    'users.pancake_user_id',
+                    'users.name',
+                    DB::raw('COALESCE(o.total_orders, 0) as total_orders'),
+                    DB::raw('COALESCE(o.total_revenue, 0) as total_revenue'),
+                    DB::raw('COALESCE(c.care_progress_today, 0) as care_progress_today'),
+                    DB::raw('COALESCE(c.overdue_care_count, 0) as overdue_care_count'),
+                ])
+                ->leftJoinSub($orderStats, 'o', 'o.user_creator_id', '=', 'users.pancake_user_id')
+                ->leftJoinSub($careStats, 'c', 'c.user_creator_id', '=', 'users.pancake_user_id')
+                ->whereNotNull('users.pancake_user_id')
+                ->get();
 
             return response()->json([
-                "success" => true,
-                "data"    => $datas
+                'success' => true,
+                'data'    => $staffs->map(fn($s) => [
+                    'id'                  => $s->pancake_user_id,
+                    'name'                => $s->name,
+                    'total_orders'        => $s->total_orders,
+                    'total_revenue'       => $s->total_revenue,
+                    'care_progress_today' => $s->care_progress_today,
+                    'overdue_care_count'  => $s->overdue_care_count,
+                ])->values()
             ]);
+            // $datas = [];
+            // $user = auth()->user();
+            // $is_admin = is_admin();
+            // $shop_ids = $user->shops()->pluck('shops.id');
+            // $staffs = User::query()
+            //             ->select([
+            //                 'users.pancake_user_id',
+            //                 'users.name',
+            //             ])
+            //             ->selectRaw('
+            //                 COUNT(DISTINCT orders.id) as total_orders,
+            //                 COALESCE(SUM(orders.cod), 0) as total_revenue,
+                            
+            //                 ROUND(
+            //                     100.0 * COUNT(DISTINCT CASE 
+            //                         WHEN customer_cares.date_care = CURDATE() 
+            //                         AND customer_cares.status = 1 
+            //                         THEN customer_cares.id 
+            //                     END)
+            //                     / NULLIF(COUNT(DISTINCT CASE 
+            //                         WHEN customer_cares.date_care = CURDATE() 
+            //                         THEN customer_cares.id 
+            //                     END), 0),
+            //                 2) as care_progress_today,
+
+            //                 COUNT(DISTINCT CASE 
+            //                     WHEN customer_cares.date_care < CURDATE() 
+            //                     AND customer_cares.status = 0 
+            //                     THEN customer_cares.id 
+            //                 END) as overdue_care_count
+            //             ')
+            //             ->leftJoin('orders', function ($join) use ($is_admin, $shop_ids) {
+            //                 $join->on('orders.user_creator_id', '=', 'users.pancake_user_id');
+            //                 if (!$is_admin) {
+            //                     $join->whereIn('orders.shop_id', $shop_ids);
+            //                 }
+            //             })
+            //             ->leftJoin('customer_cares', function ($join) use ($is_admin, $shop_ids) {
+            //                 $join->on('customer_cares.user_creator_id', '=', 'users.pancake_user_id');
+            //                 if (!$is_admin) {
+            //                     $join->whereIn('customer_cares.shop_id', $shop_ids);
+            //                 }
+            //             })
+            //             ->whereNotNull('users.pancake_user_id')
+            //             ->groupBy('users.pancake_user_id', 'users.name')
+            //             ->get();
+            // foreach ($staffs as $staff_item) {
+            //     $datas[] = [
+            //         "name"                => $staff_item->name,
+            //         "id"                  => $staff_item->pancake_user_id,
+            //         "total_orders"        => $staff_item->total_orders,
+            //         "total_revenue"       => $staff_item->total_revenue,
+            //         "care_progress_today" => $staff_item->care_progress_today,
+            //         "overdue_care_count"  => $staff_item->overdue_care_count
+            //     ];
+            // }
+
+            // return response()->json([
+            //     "success" => true,
+            //     "data"    => $datas
+            // ]);
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => true,
