@@ -9,6 +9,7 @@ class Customer extends Model
     protected $table = "customers";
 
     protected $fillable = [
+        "order_count",
         "shop_id",
         "loyalty_tier_id",
         "pancake_customer_id",

@@ -28,7 +28,7 @@ class OrderService
             "user_creator_id"          => $data_item["creator"]["id"] ?? NULL,
             "user_care_id"             => $data_item["assigning_care"]["id"] ?? NULL,
             "user_assigning_seller_id" => $data_item["assigning_seller"]["id"] ?? NULL,
-            "pancake_customer_id"      => $data_item["customer"]["id"] ?? NULL,
+            "pancake_customer_id"      => $data_item["customer"]["customer_id"] ?? NULL,
             "status"                   => $data_item["status"],
             "pancake_full_data"        => json_encode($data_item),
             "received_at_shop"         => $data_item["received_at_shop"],

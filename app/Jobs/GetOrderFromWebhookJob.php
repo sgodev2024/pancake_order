@@ -41,13 +41,14 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $result["pancake_full_data"] = json_decode($result["pancake_full_data"], true); // format lại vì dùng create/update
                         $order = Order::select("id")->where("pancake_order_id", $result["pancake_order_id"])->first();
                         $customer = $this->data["customer"];
-                        $customer_exist = Customer::select("id", "phone_numbers", "pancake_customer_id", "name")->where("pancake_customer_id", $customer["id"])->first();
+                        $customer_exist = Customer::select("id", "phone_numbers", "pancake_customer_id", "name")->where("pancake_customer_id", $customer["customer_id"])->first();
                         if (!$customer_exist) {
                             $customer_exist = Customer::create([
+                                "order_count"         => $customer["order_count"] ?? 0,
                                 "assigned_user_id"    => $this->data["assigning_care_id"] ?? NULL,
                                 "shop_id"             => $shop->id,
                                 "purchased_amount"    => $customer["purchased_amount"] ?? 0,
-                                "pancake_customer_id" => $customer["id"],
+                                "pancake_customer_id" => $customer["customer_id"],
                                 "fb_id"               => $customer["fb_id"],
                                 'loyalty_tier_id'     => get_loyalty_tier($customer["purchased_amount"] ?? 0),
                                 "name"                => $customer["name"],
