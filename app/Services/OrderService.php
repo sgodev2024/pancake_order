@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Province;
 use Carbon\Carbon;
 
 class OrderService
@@ -14,10 +15,14 @@ class OrderService
         }
         $created_at = Carbon::parse($data_item["inserted_at"])->format("Y-m-d H:i:s");
         $updated_at = Carbon::parse($data_item["updated_at"])->format("Y-m-d H:i:s");
-        
+        if (!empty($data_item["shipping_address"]["province_id"])) {
+            $province = Province::where("id", $data_item["shipping_address"]["province_id"])
+                                ->orWhere("new_id", $data_item["shipping_address"]["province_id"])
+                                ->first();
+        }
         return [
             "shop_id"                  => $shop_id,
-            "province_id"              => $data_item["shipping_address"]["province_id"] ?? NULL,
+            "province_id"              => !empty($province) ? $province->id : NULL,
             "order_number_vtp"         => $data_item["partner"]["order_number_vtp"] ?? NULL,
             "pancake_order_id"         => $data_item["id"],
             "total_quantity"           => $total_quantity,

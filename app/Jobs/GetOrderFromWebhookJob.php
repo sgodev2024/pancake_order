@@ -113,6 +113,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
         } catch (\Throwable $th) {
             Log::channel("pancake-webhook-error")->info("=================Lỗi GetOrderFromWebhookJob==============");
             Log::channel("pancake-webhook-error")->info($th->getMessage());
+            Log::channel("pancake-webhook-error")->info($this->data);
         }
     }
 }
