@@ -67,6 +67,8 @@ class GetCustomerByShopJob implements ShouldQueue
                         'order_count'         => $data_item["order_count"],
                         'purchased_amount'    => $data_item["purchased_amount"],
                         'pancake_full_data'   => json_encode($data_item),
+                        'phone_numbers'       => !empty($data_item["phone_numbers"]) ? implode(",", $data_item["phone_numbers"]) : NULL,
+
                     ]);
                 }
             }
