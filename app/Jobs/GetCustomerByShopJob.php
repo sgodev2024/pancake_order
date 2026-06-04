@@ -66,7 +66,7 @@ class GetCustomerByShopJob implements ShouldQueue
                     $customer->update([
                         'order_count'         => $data_item["order_count"],
                         'purchased_amount'    => $data_item["purchased_amount"],
-                        'pancake_full_data'   => json_encode($data_item),
+                        'pancake_full_data'   => $data_item,
                         'phone_numbers'       => !empty($data_item["phone_numbers"]) ? implode(",", $data_item["phone_numbers"]) : NULL,
 
                     ]);
