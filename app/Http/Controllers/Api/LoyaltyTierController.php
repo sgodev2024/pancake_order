@@ -155,8 +155,8 @@ class LoyaltyTierController extends Controller
                     ])
                     ->where("loyalty_tiers.is_active", 1)
                     ->selectRaw('
-                        COUNT(DISTINCT customers.id) as customer_count,
-                        COALESCE(SUM(orders.cod), 0) as total_discount_amount
+                        COUNT(DISTINCT customers.pancake_customer_id) as customer_count,
+                        COALESCE(SUM(customers.purchased_amount), 0) as total_revenue
                     ')
                     ->leftJoin('customers', function ($join) use ($is_admin, $shop_ids) {
                         $join->on('customers.loyalty_tier_id', '=', 'loyalty_tiers.id');
@@ -164,12 +164,12 @@ class LoyaltyTierController extends Controller
                             $join->whereIn('customers.shop_id', $shop_ids);
                         }
                     })
-                    ->leftJoin('orders', function ($join) use ($is_admin, $shop_ids) {
-                        $join->on('orders.pancake_customer_id', '=', 'customers.pancake_customer_id');
-                        if (!$is_admin) {
-                            $join->whereIn('orders.shop_id', $shop_ids);
-                        }
-                    })
+                    // ->leftJoin('orders', function ($join) use ($is_admin, $shop_ids) {
+                    //     $join->on('orders.pancake_customer_id', '=', 'customers.pancake_customer_id');
+                    //     if (!$is_admin) {
+                    //         $join->whereIn('orders.shop_id', $shop_ids);
+                    //     }
+                    // })
                     ->groupBy(
                         'loyalty_tiers.id',
                         'loyalty_tiers.name',
@@ -186,7 +186,7 @@ class LoyaltyTierController extends Controller
                     "min_order_value"       => $item->min_order_value,
                     "max_order_value"       => $item->max_order_value,
                     "customers_count"       => $item->customer_count,
-                    "total_discount_amount" => $item->total_discount_amount
+                    "total_revenue" => $item->total_revenue
                 ];
             }
 

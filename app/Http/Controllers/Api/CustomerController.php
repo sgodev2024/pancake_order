@@ -65,9 +65,10 @@ class CustomerController extends Controller implements HasMiddleware
                 'pancake_customer_id',
                 'pancake_full_data',
                 'created_at',
-                'loyalty_tier_id'
+                'loyalty_tier_id',
+                'order_count'
             ]);
-            $query->withCount("orders");
+            // $query->withCount("orders");
 
             // 3. Xử lý các điều kiện lọc (Filters)
             // Lọc theo từ khóa tìm kiếm (Tên hoặc Số điện thoại)
