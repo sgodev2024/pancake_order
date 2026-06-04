@@ -62,6 +62,12 @@ class GetCustomerByShopJob implements ShouldQueue
                         'created_at'          => $time,
                         'updated_at'          => $time,
                     ];
+                } else {
+                    $customer->update([
+                        'order_count'         => $data_item["order_count"],
+                        'purchased_amount'    => $data_item["purchased_amount"],
+                        'pancake_full_data'   => json_encode($data_item),
+                    ]);
                 }
             }
             if (count($insertData)> 0) {

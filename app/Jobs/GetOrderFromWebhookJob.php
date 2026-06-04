@@ -66,6 +66,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             // 3. Loại bỏ các số trùng lặp và reset lại index (key) của mảng
                             //$unique_phones = array_values(array_unique($merged_phones));
                             $customer_exist->update([
+                                "order_count"      => $customer["order_count"] ?? $customer_exist->order_count,
                                 "assigned_user_id" => $customer["assigned_user_id"] ?? NULL,
                                 "name"             => $customer["name"],
                                 'loyalty_tier_id'  => get_loyalty_tier($customer["purchased_amount"] ?? 0),
