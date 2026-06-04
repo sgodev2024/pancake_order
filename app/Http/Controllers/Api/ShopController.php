@@ -206,12 +206,18 @@ class ShopController extends Controller implements HasMiddleware
         }
     }
 
-    public function getOrder($shop)
+    public function getOrder($shop, $date_from = NULL, $date_to = NULL)
     {
         Log::info("======================getOrder=====================");
         try {
             $page_size = 20;
-            $response = Http::get($this->apiUrl . "shops/{$shop->pancake_shop_id}/orders?api_key={$shop->api_key}&page_size={$page_size}&page_number=1")->json();
+            $param_bonus = '';
+            if (!empty($date_from) && !empty($date_to)) {
+                $startDateTime = strtotime($date_from . " 00:00:00");
+                $endDateTime   = strtotime($date_to . " 23:59:59");
+                $param_bonus   = "&startDateTime={$startDateTime}&endDateTime={$endDateTime}";
+            }
+            $response = Http::get($this->apiUrl . "shops/{$shop->pancake_shop_id}/orders?api_key={$shop->api_key}&page_size={$page_size}&page_number=1{$param_bonus}")->json();
             if (!empty($response["total_pages"])) {
                 $total_pages = $response["total_pages"];
                 $pages = collect(range(1, $total_pages));
@@ -244,7 +250,7 @@ class ShopController extends Controller implements HasMiddleware
                     $this->getEmployee($shop);
                     break;
                 case 'order':
-                    $this->getOrder($shop);
+                    $this->getOrder($shop, $request->date_from ?? date("Y-m-d"), $request->date_to ?? date("Y-m-d"));
                     break;
                 case 'product':
                     $this->getProduct($shop);
