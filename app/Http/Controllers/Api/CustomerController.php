@@ -164,7 +164,7 @@ class CustomerController extends Controller implements HasMiddleware
             if (!empty($response["data"])) {
                 return response()->json([
                     "success" => true,
-                    "data"    => $response["data"]
+                    "data"    => $response
                 ]);
             }
             return response()->json([
