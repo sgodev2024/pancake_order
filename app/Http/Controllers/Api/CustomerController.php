@@ -9,6 +9,7 @@ use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\Http;
 
 class CustomerController extends Controller implements HasMiddleware
 {
@@ -114,44 +115,61 @@ class CustomerController extends Controller implements HasMiddleware
         }
     }
 
-    public function getOrder($pancake_order_id)
+    public function getOrder(Request $request, $pancake_customer_id)
     {
         try {
-            $orders = Order::where("pancake_customer_id", $pancake_order_id)
-                            ->with([
-                                "shop" => function ($query) {
-                                    $query->select("id", "name");
-                                },
-                                "user_creator",
-                                "user_care",
-                                "user_assigning"
-                            ])
-                            ->select([
-                                'id', 
-                                'shop_id',
-                                'order_number_vtp', 
-                                'total_quantity',
-                                'cod',
-                                'cash',
-                                'note',
-                                'created_at',
-                                'status',
-                                'status_vtp',
-                                'pancake_full_data',
-                                'received_at_shop',
-                                'customer_name',
-                                'customer_phone',
-                                'customer_address',
-                                'pancake_order_id',
-                                'user_creator_id',
-                                'user_care_id',
-                                'user_assigning_seller_id'
-                            ])
-                           ->get();
-
+            $page_number = $request->page_number ?? 1;
+            $page_size   = 10;
+            $customer = Customer::where("pancake_customer_id", $pancake_customer_id)->with("shop")->first();
+            if (!$customer) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Khách hàng không tồn tại"
+                ]);
+            }
+            $pancake_shop_id = $customer->shop->pancake_shop_id;
+            $api_key         = $customer->shop->api_key;
+            $response = Http::get(env("PANCAKE_API_V1") . "shops/{$pancake_shop_id}/orders?page_size={$page_size}&page_number={$page_number}&customer_id={$pancake_customer_id}&api_key={$api_key}")->json();
+            // $orders = Order::where("pancake_customer_id", $pancake_customer_id)
+            //                 ->with([
+            //                     "shop" => function ($query) {
+            //                         $query->select("id", "name");
+            //                     },
+            //                     "user_creator",
+            //                     "user_care",
+            //                     "user_assigning"
+            //                 ])
+            //                 ->select([
+            //                     'id', 
+            //                     'shop_id',
+            //                     'order_number_vtp', 
+            //                     'total_quantity',
+            //                     'cod',
+            //                     'cash',
+            //                     'note',
+            //                     'created_at',
+            //                     'status',
+            //                     'status_vtp',
+            //                     'pancake_full_data',
+            //                     'received_at_shop',
+            //                     'customer_name',
+            //                     'customer_phone',
+            //                     'customer_address',
+            //                     'pancake_order_id',
+            //                     'user_creator_id',
+            //                     'user_care_id',
+            //                     'user_assigning_seller_id'
+            //                 ])
+            //                ->get();
+            if (!empty($response["data"])) {
+                return response()->json([
+                    "success" => true,
+                    "data"    => $response
+                ]);
+            }
             return response()->json([
-                "success" => true,
-                "data"    => $orders
+                "success" => false,
+                "message" => $response["message"] ?? NULL
             ]);
         } catch (\Throwable $th) {
             return response()->json([
