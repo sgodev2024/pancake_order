@@ -69,3 +69,14 @@ function get_discount_by_customer($pancake_customer_id)
 
     return !empty($customer->loyalty_tier) ? $customer->loyalty_tier->discount_percent : 0;
 }
+
+function get_customer_name($data)
+{
+    if (!empty($data["bill_full_name"])) {
+        return $data["bill_full_name"];
+    }
+    if (!empty($data_item["customer"]["name"])) {
+        return $data_item["customer"]["name"];
+    }
+    return NULL;
+}

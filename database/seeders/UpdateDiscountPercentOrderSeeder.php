@@ -15,8 +15,10 @@ class UpdateDiscountPercentOrderSeeder extends Seeder
     {
         Order::chunkById(100, function ($orders) {
             foreach ($orders as $order_item) {
+                $pancake_full_data = $order_item->pancake_full_data;
                 $order_item->update([
-                    "discount_percent" => get_discount_by_customer($order_item->pancake_customer_id)
+                    // "discount_percent" => get_discount_by_customer($order_item->pancake_customer_id)
+                    "customer_name" => get_customer_name($pancake_full_data)
                 ]);
             }
         });

@@ -37,7 +37,7 @@ class OrderService
             "status"                   => $data_item["status"],
             "pancake_full_data"        => json_encode($data_item),
             "received_at_shop"         => $data_item["received_at_shop"],
-            "customer_name"            => $data_item["customer"]["name"] ?? NULL,
+            "customer_name"            => get_customer_name($data_item),
             "customer_phone"           => $data_item["bill_phone_number"] ?? NULL,
             "customer_address"         => $data_item["shipping_address"]["full_address"] ?? NULL,
             "created_at"               => $created_at,
