@@ -68,4 +68,17 @@ class CustomerCare extends Model
             "pancake_user_id"          
         )->withPivot("pancake_user_id");
     }
+
+    /**Giống với function users, nhưng đặt tên chuẩn hơn */
+    public function assigned()
+    {
+        return $this->belongsToMany(
+            User::class,                     // $related
+            "customer_assigneds", //$table (bảng trung gian)
+            "customer_care_id",    // $foreignPivotKey (khóa trỏ về ProcessTemplateGroup)
+            "pancake_user_id",                      // $relatedPivotKey (khóa trỏ về User)
+            "id",                           // $parentKey (khóa chính ProcessTemplateGroup)
+            "pancake_user_id"          
+        )->withPivot("pancake_user_id");
+    }
 }
