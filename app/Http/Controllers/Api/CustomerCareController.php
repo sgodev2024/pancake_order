@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
+use App\Models\CustomerAssigned;
 use App\Models\CustomerCare;
 use App\Models\Order;
 use Carbon\Carbon;
@@ -413,7 +414,10 @@ class CustomerCareController extends Controller
         }
     }
 
-    /** User confirm nhận cskh */
+    /** 
+     * Xác nhận cskh khi được phân công
+     * Xóa những thằng được phân công mà chưa vào nhận chăm sóc đi
+     */
     public function confirmCare($customer_care_id)
     {
         try {
@@ -435,7 +439,10 @@ class CustomerCareController extends Controller
                 "is_confirm_care" => true,
                 "user_creator_id" => auth()->user()->pancake_user_id
             ]);
-            $customer_care->assigned()->detach();
+            CustomerAssigned::where("customer_care_id", $customer_care_id)
+                            ->where("pancake_user_id", "!=", auth()->user()->pancake_user_id)
+                            ->delete();
+            // $customer_care->assigned()->detach();
             DB::commit();
             
             return response()->json([
