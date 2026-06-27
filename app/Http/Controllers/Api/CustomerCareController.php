@@ -106,10 +106,10 @@ class CustomerCareController extends Controller
 
     private function applyAccessFilter($q, $user): void
     {
-        $q->whereHas("assigned", function ($q) use ($user) {
-            $q->where("users.pancake_user_id", $user->pancake_user_id);
+        if (is_admin() || is_manager()) return;
+        $q->whereHas("assigned", function ($q1) use ($user) {
+            $q1->where("users.pancake_user_id", $user->pancake_user_id);
         });
-        // if (is_admin() || is_manager()) return;
         /*
         $q->where(function ($query) use ($user) {
             $query->where(function ($query1) use ($user) {
@@ -122,6 +122,7 @@ class CustomerCareController extends Controller
                   });
         });
         */
+        
     }
 
     public function update(Request $request, CustomerCare $customer_care)
@@ -302,8 +303,10 @@ class CustomerCareController extends Controller
                 $today,
             ])
             ->when(!is_admin() && !is_manager(), function ($q) use ($user, $shop_ids) {
-                $q->whereIn("shop_id", $shop_ids);
-                  
+                $q->whereIn("shop_id", $shop_ids)
+                  ->whereHas("assigned", function ($q3) use ($user) {
+                    $q3->where("users.pancake_user_id", $user->pancake_user_id);
+                });
                 /*
                   ->where(function ($q2) use ($user) {
                     $q2->where("user_creator_id", $user->pancake_user_id)
@@ -315,9 +318,6 @@ class CustomerCareController extends Controller
                 
                 });
                 */
-            })
-            ->whereHas("assigned", function ($q3) use ($user) {
-                $q3->where("users.pancake_user_id", $user->pancake_user_id);
             })
             ->where("is_accept", 1)
             ->first();
@@ -366,7 +366,7 @@ class CustomerCareController extends Controller
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => false,
-                "message" => "Vui lòng thử lại" . $th->getLine()
+                "message" => "Vui lòng thử lại"
             ]);
         }
     }
