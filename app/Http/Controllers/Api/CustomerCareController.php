@@ -3,8 +3,6 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Customer;
-use App\Models\CustomerAssigned;
 use App\Models\CustomerCare;
 use App\Models\Order;
 use Carbon\Carbon;
@@ -108,10 +106,6 @@ class CustomerCareController extends Controller
     private function applyAccessFilter($q, $user): void
     {
         if (is_admin() || is_manager()) return;
-        $q->whereHas("assigned", function ($q1) use ($user) {
-            $q1->where("users.pancake_user_id", $user->pancake_user_id);
-        });
-        /*
         $q->where(function ($query) use ($user) {
             $query->where(function ($query1) use ($user) {
                         $query1->where("user_creator_id", $user->pancake_user_id);
@@ -122,8 +116,6 @@ class CustomerCareController extends Controller
                     $q->where("users.pancake_user_id", $user->pancake_user_id);
                   });
         });
-        */
-        
     }
 
     public function update(Request $request, CustomerCare $customer_care)
@@ -303,12 +295,8 @@ class CustomerCareController extends Controller
                 $today,
                 $today,
             ])
-            ->when(!is_admin() && !is_manager(), function ($q) use ($user, $shop_ids) {
+            ->when(!is_admin(), function ($q) use ($user, $shop_ids) {
                 $q->whereIn("shop_id", $shop_ids)
-                  ->whereHas("assigned", function ($q3) use ($user) {
-                    $q3->where("users.pancake_user_id", $user->pancake_user_id);
-                });
-                /*
                   ->where(function ($q2) use ($user) {
                     $q2->where("user_creator_id", $user->pancake_user_id)
                         ->orWhere("user_care_id", $user->pancake_user_id)
@@ -316,9 +304,7 @@ class CustomerCareController extends Controller
                         ->orWhereHas("users", function ($q3) use ($user) {
                             $q3->where("users.pancake_user_id", $user->pancake_user_id);
                         });
-                
                 });
-                */
             })
             ->where("is_accept", 1)
             ->first();
@@ -340,12 +326,7 @@ class CustomerCareController extends Controller
                                         COALESCE(SUM(cod), 0) as total_revenue
                                     ")
                                     ->first();
-            $total_customer = Customer::select("id")->where(function ($query) use ($user) {
-                if (!is_admin()) {
-                    $query->whereIn("shop_id", $user->shops()->select("shops.id"));
-                }
-            })->count();
-                                    
+
             return response()->json([
                 "success" => true,
                 "data" => [
@@ -360,8 +341,7 @@ class CustomerCareController extends Controller
                     "customer_care_edit"          => (int) $overview->customer_care_edit,
                     "customer_care_edit_accepted" => (int) $overview->customer_care_edit_accepted,
                     "total_order_today"           => $query->total_order_today,
-                    "total_revenue"               => $query->total_revenue,
-                    "total_customer"              => $total_customer
+                    "total_revenue"               => $query->total_revenue
                 ]
             ]);
         } catch (\Throwable $th) {
@@ -376,31 +356,20 @@ class CustomerCareController extends Controller
     {
         try {
             $inputs = $request->only(
-                "pancake_user_ids",
-                "customer_care_ids",
-                "is_multiple"
+                "pancake_user_ids"
             );
-            if (!$inputs["is_multiple"]) {
-                $customer_care = CustomerCare::find($customer_care_id);
-                if (!$customer_care) {
-                    return response()->json([
-                        "success" => false,
-                        "message" => "Lịch chăm sóc này không tồn tại"
-                    ]);
-                }
-                $customer_care->assigned()->sync(
-                    collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
-                        $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
-                    ])->toArray()
-                );
-            } else {
-                $userIds = $inputs['pancake_user_ids'];
-                $customer_cares = CustomerCare::whereIn("id", $inputs["customer_care_ids"])->get();
-                foreach ($customer_cares as $item) {
-                    $syncData = array_fill_keys($userIds, ['pancake_customer_id' => $item->pancake_customer_id]);
-                    $item->assigned()->sync($syncData);
-                }
+            $customer_care = CustomerCare::find($customer_care_id);
+            if (!$customer_care) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Lịch chăm sóc này không tồn tại"
+                ]);
             }
+            $customer_care->users()->sync(
+                collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
+                    $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
+                ])->toArray()
+            );
 
             return response()->json([
                 "success" => true,
@@ -439,10 +408,7 @@ class CustomerCareController extends Controller
                 "is_confirm_care" => true,
                 "user_creator_id" => auth()->user()->pancake_user_id
             ]);
-            CustomerAssigned::where("customer_care_id", $customer_care_id)
-                            ->where("pancake_user_id", "!=", auth()->user()->pancake_user_id)
-                            ->delete();
-            // $customer_care->assigned()->detach();
+            $customer_care->users()->detach();
             DB::commit();
             
             return response()->json([
