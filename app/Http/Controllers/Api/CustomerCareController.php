@@ -84,16 +84,29 @@ class CustomerCareController extends Controller
         if (isset($inputs["status"])) {
             $query->where("status", $inputs["status"]);
         }
-        match ($type) {
-            'customer_care_today'   => $query->where("date_care", date("Y-m-d")),
-            'customer_care_pending' => $query->where("date_care", '>', date("Y-m-d")),
-            'customer_care_in_week' => $query->whereBetween("date_care", [
-                                            Carbon::now()->startOfWeek()->format("Y-m-d"),
-                                            Carbon::now()->endOfWeek()->format("Y-m-d"),
-                                        ]),
-            'customer_care_expire'  => $query->where("date_care", "<", date("Y-m-d")),
-            'customer_care_edit'    => $query->where("total_edit", ">", 1)->where("is_accept", 0)
-        };
+        switch ($type) {
+            case 'customer_care_today':
+                $query->where("date_care", date("Y-m-d"));
+                break;
+            case 'customer_care_pending':
+                $query->where("date_care", '>', date("Y-m-d"));
+                break;
+            case 'customer_care_in_week':
+                $query->whereBetween("date_care", [
+                    Carbon::now()->startOfWeek()->format("Y-m-d"),
+                    Carbon::now()->endOfWeek()->format("Y-m-d"),
+                ]);
+                break;
+            case 'customer_care_expire':
+                $query->where("date_care", "<", date("Y-m-d"));
+                break;
+            case 'customer_care_edit':
+                $query->where("total_edit", ">", 1)->where("is_accept", 0);
+                break;
+            case 'all':
+                $query->where("status", 0); // trang cơ hội phía FE
+                break;
+        }
 
         return $query->where(fn($q) => $this->applyAccessFilter($q, $user));
     }
