@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\WebhookController;
 use App\Http\Controllers\Api\LoyaltyTierController;
 use App\Http\Controllers\Api\ProvinceController;
 use App\Models\ApiKey;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -27,8 +28,25 @@ Route::get('/user', function (Request $request) {
 })->middleware('auth:sanctum');
 
 Route::get('/test', function () {
-    $t = \App\Models\CustomerCare::find(31);
-    dd($t->users);
+    $orders = \App\Models\Order::whereBetween("created_at", ["2026-01-01 00:00:00", "2026-06-28 23:59:59"])->get();
+    foreach ($orders as $orderItem) {
+        $pancake_full_data = $orderItem->pancake_full_data;
+        $createdAt = Carbon::parse($pancake_full_data["inserted_at"], 'UTC')->setTimezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s');
+        $orderItem->created_at = $createdAt;
+        $orderItem->updated_at = $createdAt;
+        $orderItem->save();
+    }
+    
+    // $createdAt = Carbon::parse($pancake_full_data["inserted_at"], 'UTC') // dữ liệu Pancake là UTC
+    // ->setTimezone('Asia/Ho_Chi_Minh') // convert sang +7
+    // ->format('Y-m-d H:i:s'); // 2026-06-28 10:02:21
+    // // dd($createdAt);
+    // // $created_at = Carbon::parse($pancake_full_data["inserted_at"]);
+    // // dd($created_at, $pancake_full_data["inserted_at"]);
+    // $order->created_at = $createdAt;//Carbon::parse($pancake_full_data["inserted_at"])->format("Y-m-d H:i:s");
+    // $order->save();
+    // $t = \App\Models\CustomerCare::find(31);
+    // dd($t->users);
 });
 // --- Nhóm các Route Public (Không cần Token) ---
 Route::prefix('v1/auth')->group(function () {
