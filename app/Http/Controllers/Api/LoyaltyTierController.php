@@ -102,7 +102,7 @@ class LoyaltyTierController extends Controller
         try {
             $user = auth()->user();
             $shop_ids = $user->shops()->pluck('shops.id');
-            $is_admin = is_admin();
+            $is_admin = $user->isAdmin();
             $result = Order::query()
                             ->selectRaw('
                                 SUM(cod) as total_cod,
@@ -144,7 +144,7 @@ class LoyaltyTierController extends Controller
             $user = auth()->user();
             $data = [];
             $shop_ids = $user->shops()->pluck('shops.id');
-            $is_admin = is_admin();
+            $is_admin = $user->isAdmin();
             $tiers = LoyaltyTier::query()
                     ->select([
                         'loyalty_tiers.id',
@@ -212,7 +212,7 @@ class LoyaltyTierController extends Controller
         try {
             $user = auth()->user();
             $shop_ids = $user->shops()->pluck('shops.id');
-            $is_admin = is_admin();
+            $is_admin = $user->isAdmin();
             $data = [];
             $tiers = LoyaltyTier::query()
                             ->select([
@@ -278,7 +278,7 @@ class LoyaltyTierController extends Controller
         try {
             $user     = auth()->user();
             $shop_ids = $user->shops()->pluck('shops.id');
-            $is_admin = is_admin();
+            $is_admin = $user->isAdmin();
 
             // Filter params
             $current_tier_id = $request->loyalty_tier_id;  // Hạng hiện tại của khách

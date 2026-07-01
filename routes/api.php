@@ -83,46 +83,49 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     });
 
     // Các router quản lý dự án, nhân sự khác sẽ nằm ở đây...
-    Route::apiResource('roles', RoleController::class);
+    Route::apiResource('roles',             RoleController::class);
     Route::apiResource('permission-groups', PermissionGroupController::class);
-    Route::apiResource('permissions', PermissionController::class);
-    Route::apiResource('role-permissions', RolePermissionController::class);
+    Route::apiResource('permissions',       PermissionController::class);
+    Route::apiResource('role-permissions',  RolePermissionController::class);
     
     Route::post("shops/{shop_id}/update-employee-from-pancake", [ShopController::class, 'updateEmployeeFromPancake']);
-    Route::post("shops/{shop_id}/get-data-pancake", [ShopController::class, 'getDataPancake']);
-    Route::apiResource('shops', ShopController::class);
-    Route::apiResource('shops.customers', ShopCustomerController::class);
-    Route::apiResource('shops.orders', ShopOrderController::class);
-    Route::apiResource('shops.users', ShopUserController::class);
+    Route::post("shops/{shop_id}/get-data-pancake",             [ShopController::class, 'getDataPancake']);
 
-    Route::apiResource("orders", OrderController::class);
-    Route::apiResource("customers", CustomerController::class);
+    Route::apiResource('shops',           ShopController::class);
+    Route::apiResource('shops.customers', ShopCustomerController::class);
+    Route::apiResource('shops.orders',    ShopOrderController::class);
+    Route::apiResource('shops.users',     ShopUserController::class);
+
+    Route::apiResource("orders",    OrderController::class);
+
+    Route::apiResource("customers",                      CustomerController::class);
     Route::get("customers/{pancake_customer_id}/orders", [CustomerController::class, "getOrder"]);
+
     Route::apiResource("products", ProductController::class);
 
-    Route::get("users/mornitoring", [UserController::class, "getMornitoring"]);
-    Route::get("users/all-user", [UserController::class, "getAllUser"]);
-    Route::apiResource('users', UserController::class);
+    Route::get("users/mornitoring",              [UserController::class, "getMornitoring"]);
+    Route::get("users/all-user",                 [UserController::class, "getAllUser"]);
+    Route::apiResource('users',                  UserController::class);
     Route::get("users/{pancake_user_id}/orders", [UserController::class, "getOrder"]);
     
-    Route::post('customer-cares/{id}/confirm', [CustomerCareController::class, "confirmCare"]);
-    Route::post('customer-cares/{id}/assign', [CustomerCareController::class, "assign"]);
-    Route::post('customer-cares/{id}/accept', [CustomerCareController::class, "accept"]);
+    Route::post('customer-cares/{id}/confirm',  [CustomerCareController::class, "confirmCare"]);
+    Route::post('customer-cares/{id}/assign',   [CustomerCareController::class, "assign"]);
+    Route::post('customer-cares/{id}/accept',   [CustomerCareController::class, "accept"]);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
-    Route::get('customer-cares/{id}/orders', [CustomerCareController::class, "getOrder"]);
-    Route::apiResource('customer-cares', CustomerCareController::class);
+    Route::get('customer-cares/{id}/orders',    [CustomerCareController::class, "getOrder"]);
+    Route::apiResource('customer-cares',        CustomerCareController::class);
 
-    Route::get('provinces/report', [ProvinceController::class, "report"]);
+    Route::get('provinces/report',  [ProvinceController::class, "report"]);
     Route::apiResource('provinces', ProvinceController::class);
     
     Route::post("settings", [SettingController::class, "store"]);
-    Route::get("overview", [CustomerCareController::class, "overview"]);
+    Route::get("overview",  [CustomerCareController::class, "overview"]);
 
     Route::get("loyalty-tiers/customers/pendding-upgrade-list", [LoyaltyTierController::class, "getCustomerPenddingUpgradeList"]);
-    Route::get("loyalty-tiers/customers/pendding-upgrade", [LoyaltyTierController::class, "getCustomerPenddingUpgrade"]);
-    Route::get("loyalty-tiers/overview", [LoyaltyTierController::class, "overview"]);
-    Route::get("loyalty-tiers/total-discount", [LoyaltyTierController::class, "getTotalDiscount"]);
-    Route::apiResource('loyalty-tiers', LoyaltyTierController::class);
+    Route::get("loyalty-tiers/customers/pendding-upgrade",      [LoyaltyTierController::class, "getCustomerPenddingUpgrade"]);
+    Route::get("loyalty-tiers/overview",                        [LoyaltyTierController::class, "overview"]);
+    Route::get("loyalty-tiers/total-discount",                  [LoyaltyTierController::class, "getTotalDiscount"]);
+    Route::apiResource('loyalty-tiers',                         LoyaltyTierController::class);
 
     Route::put("api-key", function () {
         ApiKey::updateOrCreate(

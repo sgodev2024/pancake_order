@@ -80,3 +80,12 @@ function get_customer_name($data)
     }
     return NULL;
 }
+
+function get_all_user_id_in_shop($shop_ids)
+{
+    return User::whereHas('shops', function ($query) use ($shop_ids) {
+        $query->whereIn('shops.id', $shop_ids);
+    })
+    ->selectRaw('COALESCE(pancake_user_id, id) as pancake_user_id')
+    ->pluck('pancake_user_id');
+}

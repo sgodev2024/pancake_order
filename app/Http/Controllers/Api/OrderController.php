@@ -35,16 +35,15 @@ class OrderController extends Controller
             ]);
             if (isset($inputs["shop_id"])) {
                 $query->where("shop_id", $inputs["shop_id"]);
-            } else {
-                if (!is_admin()) {
-                    $query->whereIn("shop_id", $user->shops()->select("shops.id"));
-                }
             }
-            if (!is_admin() && !is_manager()) {
-                $query->where(function ($q) use ($user) {
-                            $q->where("user_creator_id", $user->pancake_user_id)
-                              ->orWhere("user_care_id", $user->pancake_user_id);
-                        });
+            if (!$user->isAdmin()) {
+                $query->whereIn("shop_id", $user->shops()->select("shops.id"));
+                if (!$user->isManagerSale() && !$user->isManagerCskh()) {
+                    $query->where(function ($q) use ($user) {
+                        $q->where("user_creator_id", $user->pancake_user_id)
+                            ->orWhere("user_care_id", $user->pancake_user_id);
+                    });
+                }
             }
             if (isset($inputs["user_id"])) {
                 $query->where(function ($q) use ($inputs) {

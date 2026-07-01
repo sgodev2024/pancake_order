@@ -89,7 +89,7 @@ class UserController extends Controller implements HasMiddleware
                         ->orWhere("phone_number", "like", $searchTerm);
                     });
                 }
-                if (!is_admin()) {
+                if (!$user->isAdmin()) {
                     $q->whereHas("shops", function ($query) use ($user){
                         $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
                     });
@@ -362,7 +362,7 @@ class UserController extends Controller implements HasMiddleware
                     $query->where("shops.id", $inputs["shop_id"]);
                 });
             } else {
-                if (!is_admin()) {
+                if (!$user->isAdmin()) {
                     $queries->whereHas("shops", function ($query) use ($user) {
                         $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
                     });
@@ -370,7 +370,9 @@ class UserController extends Controller implements HasMiddleware
             }
             return response()->json([
                 "success" => true,
-                "data"    => $queries->select("id", "name", "pancake_user_id")->latest()->get()
+                "data"    => $queries->selectRaw("id, name, COALESCE(pancake_user_id, id) as pancake_user_id")
+                                    ->latest()
+                                    ->get()
             ]);
         } catch (\Throwable $th) {
             return response()->json([
@@ -384,7 +386,7 @@ class UserController extends Controller implements HasMiddleware
     {
         try {
             $user     = auth()->user();
-            $is_admin = is_admin();
+            $is_admin = $user->isAdmin();
             $shop_ids = $user->shops()->pluck('shops.id');
 
             // Subquery 1: Thống kê orders

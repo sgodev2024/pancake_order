@@ -70,10 +70,6 @@ class CustomerCareController extends Controller
         }
         if (isset($inputs["shop_id"])) {
             $query->where("shop_id", $inputs["shop_id"]);
-        } else {
-            if (!is_admin()) {
-                $query->whereIn("shop_id", $user->shops()->select("shops.id"));
-            }
         }
         if (isset($inputs["is_confirm_care"])) {
             $query->where("is_confirm_care", $inputs["is_confirm_care"]);
@@ -95,8 +91,7 @@ class CustomerCareController extends Controller
                                             Carbon::now()->startOfWeek()->format("Y-m-d"),
                                             Carbon::now()->endOfWeek()->format("Y-m-d"),
                                         ]),
-            'customer_care_expire'  => $query->where("date_care", "<", date("Y-m-d"))
-                                             ->where("status", 0),
+            'customer_care_expire'  => $query->where("date_care", "<", date("Y-m-d")),
             'customer_care_edit'    => $query->where("total_edit", ">", 1)->where("is_accept", 0)
         };
 
@@ -105,16 +100,24 @@ class CustomerCareController extends Controller
 
     private function applyAccessFilter($q, $user): void
     {
-        if (is_admin() || is_manager()) return;
-        $q->where(function ($query) use ($user) {
-            $query->where(function ($query1) use ($user) {
-                        $query1->where("user_creator_id", $user->pancake_user_id);
-                            //    ->orWhere("user_care_id", $user->pancake_user_id)
-                            //    ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
-                  })
-                  ->orWhereHas("users", function ($q) use ($user) {
-                    $q->where("users.pancake_user_id", $user->pancake_user_id);
-                  });
+        if ($user->isAdmin()) return;
+        $shopIds = $user->shops()->pluck('shops.id');
+        $q->whereIn("shop_id", $shopIds)
+          ->where(function ($query) use ($user, $shopIds) {
+            $query->where(function ($q) use ($user) {
+                if (!$user->isManagerSale() && !$user->isManagerCskh()) {
+                    $q->where(function ($query1) use ($user) {
+                            $query1->where("user_creator_id", $user->pancake_user_id);
+                                //    ->orWhere("user_care_id", $user->pancake_user_id)
+                                //    ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+                    })
+                    ->orWhereHas("users", function ($q) use ($user) {
+                        $user_id = $user->pancake_user_id ?? $user->id;
+                        $q->where("users.pancake_user_id", $user_id)
+                          ->orWhere("users.id", $user_id);
+                    });
+                }
+            });    
         });
     }
 
@@ -135,7 +138,7 @@ class CustomerCareController extends Controller
             // }
             $user_id = auth()->id();
             $is_manager = is_manager($user_id);
-            $is_admin   = is_admin($user_id);
+            $is_admin   = auth()->user()->isAdmin();
             $customer_care->update([
                 "status"     => $request->status,
                 "note"       => $note,
@@ -295,37 +298,57 @@ class CustomerCareController extends Controller
                 $today,
                 $today,
             ])
-            ->when(!is_admin(), function ($q) use ($user, $shop_ids) {
-                $q->whereIn("shop_id", $shop_ids)
-                  ->where(function ($q2) use ($user) {
-                    $q2->where("user_creator_id", $user->pancake_user_id)
-                        ->orWhere("user_care_id", $user->pancake_user_id)
-                        ->orWhere("user_assigning_seller_id", $user->pancake_user_id)
-                        ->orWhereHas("users", function ($q3) use ($user) {
-                            $q3->where("users.pancake_user_id", $user->pancake_user_id);
-                        });
-                });
+            ->when(!$user->isAdmin(), function ($q) use ($user, $shop_ids) {
+                // $q->whereIn("shop_id", $shop_ids)
+                //   ->where(function ($q2) use ($user) {
+                //     $q2->where("user_creator_id", $user->pancake_user_id)
+                //         ->orWhere("user_care_id", $user->pancake_user_id)
+                //         ->orWhere("user_assigning_seller_id", $user->pancake_user_id)
+                //         ->orWhereHas("users", function ($q3) use ($user) {
+                //             $q3->where("users.pancake_user_id", $user->pancake_user_id);
+                //         });
+                // });
+                $q->whereIn("shop_id", $shop_ids);
+                if (!$user->isManagerSale() && !$user->isManagerCskh()) {
+                    $q->where(function ($q1) use ($user){
+                        $q1->where(function ($q2) use ($user) {
+                                $q2->where("user_creator_id", $user->pancake_user_id)
+                                    ->orWhere("user_care_id", $user->pancake_user_id)
+                                    ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+                            })
+                            ->orWhereHas("users", function ($q3) use ($user) {
+                                $user_id = [$user->pancake_user_id ?? $user->id];
+                                $q3->where("users.pancake_user_id", $user_id)
+                                    ->orWhere("users.id", $user_id);
+                            });
+                    });
+                }
             })
-            ->where("is_accept", 1)
+            ->where("is_accept", 1) // những cái đã được duyệt sửa
             ->first();
             $date_start = date("Y-m-d 00:00:00");
             $date_end   = date("Y-m-d 23:59:59");
             $query = Order::whereBetween("created_at", [$date_start, $date_end])
-                                    ->where(function ($q) use ($user, $shop_ids) {
-                                        if (!is_admin()) {
-                                            $q->whereIn("shop_id", $shop_ids)
-                                              ->where(function($q2) use ($user) {
-                                                $q2->where("user_creator_id", $user->pancake_user_id)
-                                                    ->orWhere("user_care_id", $user->pancake_user_id)
-                                                    ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
+                            ->where(function ($q) use ($user, $shop_ids) {
+                                if (!$user->isAdmin()) {
+                                    $q->whereIn("shop_id", $shop_ids);
+                                    if (!$user->isManagerSale() && !$user->isManagerCskh()) {
+                                        $q->where(function ($q1) use ($user, $shop_ids) {
+                                            $user_id = $user->pancake_user_id ?? $user->id;
+                                            $q1->where(function ($q2) use ($user_id) {
+                                                $q2->where("user_creator_id", $user_id)
+                                                    ->orWhere("user_care_id", $user_id)
+                                                    ->orWhere("user_assigning_seller_id", $user_id);
                                             });
-                                        }
-                                    })
-                                    ->selectRaw("
-                                        COUNT(*) as total_order_today,
-                                        COALESCE(SUM(cod), 0) as total_revenue
-                                    ")
-                                    ->first();
+                                        });
+                                    }
+                                }
+                            })
+                            ->selectRaw("
+                                COUNT(*) as total_order_today,
+                                COALESCE(SUM(cod), 0) as total_revenue
+                            ")
+                            ->first();
 
             return response()->json([
                 "success" => true,
@@ -390,7 +413,8 @@ class CustomerCareController extends Controller
     public function confirmCare($customer_care_id)
     {
         try {
-            if (is_admin()) {
+            $user = auth()->user();
+            if ($user->isAdmin()) {
                 return response()->json([
                     "success" => false,
                     "message" => "Nhận CSKH chỉ dành cho nhân viên của cửa hàng"

@@ -72,4 +72,29 @@ class User extends Authenticatable
     {
         return $this->hasMany(Order::class, "user_creator_id", "pancake_user_id");
     }
+
+    public function isAdmin(): bool
+    {
+        return in_array($this->role?->slug, ['admin']);
+    }
+
+    public function isManagerSale(): bool
+    {
+        return in_array($this->role?->slug, ['manager-sale']);
+    }
+
+    public function isStaffSale(): bool
+    {
+        return in_array($this->role?->slug, ['staff-sale']);
+    }
+
+    public function isManagerCskh(): bool
+    {
+        return in_array($this->role?->slug, ['manager-cskh']);
+    }
+
+    public function isStaffCskh(): bool
+    {
+        return in_array($this->role?->slug, ['staff-cskh']);
+    }
 }
