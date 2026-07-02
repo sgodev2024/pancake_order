@@ -162,12 +162,12 @@ class CustomerCareController extends Controller
             // }
             $user_id = auth()->id();
             $is_manager = is_manager($user_id);
-            $is_admin   = auth()->user()->isAdmin();
+            $is_admin   = auth()->user()->isAdmin() || auth()->user()->isManagerCskh();
             $customer_care->update([
                 "status"     => $request->status,
                 "note"       => $note,
                 "time_care"  => $time_care,
-                "is_accept"  => ($customer_care->total_edit == 0 || $is_manager || $is_admin) ? 1 : 0,
+                "is_accept"  => ($customer_care->total_edit == 0 || $is_admin) ? 1 : 0,
                 "total_edit" => $customer_care->total_edit + 1
             ]);
             if (!empty($request->next_date_care)) {
@@ -179,7 +179,6 @@ class CustomerCareController extends Controller
                     "customer_name"             => $customer_care->customer_name,
                     "customer_addresss"         => $customer_care->customer_addresss,
                     "date_care"                 => $request->next_date_care,
-                    "user_creator_id"           => $customer_care->user_creator_id,
                     "user_care_id"              => $customer_care->user_care_id,
                     "user_assigning_seller_id"  => $customer_care->user_assigning_seller_id
                 ]);
@@ -187,7 +186,7 @@ class CustomerCareController extends Controller
 
             return response()->json([
                 "success" => true,
-                "message" => ($customer_care->status == 1 && $request->status == 0 && !$is_admin && !$is_manager) ? "Đợi Admin hoặc quản lý duyệt" : "Cập nhật thành công"
+                "message" => ($customer_care->status == 1 && $request->status == 0 && !$is_admin) ? "Đợi duyệt" : "Cập nhật thành công"
             ]);
         } catch (\Throwable $th) {
             return response()->json([
@@ -436,6 +435,9 @@ class CustomerCareController extends Controller
             }
 
             foreach ($customer_cares as $customer_care) {
+                $customer_care->update([
+                    "user_creator_id" => $inputs['pancake_user_ids'][0] // đã phân công cho rồi thì chuyển dữ liệu user_creator_id từ pancake theo id phân công
+                ]);
                 $customer_care->users()->sync(
                     collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
                         $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
@@ -457,7 +459,6 @@ class CustomerCareController extends Controller
 
     /** 
      * Xác nhận cskh khi được phân công
-     * Xóa những thằng được phân công mà chưa vào nhận chăm sóc đi
      */
     public function confirmCare($customer_care_id)
     {
