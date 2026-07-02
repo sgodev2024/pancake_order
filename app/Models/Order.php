@@ -60,4 +60,9 @@ class Order extends Model
         return $this->belongsTo(User::class, "user_assigning_seller_id", "pancake_user_id")
                     ->select("id", "name", "pancake_user_id");
     }
+
+    public function customer_cares()
+    {
+        return $this->hasMany(CustomerCare::class, "pancake_order_id", "pancake_order_id");
+    }
 }

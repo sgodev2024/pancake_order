@@ -15,7 +15,7 @@ class ConvertCustomerCareFromOrderSeeder extends Seeder
      */
     public function run(): void
     {
-        Order::where("status", 3)->with("shop")->take(10)->chunkById(10, function ($orders) {
+        Order::where("status", 3)->chunkById(100, function ($orders) {
             foreach ($orders as $orderItem) {
                 CustomerCare::create([
                     "shop_id"               => $orderItem->shop_id,
@@ -23,7 +23,7 @@ class ConvertCustomerCareFromOrderSeeder extends Seeder
                     "customer_phones"       => $orderItem->customer_phone,
                     "customer_name"         => $orderItem->customer_name,
                     "customer_addresss"     => $orderItem->customer_addresss,
-                    "pancake_order_id"      => $orderItem->pancake_order_id,
+                    "pancake_order_id"      => $orderItem->pancake_order_id . "_" . $orderItem->shop_id,
                     "date_care"             => now()->addDays($orderItem->shop->care_cycle_days ?? 3)->toDateString(),
                     "user_creator_id"       => $orderItem->user_creator_id
                 ]);

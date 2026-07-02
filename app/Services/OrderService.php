@@ -24,7 +24,7 @@ class OrderService
             "shop_id"                  => $shop_id,
             "province_id"              => !empty($province) ? $province->id : NULL,
             "order_number_vtp"         => $data_item["partner"]["order_number_vtp"] ?? NULL,
-            "pancake_order_id"         => $data_item["id"],
+            "pancake_order_id"         => $data_item["id"] . "_" . $shop_id,
             "total_quantity"           => $total_quantity,
             "cod"                      => $data_item["cod"] ?? 0,
             "discount_percent"         => get_discount_by_customer($data_item["customer"]["id"]),
