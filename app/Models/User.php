@@ -107,4 +107,16 @@ class User extends Authenticatable
     {
         return in_array($this->role?->slug, ['staff-cskh']);
     }
+
+    public function customerCares()
+    {
+        return $this->belongsToMany(
+            CustomerCare::class, // bảng liên kết
+            "customer_assigneds", // bảng trung gian
+            "pancake_user_id", // khóa ngoại của model hiện ở bảng trung gian
+            "customer_care_id", // khóa ngoại của model liên kết ở bảng trung gian
+            "pancake_user_id", // khóa chỉnh của model hiện tại
+            "id" // khóa chính của model liên kết
+        );
+    }
 }

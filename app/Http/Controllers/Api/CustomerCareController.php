@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CustomerCare;
 use App\Models\Order;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -64,7 +65,7 @@ class CustomerCareController extends Controller
 
     private function buildQuery(string $type, $user, array $inputs)
     {
-        $query = CustomerCare::query()->latest("date_care");
+        $query = CustomerCare::query();
         if (isset($inputs["is_accept"])) {
             $query->where("is_accept", $inputs["is_accept"]);
         }
@@ -81,24 +82,30 @@ class CustomerCareController extends Controller
                     //   ->orWhere("user_assigning_seller_id", $inputs["user_id"]);
                 });
         }
+        $today = date("Y-m-d");
         if (isset($inputs["status"])) {
             $query->where("status", $inputs["status"]);
         }
         switch ($type) {
             case 'customer_care_today':
-                $query->where("date_care", date("Y-m-d"));
+                $query->where("date_care", $today);
                 break;
             case 'customer_care_pending':
-                $query->where("date_care", '>', date("Y-m-d"));
+                $query->where("date_care", '>', $today)->oldest("date_care");
                 break;
             case 'customer_care_in_week':
                 $query->whereBetween("date_care", [
                     Carbon::now()->startOfWeek()->format("Y-m-d"),
                     Carbon::now()->endOfWeek()->format("Y-m-d"),
-                ]);
+                ])->oldest("date_care");
                 break;
             case 'customer_care_expire':
-                $query->where("date_care", "<", date("Y-m-d"));
+                $query->where("date_care", "<", $today)
+                        ->where(function ($q) {
+                            $q->where("status", 0)
+                                ->orWhereRaw("time_care > CONCAT(date_care, ' 23:59:59')");
+                        })
+                        ->oldest("date_care");
                 break;
             case 'customer_care_edit':
                 $query->where("total_edit", ">", 1)->where("is_accept", 0);
@@ -290,8 +297,18 @@ class CustomerCareController extends Controller
                 SUM(CASE WHEN date_care BETWEEN ? AND ? THEN 1 ELSE 0 END) as customer_care_in_week,
                 SUM(CASE WHEN date_care BETWEEN ? AND ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_in_week_done,
 
-                SUM(CASE WHEN date_care < ? AND status = 0 THEN 1 ELSE 0 END) as customer_care_expire,
-                SUM(CASE WHEN date_care < ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_expire_done,
+                SUM(CASE
+                    WHEN date_care < ?
+                    AND (status = 0 OR time_care > CONCAT(date_care, ' 23:59:59'))
+                    THEN 1 ELSE 0
+                END) as customer_care_expire,
+
+                SUM(CASE
+                    WHEN date_care < ?
+                    AND status = 1
+                    AND time_care > CONCAT(date_care, ' 23:59:59')
+                    THEN 1 ELSE 0
+                END) as customer_care_expire_done,
 
                 SUM(CASE WHEN total_edit > 1  THEN 1 ELSE 0 END) as customer_care_edit,
                 SUM(CASE WHEN total_edit > 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
@@ -503,7 +520,7 @@ class CustomerCareController extends Controller
                                 ->orderByDesc('c2.time_care')
                                 ->limit(1),
             ]);
-            $result = $query->paginate(30, ['customer_cares.*'], 'page', $inputs["page"]);
+            $result = $query->paginate(30, ['customer_cares.*'], 'page', $inputs["page"] ?? 1);
 
             return response()->json([
                 "success" => true,
@@ -523,8 +540,88 @@ class CustomerCareController extends Controller
         }
     }
 
-    public function customerAssignedByStaff()
+    public function customerAssignedByStaff(Request $request)
     {
+        try {
+            $inputs = $request->only(
+                "page",
+                "user_id",
+                "shop_id"
+            );
+            $user = auth()->user();
+            $shop_ids = $user->shops()->pluck("shops.id");
+            $today = now()->toDateString();
+            $shopFilter = $inputs["shop_id"] ?? null;
 
+            $query = User::query()->where("id", "!=", $user->id);
+
+            if (!$user->isAdmin()) {
+                $query->whereHas('shops', function ($q) use ($shop_ids) {
+                    $q->whereIn('shops.id', $shop_ids);
+                });
+            }
+
+            if (isset($inputs["shop_id"])) {
+                $query->whereHas('shops', function ($q) use ($inputs) {
+                    $q->where('shops.id', $inputs["shop_id"]);
+                });
+            }
+
+            if (isset($inputs["user_id"])) {
+                $query->where("id", $inputs["user_id"]);
+            }
+
+            $applyShop = fn ($q) => $shopFilter
+                ? $q->where('customer_cares.shop_id', $shopFilter)
+                : $q;
+
+            $query->withCount([
+                'customerCares as today_total' => fn ($q) =>
+                    $applyShop($q->where('date_care', $today)),
+
+                'customerCares as today_done' => fn ($q) =>
+                    $applyShop($q->where('date_care', $today)->where('status', 1)),
+
+                'customerCares as upcoming_total' => fn ($q) =>
+                    $applyShop($q->where('date_care', '>', $today)),
+
+                'customerCares as upcoming_done' => fn ($q) =>
+                    $applyShop($q->where('date_care', '>', $today)->where('status', 1)),
+
+                'customerCares as expired_total' => fn ($q) =>
+                    $applyShop(
+                        $q->where('date_care', '<', $today)
+                        ->where(function ($q) {
+                            $q->where('status', 0)
+                                ->orWhereRaw("time_care > CONCAT(date_care, ' 23:59:59')");
+                        })
+                    ),
+
+                'customerCares as expired_done' => fn ($q) =>
+                    $applyShop(
+                        $q->where('date_care', '<', $today)
+                        ->where('status', 1)
+                        ->whereRaw("time_care > CONCAT(date_care, ' 23:59:59')")
+                    ),
+            ]);
+
+            $result = $query->paginate(30, ['*'], 'page', $inputs["page"] ?? 1);
+
+            return response()->json([
+                "success" => true,
+                "data"    => [
+                    "customers"    => $result->items(),
+                    'current_page' => $result->currentPage(),
+                    'per_page'     => $result->perPage(),
+                    'total_items'  => $result->total(),
+                    'total_pages'  => $result->lastPage(),
+                ],
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
+            ], 500);
+        }
     }
 }
