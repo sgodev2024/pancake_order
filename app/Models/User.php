@@ -45,6 +45,16 @@ class User extends Authenticatable
         'pancake_full_data'  => 'array'
     ];
 
+    // Đảm bảo cứ tạo user từ hệ thống thì auto có pancake_user_id nếu pancake_user_id = NULL
+    protected static function booted(): void
+    {
+        static::created(function (User $user) {
+            if (empty($user->pancake_user_id)) {
+                $user->updateQuietly(['pancake_user_id' => $user->id]);
+            }
+        });
+    }
+
     /**
      * Get the attributes that should be cast.
      *

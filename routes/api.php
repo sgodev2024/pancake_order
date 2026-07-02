@@ -127,6 +127,9 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get("loyalty-tiers/total-discount",                  [LoyaltyTierController::class, "getTotalDiscount"]);
     Route::apiResource('loyalty-tiers',                         LoyaltyTierController::class);
 
+    Route::get("customer-assigned-by-customer", [CustomerCareController::class, "customerAssignedByCustomer"]);
+    Route::get("customer-assigned-by-staff",    [CustomerCareController::class, "customerAssignedByStaff"]);
+
     Route::put("api-key", function () {
         ApiKey::updateOrCreate(
             [

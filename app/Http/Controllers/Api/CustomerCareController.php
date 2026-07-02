@@ -103,32 +103,36 @@ class CustomerCareController extends Controller
             case 'customer_care_edit':
                 $query->where("total_edit", ">", 1)->where("is_accept", 0);
                 break;
-            case 'all':
-                $query->where("status", 0); // trang cơ hội phía FE
+            case 'chance': // trang cơ hội: lấy những thằng chưa chăm sóc + chưa phân công 
+                $query->where("status", 0);
                 break;
         }
 
-        return $query->where(fn($q) => $this->applyAccessFilter($q, $user));
+        return $query->where(fn($q) => $this->applyAccessFilter($q, $user, $type));
     }
 
-    private function applyAccessFilter($q, $user): void
+    private function applyAccessFilter($q, $user, $type = NULL): void
     {
+        if ($type == "chance") {
+            $q->orWhereDoesntHave("users");
+        }
         if ($user->isAdmin()) return;
         $shopIds = $user->shops()->pluck('shops.id');
         $q->whereIn("shop_id", $shopIds)
-          ->where(function ($query) use ($user, $shopIds) {
-            $query->where(function ($q) use ($user) {
+          ->where(function ($query) use ($user, $type) {
+            $query->where(function ($q) use ($user, $type) {
                 if (!$user->isManagerSale() && !$user->isManagerCskh()) {
                     $q->where(function ($query1) use ($user) {
                             $query1->where("user_creator_id", $user->pancake_user_id);
                                 //    ->orWhere("user_care_id", $user->pancake_user_id)
                                 //    ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
-                    })
-                    ->orWhereHas("users", function ($q) use ($user) {
-                        $user_id = $user->pancake_user_id ?? $user->id;
-                        $q->where("users.pancake_user_id", $user_id)
-                          ->orWhere("users.id", $user_id);
                     });
+                    if ($type != "chance") {
+                        $q->orWhereHas("users", function ($q) use ($user) {
+                            $q->where("users.pancake_user_id", $user->pancake_user_id);
+                        });
+                    }
+                    
                 }
             });    
         });
@@ -330,9 +334,7 @@ class CustomerCareController extends Controller
                                     ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
                             })
                             ->orWhereHas("users", function ($q3) use ($user) {
-                                $user_id = [$user->pancake_user_id ?? $user->id];
-                                $q3->where("users.pancake_user_id", $user_id)
-                                    ->orWhere("users.id", $user_id);
+                                $q3->where("users.pancake_user_id", $user->pancake_user_id);
                             });
                     });
                 }
@@ -460,5 +462,58 @@ class CustomerCareController extends Controller
                 "message" => $th->getMessage()
             ]);
         }
+    }
+
+    public function customerAssignedByCustomer(Request $request)
+    {
+        try {
+            $inputs = $request->only(
+                "status",
+                "user_id",
+                "shop_id",
+                "page"
+            );
+            $user = auth()->user();
+            $query = CustomerCare::query();
+            if (!$user->isAdmin()) {
+                $query->whereIn("shop_id", $user->shops()->pluck("shops.id"));
+            }
+            if (isset($inputs["status"])) {
+                $query->where("status", $inputs["status"]);
+            }
+            if (isset($inputs["shop_id"])) {
+                $query->where("shop_id", $inputs["shop_id"]);
+            }
+            $query->with(["users" => function ($q) {
+                $q->select("users.pancake_user_id", "users.id", "users.name");
+            }]);
+            $query->whereHas("users", function ($q) use ($inputs) {
+                if (isset($inputs["user_id"])) {
+                    $q->where("users.pancake_user_id", $inputs["user_id"]);
+                }
+            });
+            $result = $query->paginate(30, ['*'], 'page', $inputs["page"]);
+
+            return response()->json([
+                "success" => true,
+                "data"    => [
+                    "customers"    => $result->items(),
+                    'current_page' => $result->currentPage(),
+                    'per_page'     => $result->perPage(),
+                    'total_items'  => $result->total(),
+                    'total_pages'  => $result->lastPage(),
+                ],
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                "success" => false,
+                "message" => $th->getMessage()
+            ], 500);
+        }
+    }
+
+    public function customerAssignedByStaff()
+    {
+
     }
 }
