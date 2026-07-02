@@ -492,7 +492,18 @@ class CustomerCareController extends Controller
                     $q->where("users.pancake_user_id", $inputs["user_id"]);
                 }
             });
-            $result = $query->paginate(30, ['*'], 'page', $inputs["page"]);
+            // $query->select('customer_cares.*');
+            $query->addSelect([
+                'latest_care_time' => CustomerCare::query()
+                                ->from('customer_cares as c2')
+                                ->select('c2.time_care')
+                                ->whereColumn('c2.pancake_customer_id', 'customer_cares.pancake_customer_id')
+                                ->where('c2.status', 1)
+                                ->whereNotNull('c2.time_care')
+                                ->orderByDesc('c2.time_care')
+                                ->limit(1),
+            ]);
+            $result = $query->paginate(30, ['customer_cares.*'], 'page', $inputs["page"]);
 
             return response()->json([
                 "success" => true,
