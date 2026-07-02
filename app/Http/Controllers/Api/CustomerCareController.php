@@ -108,7 +108,7 @@ class CustomerCareController extends Controller
                         ->oldest("date_care");
                 break;
             case 'customer_care_edit':
-                $query->where("total_edit", ">", 1)->where("is_accept", 0);
+                $query->where("total_edit", ">", 1)->where("is_accept", 1);
                 break;
             case 'chance': // trang cơ hội: lấy những thằng chưa chăm sóc + chưa phân công 
                 $query->where("status", 0);
