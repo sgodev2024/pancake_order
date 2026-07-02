@@ -481,7 +481,7 @@ class CustomerCareController extends Controller
                 "is_confirm_care" => true,
                 "user_creator_id" => auth()->user()->pancake_user_id
             ]);
-            $customer_care->users()->detach();
+            // $customer_care->users()->detach();
             DB::commit();
             
             return response()->json([
