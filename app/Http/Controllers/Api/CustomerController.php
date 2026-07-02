@@ -86,7 +86,7 @@ class CustomerController extends Controller implements HasMiddleware
                 $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
             if (!$user->isAdmin()) {
-                $query->whereIn("shop_ids", $shop_ids);
+                $query->whereIn("shop_id", $shop_ids);
                 if (!$user->isManagerSale() && !$user->isManagerCskh()) {
                     $user_id = $user->pancake_user_id ?? $user->id;
                     $query->where("assigned_user_id", $user_id);

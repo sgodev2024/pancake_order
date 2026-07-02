@@ -414,20 +414,34 @@ class CustomerCareController extends Controller
     {
         try {
             $inputs = $request->only(
-                "pancake_user_ids"
+                "pancake_user_ids",
+                "is_multiple",
+                "customer_care_ids"
             );
-            $customer_care = CustomerCare::find($customer_care_id);
-            if (!$customer_care) {
+
+            $is_multiple = filter_var($inputs['is_multiple'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            // Xác định danh sách customer_care cần phân công
+            $customer_care_ids = $is_multiple
+                ? ($inputs['customer_care_ids'] ?? [])
+                : [$customer_care_id];
+
+            $customer_cares = CustomerCare::whereIn('id', $customer_care_ids)->get();
+
+            if ($customer_cares->isEmpty()) {
                 return response()->json([
                     "success" => false,
                     "message" => "Lịch chăm sóc này không tồn tại"
                 ]);
             }
-            $customer_care->users()->sync(
-                collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
-                    $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
-                ])->toArray()
-            );
+
+            foreach ($customer_cares as $customer_care) {
+                $customer_care->users()->sync(
+                    collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
+                        $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
+                    ])->toArray()
+                );
+            }
 
             return response()->json([
                 "success" => true,
