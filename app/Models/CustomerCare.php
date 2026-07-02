@@ -62,9 +62,9 @@ class CustomerCare extends Model
         return $this->belongsToMany(
             User::class,                     // $related
             "customer_assigneds", //$table (bảng trung gian)
-            "customer_care_id",    // $foreignPivotKey (khóa trỏ về ProcessTemplateGroup)
+            "customer_care_id",    // $foreignPivotKey 
             "pancake_user_id",                      // $relatedPivotKey (khóa trỏ về User)
-            "id",                           // $parentKey (khóa chính ProcessTemplateGroup)
+            "id",                           // $parentKey 
             "pancake_user_id"          
         )->withPivot("pancake_user_id");
     }
