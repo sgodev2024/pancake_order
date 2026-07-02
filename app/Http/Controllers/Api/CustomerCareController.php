@@ -279,6 +279,7 @@ class CustomerCareController extends Controller
         ], 200); // Có thể dùng 204 No Content nếu không muốn trả về body
     }
 
+    /**Số lượng có thể sẽ khác so với khi đi vào trong chi tiết từng cục vì trong chi tiết không where vào is_active = 1, mục đích để có thể duyệt sửa bên trong */
     public function overview()
     {
         try {
@@ -288,18 +289,19 @@ class CustomerCareController extends Controller
             $user = auth()->user();
             $shop_ids = $user->shops()->pluck('shops.id');
             $overview = CustomerCare::selectRaw("
-                SUM(CASE WHEN date_care = ? THEN 1 ELSE 0 END) as customer_care_today,
-                SUM(CASE WHEN date_care = ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_today_done,
+                SUM(CASE WHEN date_care = ? AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_today,
+                SUM(CASE WHEN date_care = ? AND status = 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_today_done,
 
-                SUM(CASE WHEN date_care > ? THEN 1 ELSE 0 END) as customer_care_pending,
-                SUM(CASE WHEN date_care > ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_pending_done,
+                SUM(CASE WHEN date_care > ? AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_pending,
+                SUM(CASE WHEN date_care > ? AND status = 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_pending_done,
 
-                SUM(CASE WHEN date_care BETWEEN ? AND ? THEN 1 ELSE 0 END) as customer_care_in_week,
-                SUM(CASE WHEN date_care BETWEEN ? AND ? AND status = 1 THEN 1 ELSE 0 END) as customer_care_in_week_done,
+                SUM(CASE WHEN date_care BETWEEN ? AND ? AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_in_week,
+                SUM(CASE WHEN date_care BETWEEN ? AND ? AND is_accept = 1 AND status = 1 THEN 1 ELSE 0 END) as customer_care_in_week_done,
 
                 SUM(CASE
                     WHEN date_care < ?
                     AND (status = 0 OR time_care > CONCAT(date_care, ' 23:59:59'))
+                    AND is_accept = 1
                     THEN 1 ELSE 0
                 END) as customer_care_expire,
 
@@ -307,6 +309,7 @@ class CustomerCareController extends Controller
                     WHEN date_care < ?
                     AND status = 1
                     AND time_care > CONCAT(date_care, ' 23:59:59')
+                    AND is_accept = 1
                     THEN 1 ELSE 0
                 END) as customer_care_expire_done,
 
@@ -356,7 +359,7 @@ class CustomerCareController extends Controller
                     });
                 }
             })
-            ->where("is_accept", 1) // những cái đã được duyệt sửa
+            // ->where("is_accept", 1) // những cái đã được duyệt sửa
             ->first();
             $date_start = date("Y-m-d 00:00:00");
             $date_end   = date("Y-m-d 23:59:59");
