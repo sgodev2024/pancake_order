@@ -129,4 +129,68 @@ class OrderController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Lấy những đơn hàng thuộc trạng thái đã nhận (status = 3) và chưa được phân công (chưa có trong customer_cares)
+     */
+    public function chance(Request $request)
+    {
+        try {
+            $inputs = $request->only(
+                "shop_id",
+                "page",
+                "date_from",
+                "date_to"
+            );
+            $user = auth()->user();
+            $orders = Order::query();
+            $orders->where("status", 3)
+                   ->whereDoesntHave("customer_cares");
+            $orders->with([
+                "shop" => function ($query) {
+                    $query->select("id", "name");
+                }
+            ]);
+            if (isset($inputs["date_from"])) {
+                $orders->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+            }
+            if (isset($inputs["date_to"])) {
+                $orders->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+            }
+            if (isset($inputs["shop_id"])) {
+                $orders->where("shop_id", $inputs["shop_id"]);
+            } else {
+                if (!$user->isAdmin()) {
+                    $shop_ids = $user->shops()->pluck("shops.id");
+                    $orders->whereIn("shop_id", $shop_ids);
+                }
+            }
+            $orders->select([
+                'id', 
+                'shop_id',
+                'created_at',
+                'customer_name',
+                'customer_phone',
+                'customer_address',
+                'pancake_order_id',
+                'status'
+            ]);
+
+            return response()->json([
+                "success" => true,
+                "data" => [
+                    'orders'       => $orders->items(),
+                    'current_page' => $orders->currentPage(),
+                    'per_page'     => $orders->perPage(),
+                    'total_items'  => $orders->total(),
+                    'total_pages'  => $orders->lastPage()
+                ]
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
+            ], 500);
+        }
+    }
 }

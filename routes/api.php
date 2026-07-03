@@ -96,6 +96,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('shops.orders',    ShopOrderController::class);
     Route::apiResource('shops.users',     ShopUserController::class);
 
+    Route::get("orders/chance",     [OrderController::class, "chance"]);
     Route::apiResource("orders",    OrderController::class);
 
     Route::apiResource("customers",                      CustomerController::class);
