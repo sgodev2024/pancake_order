@@ -143,29 +143,29 @@ class OrderController extends Controller
                 "date_to"
             );
             $user = auth()->user();
-            $orders = Order::query();
-            $orders->where("status", 3)
+            $queries = Order::query();
+            $queries->where("status", 3)
                    ->whereDoesntHave("customer_cares");
-            $orders->with([
+            $queries->with([
                 "shop" => function ($query) {
                     $query->select("id", "name");
                 }
             ]);
             if (isset($inputs["date_from"])) {
-                $orders->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+                $queries->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
             }
             if (isset($inputs["date_to"])) {
-                $orders->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+                $queries->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
             if (isset($inputs["shop_id"])) {
-                $orders->where("shop_id", $inputs["shop_id"]);
+                $queries->where("shop_id", $inputs["shop_id"]);
             } else {
                 if (!$user->isAdmin()) {
                     $shop_ids = $user->shops()->pluck("shops.id");
-                    $orders->whereIn("shop_id", $shop_ids);
+                    $queries->whereIn("shop_id", $shop_ids);
                 }
             }
-            $orders->select([
+            $queries->select([
                 'id', 
                 'shop_id',
                 'created_at',
@@ -174,7 +174,9 @@ class OrderController extends Controller
                 'customer_address',
                 'pancake_order_id',
                 'status'
-            ]);
+            ])
+            ->latest('created_at');
+            $orders = $queries->paginate(30, ['*'], 'page', $inputs["page"] ?? 1);
 
             return response()->json([
                 "success" => true,
