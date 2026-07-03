@@ -416,35 +416,46 @@ class CustomerCareController extends Controller
             $inputs = $request->only(
                 "pancake_user_ids",
                 "is_multiple",
-                "customer_care_ids"
+                "order_ids"
             );
 
             $is_multiple = filter_var($inputs['is_multiple'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
             // Xác định danh sách customer_care cần phân công
-            $customer_care_ids = $is_multiple
-                ? ($inputs['customer_care_ids'] ?? [])
+            $order_ids = $is_multiple
+                ? ($inputs['order_ids'] ?? [])
                 : [$customer_care_id];
 
-            $customer_cares = CustomerCare::whereIn('id', $customer_care_ids)->get();
+            $orders = Order::whereIn('id', $order_ids)->get();
 
-            if ($customer_cares->isEmpty()) {
+            if ($orders->isEmpty()) {
                 return response()->json([
                     "success" => false,
                     "message" => "Lịch chăm sóc này không tồn tại"
                 ]);
             }
-
-            foreach ($customer_cares as $customer_care) {
-                $customer_care->update([
-                    "user_creator_id" => $inputs['pancake_user_ids'][0] // đã phân công cho rồi thì chuyển dữ liệu user_creator_id từ pancake theo id phân công
-                ]);
-                $customer_care->users()->sync(
-                    collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
-                        $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
-                    ])->toArray()
-                );
+            $pancake_user_id = $inputs["pancake_user_ids"][0]; // chỉ lấy 1 item thôi, vì bên FE là radio
+            $customer_cares = [];
+            foreach ($orders as $order_item) {
+                $customer_cares[] = [
+                    "shop_id"             => $order_item->shop_id,
+                    "pancake_customer_id" => $order_item->pancake_customer_id,
+                    "customer_phones"     => $order_item->customer_phone,
+                    "customer_name"       => $order_item->customer_name,
+                    "customer_addresss"   => $order_item->customer_addresss,
+                    "pancake_order_id"    => $order_item->pancake_order_id,
+                    "date_care"           => now()->addDays(3)->format('Y-m-d'),
+                    "user_creator_id"     => $pancake_user_id,
+                    "created_at"          => now(),
+                    "updated_at"          => now()
+                ];
+                // $customer_care->users()->sync(
+                //     collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
+                //         $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
+                //     ])->toArray()
+                // );
             }
+            CustomerCare::insert($customer_cares);
 
             return response()->json([
                 "success" => true,
