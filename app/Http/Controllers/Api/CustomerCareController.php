@@ -425,16 +425,19 @@ class CustomerCareController extends Controller
             $order_ids = $is_multiple
                 ? ($inputs['order_ids'] ?? [])
                 : [$customer_care_id];
-
-            $orders = Order::whereIn('id', $order_ids)->get();
+            $pancake_user_id = $inputs["pancake_user_ids"][0]; // chỉ lấy 1 item thôi, vì bên FE là radio
+            $user = User::where("pancake_user_id", $pancake_user_id)->first();
+            $shop_ids = $user->shops()->pluck("shops.id");
+            $orders = Order::whereIn('id', $order_ids)
+                           ->whereIn("shop_id", $shop_ids)
+                            ->get();
 
             if ($orders->isEmpty()) {
                 return response()->json([
                     "success" => false,
-                    "message" => "Lịch chăm sóc này không tồn tại"
+                    "message" => "Các khách hàng bạn phân công không thuộc cửa hạng mà " . $user->name . " nằm trong"
                 ]);
             }
-            $pancake_user_id = $inputs["pancake_user_ids"][0]; // chỉ lấy 1 item thôi, vì bên FE là radio
             $customer_cares = [];
             foreach ($orders as $order_item) {
                 $customer_cares[] = [
@@ -456,10 +459,14 @@ class CustomerCareController extends Controller
                 // );
             }
             CustomerCare::insert($customer_cares);
-
+            $total_orders = count($orders);
+            $total_order_id = count($inputs["order_ids"]);
+            
             return response()->json([
                 "success" => true,
-                "message" => "Phân công thành công"
+                "message" => $total_orders == $total_order_id ? 
+                            "Phân công thành công" : 
+                            "Phân công thành công " . $total_orders . " khách hàng. Còn lại " ($total_order_id - $total_orders) . " khách hàng không thuộc cửa hạng mà " . $user->name . " nằm trong"
             ]);
         } catch (\Throwable $th) {
             return response()->json([
