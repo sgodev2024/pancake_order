@@ -35,16 +35,15 @@ class OrderController extends Controller
             ]);
             if (isset($inputs["shop_id"])) {
                 $query->where("shop_id", $inputs["shop_id"]);
-            } else {
-                if (!is_admin()) {
-                    $query->whereIn("shop_id", $user->shops()->select("shops.id"));
-                }
             }
-            if (!is_admin() && !is_manager()) {
-                $query->where(function ($q) use ($user) {
-                            $q->where("user_creator_id", $user->pancake_user_id)
-                              ->orWhere("user_care_id", $user->pancake_user_id);
-                        });
+            if (!$user->isAdmin()) {
+                $query->whereIn("shop_id", $user->shops()->select("shops.id"));
+                if (!$user->isManagerSale() && !$user->isManagerCskh()) {
+                    $query->where(function ($q) use ($user) {
+                        $q->where("user_creator_id", $user->pancake_user_id)
+                            ->orWhere("user_care_id", $user->pancake_user_id);
+                    });
+                }
             }
             if (isset($inputs["user_id"])) {
                 $query->where(function ($q) use ($inputs) {
@@ -121,6 +120,72 @@ class OrderController extends Controller
                     'total_items'  => $orders->total(),
                     'total_pages'  => $orders->lastPage(),
                     'total_revenue' => $total_revenue
+                ]
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Lấy những đơn hàng thuộc trạng thái đã nhận (status = 3) và chưa được phân công (chưa có trong customer_cares)
+     */
+    public function chance(Request $request)
+    {
+        try {
+            $inputs = $request->only(
+                "shop_id",
+                "page",
+                "date_from",
+                "date_to"
+            );
+            $user = auth()->user();
+            $queries = Order::query();
+            $queries->where("status", 3)
+                   ->whereDoesntHave("customer_cares");
+            $queries->with([
+                "shop" => function ($query) {
+                    $query->select("id", "name");
+                }
+            ]);
+            if (isset($inputs["date_from"])) {
+                $queries->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+            }
+            if (isset($inputs["date_to"])) {
+                $queries->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+            }
+            if (isset($inputs["shop_id"])) {
+                $queries->where("shop_id", $inputs["shop_id"]);
+            } else {
+                if (!$user->isAdmin()) {
+                    $shop_ids = $user->shops()->pluck("shops.id");
+                    $queries->whereIn("shop_id", $shop_ids);
+                }
+            }
+            $queries->select([
+                'id', 
+                'shop_id',
+                'created_at',
+                'customer_name',
+                'customer_phone',
+                'customer_address',
+                'pancake_order_id',
+                'status'
+            ])
+            ->latest('created_at');
+            $orders = $queries->paginate(30, ['*'], 'page', $inputs["page"] ?? 1);
+
+            return response()->json([
+                "success" => true,
+                "data" => [
+                    'orders'       => $orders->items(),
+                    'current_page' => $orders->currentPage(),
+                    'per_page'     => $orders->perPage(),
+                    'total_items'  => $orders->total(),
+                    'total_pages'  => $orders->lastPage()
                 ]
             ]);
         } catch (\Throwable $th) {

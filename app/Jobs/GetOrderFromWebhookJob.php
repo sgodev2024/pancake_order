@@ -87,21 +87,21 @@ class GetOrderFromWebhookJob implements ShouldQueue
                                 )->onQueue("send-zns");
                             }
                         }
-                        if ($is_new_order) {
-                            AddCustomerCareJob::dispatch(
-                                $shop->id,
-                                $shop->care_cycle_days,
-                                $order->pancake_order_id,
-                                $order->created_at,
-                                $customer_exist->name,
-                                $customer_exist->phone_numbers,
-                                $customer["shop_customer_addresses"][0]["full_address"] ?? NULL,
-                                $customer_exist->pancake_customer_id,
-                                $order->user_creator_id,
-                                $order->user_care_id,
-                                $order->user_assigning_seller_id
-                            )->onQueue("add-customer-care");
-                        }
+                        // if ($is_new_order) {
+                        //     AddCustomerCareJob::dispatch(
+                        //         $shop->id,
+                        //         $shop->care_cycle_days,
+                        //         $order->pancake_order_id,
+                        //         $order->created_at,
+                        //         $customer_exist->name,
+                        //         $customer_exist->phone_numbers,
+                        //         $customer["shop_customer_addresses"][0]["full_address"] ?? NULL,
+                        //         $customer_exist->pancake_customer_id,
+                        //         $order->user_creator_id,
+                        //         $order->user_care_id,
+                        //         $order->user_assigning_seller_id
+                        //     )->onQueue("add-customer-care");
+                        // }
                     }
                 }
                 Log::channel("pancake-webhook-success")->info("=================Thành công GetOrderFromWebhookJob==============");

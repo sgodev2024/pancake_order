@@ -45,6 +45,16 @@ class User extends Authenticatable
         'pancake_full_data'  => 'array'
     ];
 
+    // Đảm bảo cứ tạo user từ hệ thống thì auto có pancake_user_id nếu pancake_user_id = NULL
+    protected static function booted(): void
+    {
+        static::created(function (User $user) {
+            if (empty($user->pancake_user_id)) {
+                $user->updateQuietly(['pancake_user_id' => $user->id]);
+            }
+        });
+    }
+
     /**
      * Get the attributes that should be cast.
      *
@@ -71,5 +81,42 @@ class User extends Authenticatable
     public function orders()
     {
         return $this->hasMany(Order::class, "user_creator_id", "pancake_user_id");
+    }
+
+    public function isAdmin(): bool
+    {
+        return in_array($this->role?->slug, ['admin']);
+    }
+
+    public function isManagerSale(): bool
+    {
+        return in_array($this->role?->slug, ['manager-sale']);
+    }
+
+    public function isStaffSale(): bool
+    {
+        return in_array($this->role?->slug, ['staff-sale']);
+    }
+
+    public function isManagerCskh(): bool
+    {
+        return in_array($this->role?->slug, ['manager-cskh']);
+    }
+
+    public function isStaffCskh(): bool
+    {
+        return in_array($this->role?->slug, ['staff-cskh']);
+    }
+
+    public function customerCares()
+    {
+        return $this->belongsToMany(
+            CustomerCare::class, // bảng liên kết
+            "customer_assigneds", // bảng trung gian
+            "pancake_user_id", // khóa ngoại của model hiện ở bảng trung gian
+            "customer_care_id", // khóa ngoại của model liên kết ở bảng trung gian
+            "pancake_user_id", // khóa chỉnh của model hiện tại
+            "id" // khóa chính của model liên kết
+        );
     }
 }

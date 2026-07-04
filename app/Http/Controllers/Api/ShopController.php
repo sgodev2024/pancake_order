@@ -41,6 +41,7 @@ class ShopController extends Controller implements HasMiddleware
     public function index(Request $request)
     {
         try {
+            $user = auth()->user();
             $inputs = $request->only("date_from", "date_to");
             $shops = Shop::query();
             $shops->with([
@@ -69,7 +70,7 @@ class ShopController extends Controller implements HasMiddleware
                     $q->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
                 }
             }]);
-            if (!is_admin()) {
+            if (!$user->isAdmin()) {
                 $shops->whereHas('users', function ($userQuery) {
                     $userQuery->where('users.id', auth()->id());
                 });

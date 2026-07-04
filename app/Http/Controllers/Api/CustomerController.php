@@ -39,12 +39,9 @@ class CustomerController extends Controller implements HasMiddleware
             $user = auth()->user();
             // 1. Khởi tạo query từ relationship
             $query = Customer::query();
+            $shop_ids = $user->shops()->pluck('shops.id')->toArray();
             if (isset($inputs["shop_id"])) {
                 $query->where("shop_id", $inputs["shop_id"]);
-            } else {
-                if (!is_admin()) {
-                    $query->whereIn("shop_id", $user->shops()->select("shops.id"));
-                }
             }
             if (isset($inputs["loyalty_tier_id"])) {
                 $query->where("loyalty_tier_id", $inputs["loyalty_tier_id"]);
@@ -88,8 +85,12 @@ class CustomerController extends Controller implements HasMiddleware
             if (isset($inputs["date_to"])) {
                 $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
-            if (!is_admin()) {
-                $query->where("assigned_user_id", $user->pancake_user_id);
+            if (!$user->isAdmin()) {
+                $query->whereIn("shop_id", $shop_ids);
+                if (!$user->isManagerSale() && !$user->isManagerCskh()) {
+                    $user_id = $user->pancake_user_id ?? $user->id;
+                    $query->where("assigned_user_id", $user_id);
+                }
             }
             $pageNumber = $inputs["page"];
             $page_size  = $inputs["page_size"] ?? 30;
