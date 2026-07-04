@@ -590,7 +590,7 @@ class CustomerCareController extends Controller
             $today = now()->toDateString();
             $shopFilter = $inputs["shop_id"] ?? null;
 
-            $query = User::query()->where("id", "!=", $user->id);
+            $query = User::query()->where("id", "!=", $user->id)->whereColumn('id', 'pancake_user_id');
 
             if (!$user->isAdmin()) {
                 $query->whereHas('shops', function ($q) use ($shop_ids) {
