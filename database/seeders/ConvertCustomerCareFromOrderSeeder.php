@@ -11,7 +11,7 @@ use Carbon\Carbon;
 class ConvertCustomerCareFromOrderSeeder extends Seeder
 {
     /**
-     * Run the database seeds.
+     * Corver lại những đơn cũ ở trạng thái status != 3 để add sang bảng customer_cares, với ngày chăm sóc là lấy ngày shop của order đó được thêm + ngày đã setting cskh của chính shop đó
      */
     public function run(): void
     {
