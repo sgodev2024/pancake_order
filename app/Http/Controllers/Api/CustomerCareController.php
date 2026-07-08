@@ -230,7 +230,8 @@ class CustomerCareController extends Controller
                                           ->with([
                                                 "shop" => function ($q) {
                                                     $q->select("shops.id", "shops.name");
-                                                }
+                                                },
+                                                "user_creator"
                                           ])
                                           ->get()
             ]);
