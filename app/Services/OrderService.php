@@ -30,7 +30,7 @@ class OrderService
             "discount_percent"         => get_discount_by_customer($data_item["customer"]["id"]),
             "cash"                     => $data_item["cash"] ?? 0,
             "note"                     => $data_item["note"] ?? NULL,
-            "user_creator_id"          => $data_item["creator"]["id"] ?? NULL,
+            "user_creator_id"          => $data_item["creator"]["id"]  ?? $data_item["assigning_seller"]["id"] ?? $data_item["assigning_care"]["id"] ?? NULL,
             "user_care_id"             => $data_item["assigning_care"]["id"] ?? NULL,
             "user_assigning_seller_id" => $data_item["assigning_seller"]["id"] ?? NULL,
             "pancake_customer_id"      => $data_item["customer"]["customer_id"] ?? NULL,
