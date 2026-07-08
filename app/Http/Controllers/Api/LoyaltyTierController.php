@@ -283,6 +283,7 @@ class LoyaltyTierController extends Controller
             // Filter params
             $current_tier_id = $request->loyalty_tier_id;  // Hạng hiện tại của khách
             $next_tier_id    = $request->next_tier_id;      // Hạng sắp tăng lên
+            $shop_id         = $request->shop_id ?? NULL;
 
             $customers = Customer::query()
                 ->select([
@@ -311,6 +312,9 @@ class LoyaltyTierController extends Controller
                 ->leftJoin('shops', 'shops.id', '=', 'customers.shop_id')
                 ->when(!$is_admin, function ($query) use ($shop_ids) {
                     $query->whereIn('customers.shop_id', $shop_ids);
+                })
+                ->when($shop_id, function ($query) use ($shop_id) {
+                    $query->where("customers.shop_id", $shop_id);
                 })
                 ->when($current_tier_id, function ($query) use ($current_tier_id) {
                     $query->where('customers.loyalty_tier_id', $current_tier_id);
