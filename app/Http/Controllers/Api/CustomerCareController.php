@@ -280,7 +280,7 @@ class CustomerCareController extends Controller
         ], 200); // Có thể dùng 204 No Content nếu không muốn trả về body
     }
 
-    /**Số lượng có thể sẽ khác so với khi đi vào trong chi tiết từng cục vì trong chi tiết không where vào is_active = 1, mục đích để có thể duyệt sửa bên trong */
+    /**Số lượng có thể sẽ khác so với khi đi vào trong chi tiết từng cục vì trong chi tiết không where vào is_accept = 1, mục đích để có thể duyệt sửa bên trong */
     public function overview()
     {
         try {
@@ -610,23 +610,23 @@ class CustomerCareController extends Controller
             }
 
             $applyShop = fn ($q) => $shopFilter
-                ? $q->where('customer_cares.shop_id', $shopFilter)
-                : $q;
+                ? $q->where('customer_cares.shop_id', $shopFilter)->where("is_accept", 1)
+                : $q->where("is_accept", 1);
 
             $query->withCount([
-                'customerCares as today_total' => fn ($q) =>
+                'customerCareAssign as today_total' => fn ($q) =>
                     $applyShop($q->where('date_care', $today)),
 
-                'customerCares as today_done' => fn ($q) =>
+                'customerCareAssign as today_done' => fn ($q) =>
                     $applyShop($q->where('date_care', $today)->where('status', 1)),
 
-                'customerCares as upcoming_total' => fn ($q) =>
+                'customerCareAssign as upcoming_total' => fn ($q) =>
                     $applyShop($q->where('date_care', '>', $today)),
 
-                'customerCares as upcoming_done' => fn ($q) =>
+                'customerCareAssign as upcoming_done' => fn ($q) =>
                     $applyShop($q->where('date_care', '>', $today)->where('status', 1)),
 
-                'customerCares as expired_total' => fn ($q) =>
+                'customerCareAssign as expired_total' => fn ($q) =>
                     $applyShop(
                         $q->where('date_care', '<', $today)
                         ->where(function ($q) {
@@ -635,7 +635,7 @@ class CustomerCareController extends Controller
                         })
                     ),
 
-                'customerCares as expired_done' => fn ($q) =>
+                'customerCareAssign as expired_done' => fn ($q) =>
                     $applyShop(
                         $q->where('date_care', '<', $today)
                         ->where('status', 1)

@@ -119,4 +119,9 @@ class User extends Authenticatable
             "id" // khóa chính của model liên kết
         );
     }
+
+    public function customerCareAssign()
+    {
+        return $this->hasMany(CustomerCare::class, "pancake_user_id", "pancake_user_id");
+    }
 }
