@@ -22,7 +22,8 @@ class CustomerCareController extends Controller
                 "status",
                 "user_id",
                 "is_accept",
-                "is_confirm_care"
+                "is_confirm_care",
+                "search"
             );
             $user = auth()->user();
             $result = $this->buildQuery($inputs["type"], $user, $inputs)
@@ -85,6 +86,14 @@ class CustomerCareController extends Controller
         $today = date("Y-m-d");
         if (isset($inputs["status"])) {
             $query->where("status", $inputs["status"]);
+        }
+        if (!empty($inputs["search"])) {
+            $search = $inputs["search"];
+            $query->where(function ($q) use ($search) {
+                $q->where("customer_cares.customer_name", "like", "{$search}%")
+                  ->orWhere("customer_cares.customer_phones", "like", "{$search}%")
+                  ->orWhere("customer_cares.pancake_order_id", "like", "{$search}%");
+            });
         }
         switch ($type) {
             case 'customer_care_today':
