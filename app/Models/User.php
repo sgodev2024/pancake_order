@@ -122,6 +122,6 @@ class User extends Authenticatable
 
     public function customerCareAssign()
     {
-        return $this->hasMany(CustomerCare::class, "pancake_user_id", "pancake_user_id");
+        return $this->hasMany(CustomerCare::class, "user_creator_id", "pancake_user_id");
     }
 }
