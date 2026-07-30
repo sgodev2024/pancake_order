@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CustomerCareController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\ImportedOpportunityController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\PermissionGroupController;
 use App\Http\Controllers\Api\PermissionController;
@@ -98,6 +99,11 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 
     Route::get("orders/chance",     [OrderController::class, "chance"]);
     Route::apiResource("orders",    OrderController::class);
+
+    Route::get('imported-opportunities/template', [ImportedOpportunityController::class, "downloadTemplate"]);
+    Route::post('imported-opportunities/import',  [ImportedOpportunityController::class, "import"]);
+    Route::post('imported-opportunities/assign',  [ImportedOpportunityController::class, "assign"]);
+    Route::get('imported-opportunities',          [ImportedOpportunityController::class, "index"]);
 
     Route::apiResource("customers",                      CustomerController::class);
     Route::get("customers/{pancake_customer_id}/orders", [CustomerController::class, "getOrder"]);
