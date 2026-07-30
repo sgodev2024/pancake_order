@@ -112,7 +112,7 @@ class ImportedOpportunityController extends Controller
                 $customer_cares[] = [
                     "shop_id" => $opportunity->shop_id,
                     "pancake_customer_id" => "IMPORT-" . $opportunity->id,
-                    "customer_phones" => json_encode([$opportunity->phone]),
+                    "customer_phones" => $opportunity->phone,
                     "customer_name" => $opportunity->name,
                     "customer_addresss" => $opportunity->address,
                     "pancake_order_id" => null,
