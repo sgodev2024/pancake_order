@@ -1,7 +1,9 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\CustomerCareController;
+use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\ImportedOpportunityController;
 use App\Http\Controllers\Api\OrderController;
@@ -99,6 +101,9 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 
     Route::get("orders/chance",     [OrderController::class, "chance"]);
     Route::apiResource("orders",    OrderController::class);
+
+    Route::get("activity-logs", [ActivityLogController::class, "index"])
+        ->middleware(PermissionCheckMiddleware::class . ":view-action");
 
     Route::get('imported-opportunities/template', [ImportedOpportunityController::class, "downloadTemplate"]);
     Route::post('imported-opportunities/import',  [ImportedOpportunityController::class, "import"]);

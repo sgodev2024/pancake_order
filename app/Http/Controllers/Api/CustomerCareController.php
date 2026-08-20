@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CustomerCare;
 use App\Models\Order;
 use App\Models\User;
+use App\Services\ActivityLogService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -437,9 +438,13 @@ class CustomerCareController extends Controller
                 : [$customer_care_id];
             $pancake_user_id = $inputs["pancake_user_ids"][0]; // chỉ lấy 1 item thôi, vì bên FE là radio
             $user = User::where("pancake_user_id", $pancake_user_id)->first();
+            $actor = auth()->user();
             $shop_ids = $user->shops()->pluck("shops.id");
             $orders = Order::whereIn('id', $order_ids)
                            ->whereIn("shop_id", $shop_ids)
+                            ->with(['shop' => function ($query) {
+                                $query->select('id', 'name');
+                            }])
                             ->get();
 
             if ($orders->isEmpty()) {
@@ -468,7 +473,31 @@ class CustomerCareController extends Controller
                 //     ])->toArray()
                 // );
             }
-            CustomerCare::insert($customer_cares);
+            $activityLogService = new ActivityLogService();
+
+            DB::transaction(function () use ($customer_cares, $orders, $activityLogService, $actor, $user) {
+                CustomerCare::insert($customer_cares);
+
+                foreach ($orders as $order_item) {
+                    $activityLogService->log(
+                        "customer_care.assigned",
+                        "user",
+                        $actor->id,
+                        $actor->name,
+                        $user->id,
+                        $user->name,
+                        $order_item->shop_id,
+                        $order_item->shop?->name,
+                        "order",
+                        $order_item->id,
+                        $order_item->pancake_order_id,
+                        $order_item->pancake_customer_id,
+                        null,
+                        ["assigned_user_id" => $user->id],
+                        null
+                    );
+                }
+            });
             $total_orders = count($orders);
             $total_order_id = count($inputs["order_ids"]);
             
@@ -476,7 +505,7 @@ class CustomerCareController extends Controller
                 "success" => true,
                 "message" => $total_orders == $total_order_id ? 
                             "Phân công thành công" : 
-                            "Phân công thành công " . $total_orders . " khách hàng. Còn lại " ($total_order_id - $total_orders) . " khách hàng không thuộc cửa hạng mà " . $user->name . " nằm trong"
+                            "Phân công thành công " . $total_orders . " khách hàng. Còn lại " . ($total_order_id - $total_orders) . " khách hàng không thuộc cửa hạng mà " . $user->name . " nằm trong"
             ]);
         } catch (\Throwable $th) {
             return response()->json([
