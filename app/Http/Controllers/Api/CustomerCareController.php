@@ -181,27 +181,40 @@ class CustomerCareController extends Controller
             $user_id = auth()->id();
             $is_manager = is_manager($user_id);
             $is_admin   = auth()->user()->isAdmin() || auth()->user()->isManagerCskh();
-            $customer_care->update([
-                "status"     => $request->status,
-                "note"       => $note,
-                "time_care"  => $time_care,
-                "is_accept"  => ($customer_care->total_edit == 0 || $is_admin) ? 1 : 0,
-                "total_edit" => $customer_care->total_edit + 1
-            ]);
-            if (!empty($request->next_date_care)) {
-                CustomerCare::create([
-                    "shop_id"                   => $customer_care->shop_id,
-                    "pancake_customer_id"       => $customer_care->pancake_customer_id,
-                    "pancake_order_id"          => $customer_care->pancake_order_id,
-                    "customer_phones"           => $customer_care->customer_phones,
-                    "customer_name"             => $customer_care->customer_name,
-                    "customer_addresss"         => $customer_care->customer_addresss,
-                    "date_care"                 => $request->next_date_care,
-                    "user_creator_id"           => $customer_care->user_creator_id
-                    // "user_care_id"              => $customer_care->user_care_id,
-                    // "user_assigning_seller_id"  => $customer_care->user_assigning_seller_id
+            $customer_care = DB::transaction(function () use ($customer_care, $request, $note, $time_care, $is_admin) {
+                $lockedCustomerCare = CustomerCare::query()
+                    ->whereKey($customer_care->getKey())
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                $lockedCustomerCare->update([
+                    "status"     => $request->status,
+                    "note"       => $note,
+                    "time_care"  => $time_care,
+                    "is_accept"  => ($lockedCustomerCare->total_edit == 0 || $is_admin) ? 1 : 0,
+                    "total_edit" => $lockedCustomerCare->total_edit + 1
                 ]);
-            }
+
+                $lockedCustomerCare->refresh();
+                $this->customerCareAssignmentService->markAsCared($lockedCustomerCare);
+
+                if (!empty($request->next_date_care)) {
+                    CustomerCare::create([
+                        "shop_id"                   => $lockedCustomerCare->shop_id,
+                        "pancake_customer_id"       => $lockedCustomerCare->pancake_customer_id,
+                        "pancake_order_id"          => $lockedCustomerCare->pancake_order_id,
+                        "customer_phones"           => $lockedCustomerCare->customer_phones,
+                        "customer_name"             => $lockedCustomerCare->customer_name,
+                        "customer_addresss"         => $lockedCustomerCare->customer_addresss,
+                        "date_care"                 => $request->next_date_care,
+                        "user_creator_id"           => $lockedCustomerCare->user_creator_id
+                        // "user_care_id"              => $lockedCustomerCare->user_care_id,
+                        // "user_assigning_seller_id"  => $lockedCustomerCare->user_assigning_seller_id
+                    ]);
+                }
+
+                return $lockedCustomerCare;
+            });
 
             return response()->json([
                 "success" => true,

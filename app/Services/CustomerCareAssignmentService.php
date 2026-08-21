@@ -11,6 +11,29 @@ use InvalidArgumentException;
 
 class CustomerCareAssignmentService
 {
+    public function markAsCared(CustomerCare $customerCare): ?CustomerCareAssignment
+    {
+        if ((int) $customerCare->status !== 1 || $customerCare->time_care === null) {
+            return null;
+        }
+
+        $assignment = CustomerCareAssignment::query()
+            ->where('customer_care_id', $customerCare->getKey())
+            ->where('status', CustomerCareAssignment::STATUS_ACTIVE)
+            ->lockForUpdate()
+            ->first();
+
+        if ($assignment === null || $assignment->cared_at !== null) {
+            return $assignment;
+        }
+
+        $assignment->update([
+            'cared_at' => now(),
+        ]);
+
+        return $assignment;
+    }
+
     public function create(
         CustomerCare $customerCare,
         int $shopId,
