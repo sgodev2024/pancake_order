@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
 use Carbon\Carbon;
+use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -457,9 +458,13 @@ class CustomerCareController extends Controller
             $order_ids = $is_multiple
                 ? ($inputs['order_ids'] ?? [])
                 : [$customer_care_id];
+            $order_ids = collect(is_array($order_ids) ? $order_ids : [])
+                ->filter(fn ($id) => is_int($id) || is_string($id))
+                ->unique()
+                ->values();
             $pancake_user_id = $inputs["pancake_user_ids"][0] ?? null; // chỉ lấy 1 item thôi, vì bên FE là radio
 
-            if (! $pancake_user_id) {
+            if ($order_ids->isEmpty() || ! $pancake_user_id) {
                 return response()->json([
                     "success" => false,
                     "message" => "Thiếu dữ liệu phân công",
@@ -476,31 +481,43 @@ class CustomerCareController extends Controller
             }
 
             $actor = auth()->user();
-            $shop_ids = $user->shops()->pluck("shops.id");
-            $orders = Order::whereIn('id', $order_ids)
-                           ->whereIn("shop_id", $shop_ids)
-                            ->with(['shop' => function ($query) {
-                                $query->select('id', 'name');
-                            }])
-                            ->get();
-
-            if ($orders->isEmpty()) {
-                return response()->json([
-                    "success" => false,
-                    "message" => "Các khách hàng bạn phân công không thuộc cửa hạng mà " . $user->name . " nằm trong"
-                ]);
-            }
             $assignedAt = now();
             $eligibleOn = CustomerCareAssignment::calculateReclaimEligibleOn($assignedAt);
 
-            DB::transaction(function () use ($orders, $actor, $user, $assignedAt, $eligibleOn) {
+            $total_orders = DB::transaction(function () use ($order_ids, $actor, $user, $assignedAt, $eligibleOn) {
                 $lockedOrders = Order::query()
-                    ->whereIn('id', $orders->pluck('id'))
+                    ->whereIn('id', $order_ids)
                     ->with(['shop' => function ($query) {
                         $query->select('id', 'name');
                     }])
                     ->lockForUpdate()
                     ->get();
+
+                if ($lockedOrders->count() !== $order_ids->count()) {
+                    throw new DomainException('Một hoặc nhiều cơ hội không tồn tại.');
+                }
+
+                $sourceShopIds = $lockedOrders->pluck('shop_id')->unique()->values();
+
+                if (! $actor->isAdmin()) {
+                    $actorShopIds = $actor->shops()
+                        ->whereIn('shops.id', $sourceShopIds)
+                        ->pluck('shops.id');
+
+                    if ($actorShopIds->count() !== $sourceShopIds->count()) {
+                        throw new DomainException('Bạn không có quyền phân công cơ hội thuộc cửa hàng này.');
+                    }
+                }
+
+                $assigneeShopIds = $user->shops()
+                    ->whereIn('shops.id', $sourceShopIds)
+                    ->pluck('shops.id');
+
+                if ($assigneeShopIds->count() !== $sourceShopIds->count()) {
+                    throw new DomainException(
+                        "Các khách hàng bạn phân công không thuộc cửa hàng mà {$user->name} nằm trong"
+                    );
+                }
 
                 foreach ($lockedOrders as $order_item) {
                     $customerCare = CustomerCare::create([
@@ -541,9 +558,10 @@ class CustomerCareController extends Controller
                         null
                     );
                 }
+
+                return $lockedOrders->count();
             });
-            $total_orders = count($orders);
-            $total_order_id = count($order_ids);
+            $total_order_id = $order_ids->count();
             
             return response()->json([
                 "success" => true,

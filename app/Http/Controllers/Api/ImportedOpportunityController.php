@@ -98,11 +98,14 @@ class ImportedOpportunityController extends Controller
     {
         try {
             $inputs = $request->only("pancake_user_ids", "ids");
-            $ids = $inputs["ids"] ?? [];
-            $pancake_user_id = $inputs["pancake_user_ids"][0] ?? null;
+            $ids = collect($inputs['ids'] ?? [])
+                ->filter(fn ($id) => is_int($id) || is_string($id))
+                ->unique()
+                ->values();
+            $pancake_user_id = $inputs['pancake_user_ids'][0] ?? null;
 
-            if (empty($ids) || !$pancake_user_id) {
-                return response()->json(["success" => false, "message" => "Thiếu dữ liệu phân công"]);
+            if ($ids->isEmpty() || ! $pancake_user_id) {
+                return response()->json(['success' => false, 'message' => 'Thiếu dữ liệu phân công']);
             }
 
             $user = User::where("pancake_user_id", $pancake_user_id)->first();
@@ -112,32 +115,41 @@ class ImportedOpportunityController extends Controller
             }
 
             $actor = auth()->user();
-            $shop_ids = $user->shops()->pluck("shops.id");
-
-            $opportunities = ImportedOpportunity::whereIn('id', $ids)
-                ->whereIn("shop_id", $shop_ids)
-                ->where("status", 0)
-                ->with(['shop' => fn ($query) => $query->select('id', 'name')])
-                ->get();
-
-            if ($opportunities->isEmpty()) {
-                return response()->json(["success" => false,
-                    "message" => "Các khách hàng bạn phân công không thuộc cửa hàng mà " . $user->name . " nằm trong"]);
-            }
-
             $assignedAt = now();
             $eligibleOn = CustomerCareAssignment::calculateReclaimEligibleOn($assignedAt);
 
-            DB::transaction(function () use ($opportunities, $user, $actor, $assignedAt, $eligibleOn) {
+            $total_opportunities = DB::transaction(function () use ($ids, $user, $actor, $assignedAt, $eligibleOn) {
                 $lockedOpportunities = ImportedOpportunity::query()
-                    ->whereIn('id', $opportunities->pluck('id'))
+                    ->whereIn('id', $ids)
                     ->where('status', 0)
                     ->with(['shop' => fn ($query) => $query->select('id', 'name')])
                     ->lockForUpdate()
                     ->get();
 
-                if ($lockedOpportunities->count() !== $opportunities->count()) {
-                    throw new DomainException('Một hoặc nhiều cơ hội đã được phân công.');
+                if ($lockedOpportunities->count() !== $ids->count()) {
+                    throw new DomainException('Một hoặc nhiều cơ hội không tồn tại hoặc đã được phân công.');
+                }
+
+                $sourceShopIds = $lockedOpportunities->pluck('shop_id')->unique()->values();
+
+                if (! $actor->isAdmin()) {
+                    $actorShopIds = $actor->shops()
+                        ->whereIn('shops.id', $sourceShopIds)
+                        ->pluck('shops.id');
+
+                    if ($actorShopIds->count() !== $sourceShopIds->count()) {
+                        throw new DomainException('Bạn không có quyền phân công cơ hội thuộc cửa hàng này.');
+                    }
+                }
+
+                $assigneeShopIds = $user->shops()
+                    ->whereIn('shops.id', $sourceShopIds)
+                    ->pluck('shops.id');
+
+                if ($assigneeShopIds->count() !== $sourceShopIds->count()) {
+                    throw new DomainException(
+                        "Các khách hàng bạn phân công không thuộc cửa hàng mà {$user->name} nằm trong"
+                    );
                 }
 
                 foreach ($lockedOpportunities as $opportunity) {
@@ -186,10 +198,11 @@ class ImportedOpportunityController extends Controller
 
                 ImportedOpportunity::whereIn('id', $lockedOpportunities->pluck('id'))
                     ->update(["status" => 1]);
+
+                return $lockedOpportunities->count();
             });
 
-            $total_opportunities = count($opportunities);
-            $total_ids = count($ids);
+            $total_ids = $ids->count();
 
             return response()->json(["success" => true,
                 "message" => $total_opportunities == $total_ids

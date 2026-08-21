@@ -161,13 +161,20 @@ class OrderController extends Controller
             if (isset($inputs["date_to"])) {
                 $queries->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
-            if (isset($inputs["shop_id"])) {
-                $queries->where("shop_id", $inputs["shop_id"]);
-            } else {
-                if (!$user->isAdmin()) {
-                    $shop_ids = $user->shops()->pluck("shops.id");
-                    $queries->whereIn("shop_id", $shop_ids);
+            if (! $user->isAdmin()) {
+                $shopIds = $user->shops()->pluck('shops.id');
+
+                if (isset($inputs['shop_id']) && ! $shopIds->contains($inputs['shop_id'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Bạn không có quyền truy cập cửa hàng này.',
+                    ]);
                 }
+
+                $queries->whereIn('shop_id', $shopIds);
+            }
+            if (isset($inputs['shop_id'])) {
+                $queries->where('shop_id', $inputs['shop_id']);
             }
             $queries->select([
                 'id', 

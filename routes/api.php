@@ -99,7 +99,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('shops.orders',    ShopOrderController::class);
     Route::apiResource('shops.users',     ShopUserController::class);
 
-    Route::get("orders/chance",     [OrderController::class, "chance"]);
+    Route::get('orders/chance', [OrderController::class, 'chance'])
+        ->middleware(PermissionCheckMiddleware::class . ':view-chance');
     Route::apiResource("orders",    OrderController::class);
 
     Route::get("activity-logs", [ActivityLogController::class, "index"])
@@ -107,7 +108,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 
     Route::get('imported-opportunities/template', [ImportedOpportunityController::class, "downloadTemplate"]);
     Route::post('imported-opportunities/import',  [ImportedOpportunityController::class, "import"]);
-    Route::post('imported-opportunities/assign',  [ImportedOpportunityController::class, "assign"]);
+    Route::post('imported-opportunities/assign', [ImportedOpportunityController::class, "assign"])
+        ->middleware(PermissionCheckMiddleware::class . ':asign-cskh');
     Route::get('imported-opportunities',          [ImportedOpportunityController::class, "index"]);
 
     Route::apiResource("customers",                      CustomerController::class);
@@ -121,7 +123,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get("users/{pancake_user_id}/orders", [UserController::class, "getOrder"]);
     
     Route::post('customer-cares/{id}/confirm',  [CustomerCareController::class, "confirmCare"]);
-    Route::post('customer-cares/{id}/assign',   [CustomerCareController::class, "assign"]);
+    Route::post('customer-cares/{id}/assign', [CustomerCareController::class, "assign"])
+        ->middleware(PermissionCheckMiddleware::class . ':asign-cskh');
     Route::post('customer-cares/{id}/accept',   [CustomerCareController::class, "accept"]);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
     Route::get('customer-cares/{id}/orders',    [CustomerCareController::class, "getOrder"]);
