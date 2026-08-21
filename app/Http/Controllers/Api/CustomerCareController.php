@@ -4,15 +4,23 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CustomerCare;
+use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\ActivityLogService;
+use App\Services\CustomerCareAssignmentService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class CustomerCareController extends Controller
 {
+    public function __construct(
+        private readonly CustomerCareAssignmentService $customerCareAssignmentService,
+        private readonly ActivityLogService $activityLogService
+    ) {
+    }
+
     public function index(Request $request)
     {
         try {
@@ -436,8 +444,24 @@ class CustomerCareController extends Controller
             $order_ids = $is_multiple
                 ? ($inputs['order_ids'] ?? [])
                 : [$customer_care_id];
-            $pancake_user_id = $inputs["pancake_user_ids"][0]; // chỉ lấy 1 item thôi, vì bên FE là radio
+            $pancake_user_id = $inputs["pancake_user_ids"][0] ?? null; // chỉ lấy 1 item thôi, vì bên FE là radio
+
+            if (! $pancake_user_id) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Thiếu dữ liệu phân công",
+                ]);
+            }
+
             $user = User::where("pancake_user_id", $pancake_user_id)->first();
+
+            if (! $user) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Không tìm thấy người được phân công",
+                ]);
+            }
+
             $actor = auth()->user();
             $shop_ids = $user->shops()->pluck("shops.id");
             $orders = Order::whereIn('id', $order_ids)
@@ -453,33 +477,40 @@ class CustomerCareController extends Controller
                     "message" => "Các khách hàng bạn phân công không thuộc cửa hạng mà " . $user->name . " nằm trong"
                 ]);
             }
-            $customer_cares = [];
-            foreach ($orders as $order_item) {
-                $customer_cares[] = [
-                    "shop_id"             => $order_item->shop_id,
-                    "pancake_customer_id" => $order_item->pancake_customer_id,
-                    "customer_phones"     => $order_item->customer_phone,
-                    "customer_name"       => $order_item->customer_name,
-                    "customer_addresss"   => $order_item->customer_addresss,
-                    "pancake_order_id"    => $order_item->pancake_order_id,
-                    "date_care"           => now()->addDays(3)->format('Y-m-d'),
-                    "user_creator_id"     => $pancake_user_id,
-                    "created_at"          => now(),
-                    "updated_at"          => now()
-                ];
-                // $customer_care->users()->sync(
-                //     collect($inputs['pancake_user_ids'])->mapWithKeys(fn($user_id) => [
-                //         $user_id => ['pancake_customer_id' => $customer_care->pancake_customer_id]
-                //     ])->toArray()
-                // );
-            }
-            $activityLogService = new ActivityLogService();
+            $assignedAt = now();
+            $eligibleOn = CustomerCareAssignment::calculateReclaimEligibleOn($assignedAt);
 
-            DB::transaction(function () use ($customer_cares, $orders, $activityLogService, $actor, $user) {
-                CustomerCare::insert($customer_cares);
+            DB::transaction(function () use ($orders, $actor, $user, $assignedAt, $eligibleOn) {
+                $lockedOrders = Order::query()
+                    ->whereIn('id', $orders->pluck('id'))
+                    ->with(['shop' => function ($query) {
+                        $query->select('id', 'name');
+                    }])
+                    ->lockForUpdate()
+                    ->get();
 
-                foreach ($orders as $order_item) {
-                    $activityLogService->log(
+                foreach ($lockedOrders as $order_item) {
+                    $customerCare = CustomerCare::create([
+                        "shop_id" => $order_item->shop_id,
+                        "pancake_customer_id" => $order_item->pancake_customer_id,
+                        "customer_phones" => $order_item->customer_phone,
+                        "customer_name" => $order_item->customer_name,
+                        "customer_addresss" => $order_item->customer_addresss,
+                        "pancake_order_id" => $order_item->pancake_order_id,
+                        "date_care" => $eligibleOn->toDateString(),
+                        "user_creator_id" => $user->pancake_user_id,
+                    ]);
+
+                    $this->customerCareAssignmentService->create(
+                        $customerCare,
+                        (int) $order_item->shop_id,
+                        CustomerCareAssignment::SOURCE_ORDER,
+                        (int) $order_item->id,
+                        $user,
+                        $assignedAt
+                    );
+
+                    $this->activityLogService->log(
                         "customer_care.assigned",
                         "user",
                         $actor->id,
@@ -499,7 +530,7 @@ class CustomerCareController extends Controller
                 }
             });
             $total_orders = count($orders);
-            $total_order_id = count($inputs["order_ids"]);
+            $total_order_id = count($order_ids);
             
             return response()->json([
                 "success" => true,

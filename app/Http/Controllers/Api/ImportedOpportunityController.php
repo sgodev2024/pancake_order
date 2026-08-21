@@ -6,13 +6,24 @@ use App\Exports\OpportunityTemplateExport;
 use App\Http\Controllers\Controller;
 use App\Imports\OpportunityImport;
 use App\Models\CustomerCare;
+use App\Models\CustomerCareAssignment;
 use App\Models\ImportedOpportunity;
 use App\Models\User;
+use App\Services\ActivityLogService;
+use App\Services\CustomerCareAssignmentService;
+use DomainException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Facades\Excel;
 
 class ImportedOpportunityController extends Controller
 {
+    public function __construct(
+        private readonly CustomerCareAssignmentService $customerCareAssignmentService,
+        private readonly ActivityLogService $activityLogService
+    ) {
+    }
+
     public function index(Request $request)
     {
         try {
@@ -95,11 +106,18 @@ class ImportedOpportunityController extends Controller
             }
 
             $user = User::where("pancake_user_id", $pancake_user_id)->first();
+
+            if (! $user) {
+                return response()->json(["success" => false, "message" => "Không tìm thấy người được phân công"]);
+            }
+
+            $actor = auth()->user();
             $shop_ids = $user->shops()->pluck("shops.id");
 
             $opportunities = ImportedOpportunity::whereIn('id', $ids)
                 ->whereIn("shop_id", $shop_ids)
                 ->where("status", 0)
+                ->with(['shop' => fn ($query) => $query->select('id', 'name')])
                 ->get();
 
             if ($opportunities->isEmpty()) {
@@ -107,24 +125,68 @@ class ImportedOpportunityController extends Controller
                     "message" => "Các khách hàng bạn phân công không thuộc cửa hàng mà " . $user->name . " nằm trong"]);
             }
 
-            $customer_cares = [];
-            foreach ($opportunities as $opportunity) {
-                $customer_cares[] = [
-                    "shop_id" => $opportunity->shop_id,
-                    "pancake_customer_id" => "IMPORT-" . $opportunity->id,
-                    "customer_phones" => $opportunity->phone,
-                    "customer_name" => $opportunity->name,
-                    "customer_addresss" => $opportunity->address,
-                    "pancake_order_id" => null,
-                    "date_care" => now()->addDays(3)->format('Y-m-d'),
-                    "user_creator_id" => $pancake_user_id,
-                    "created_at" => now(),
-                    "updated_at" => now(),
-                ];
-            }
-            CustomerCare::insert($customer_cares);
+            $assignedAt = now();
+            $eligibleOn = CustomerCareAssignment::calculateReclaimEligibleOn($assignedAt);
 
-            ImportedOpportunity::whereIn('id', $opportunities->pluck('id'))->update(["status" => 1]);
+            DB::transaction(function () use ($opportunities, $user, $actor, $assignedAt, $eligibleOn) {
+                $lockedOpportunities = ImportedOpportunity::query()
+                    ->whereIn('id', $opportunities->pluck('id'))
+                    ->where('status', 0)
+                    ->with(['shop' => fn ($query) => $query->select('id', 'name')])
+                    ->lockForUpdate()
+                    ->get();
+
+                if ($lockedOpportunities->count() !== $opportunities->count()) {
+                    throw new DomainException('Một hoặc nhiều cơ hội đã được phân công.');
+                }
+
+                foreach ($lockedOpportunities as $opportunity) {
+                    $pancakeCustomerId = "IMPORT-" . $opportunity->id;
+                    $customerCare = CustomerCare::create([
+                        "shop_id" => $opportunity->shop_id,
+                        "pancake_customer_id" => $pancakeCustomerId,
+                        "customer_phones" => $opportunity->phone,
+                        "customer_name" => $opportunity->name,
+                        "customer_addresss" => $opportunity->address,
+                        "pancake_order_id" => null,
+                        "date_care" => $eligibleOn->toDateString(),
+                        "user_creator_id" => $user->pancake_user_id,
+                    ]);
+
+                    $this->customerCareAssignmentService->create(
+                        $customerCare,
+                        (int) $opportunity->shop_id,
+                        CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
+                        (int) $opportunity->id,
+                        $user,
+                        $assignedAt
+                    );
+
+                    $this->activityLogService->log(
+                        "customer_care.assigned",
+                        "user",
+                        $actor->id,
+                        $actor->name,
+                        $user->id,
+                        $user->name,
+                        $opportunity->shop_id,
+                        $opportunity->shop?->name,
+                        CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
+                        $opportunity->id,
+                        null,
+                        $pancakeCustomerId,
+                        null,
+                        ["assigned_user_id" => $user->id],
+                        [
+                            "source_type" => CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
+                            "source_id" => $opportunity->id,
+                        ]
+                    );
+                }
+
+                ImportedOpportunity::whereIn('id', $lockedOpportunities->pluck('id'))
+                    ->update(["status" => 1]);
+            });
 
             $total_opportunities = count($opportunities);
             $total_ids = count($ids);
