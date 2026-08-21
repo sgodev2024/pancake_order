@@ -36,7 +36,7 @@ class CustomerCareReclaimPreviewTest extends TestCase
         $this->createSchema();
         $this->createFoundationRecords();
 
-        $this->service = new CustomerCareReclaimService;
+        $this->service = $this->app->make(CustomerCareReclaimService::class);
     }
 
     protected function tearDown(): void

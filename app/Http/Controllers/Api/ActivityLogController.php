@@ -198,14 +198,28 @@ class ActivityLogController extends Controller
 
     private function formatDescription(ActivityLog $log, ?string $actorName, ?string $targetUserName): ?string
     {
-        if ($log->action !== "customer_care.assigned") {
-            return null;
+        if ($log->action === "customer_care.reclaimed") {
+            $actorName ??= "Hệ thống";
+            $targetUserName ??= "Người dùng không xác định";
+            $order = $log->pancake_order_id;
+
+            if ($order !== null && trim((string) $order) !== "") {
+                return $actorName . " thu hồi CSKH đơn " . $order . " từ " . $targetUserName
+                    . " do quá 3 ngày chưa chăm sóc";
+            }
+
+            return $actorName . " thu hồi CSKH từ " . $targetUserName
+                . " do quá 3 ngày chưa chăm sóc";
         }
 
-        $actorName ??= "Người dùng không xác định";
-        $targetUserName ??= "Người dùng không xác định";
-        $orderLabel = $log->pancake_order_id ?? $log->subject_id ?? "không xác định";
+        if ($log->action === "customer_care.assigned") {
+            $actorName ??= "Người dùng không xác định";
+            $targetUserName ??= "Người dùng không xác định";
+            $orderLabel = $log->pancake_order_id ?? $log->subject_id ?? "không xác định";
 
-        return $actorName . " phân công đơn " . $orderLabel . " cho " . $targetUserName;
+            return $actorName . " phân công đơn " . $orderLabel . " cho " . $targetUserName;
+        }
+
+        return null;
     }
 }

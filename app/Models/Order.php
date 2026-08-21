@@ -65,4 +65,10 @@ class Order extends Model
     {
         return $this->hasMany(CustomerCare::class, "pancake_order_id", "pancake_order_id");
     }
+
+    public function customerCareAssignments()
+    {
+        return $this->hasMany(CustomerCareAssignment::class, 'source_id')
+            ->where('source_type', CustomerCareAssignment::SOURCE_ORDER);
+    }
 }

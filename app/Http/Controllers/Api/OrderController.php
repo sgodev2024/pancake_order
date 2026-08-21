@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use Illuminate\Http\Request;
 
@@ -131,7 +132,8 @@ class OrderController extends Controller
     }
 
     /**
-     * Lấy những đơn hàng thuộc trạng thái đã nhận (status = 3) và chưa được phân công (chưa có trong customer_cares)
+     * Lấy đơn status=3 không có CustomerCareAssignment đang hoạt động.
+     * CustomerCare cũ được giữ lại làm lịch sử và không ảnh hưởng availability.
      */
     public function chance(Request $request)
     {
@@ -145,7 +147,9 @@ class OrderController extends Controller
             $user = auth()->user();
             $queries = Order::query();
             $queries->where("status", 3)
-                   ->whereDoesntHave("customer_cares");
+                   ->whereDoesntHave("customerCareAssignments", function ($query) {
+                       $query->where('status', CustomerCareAssignment::STATUS_ACTIVE);
+                   });
             $queries->with([
                 "shop" => function ($query) {
                     $query->select("id", "name");

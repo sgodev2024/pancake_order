@@ -9,14 +9,21 @@ use Illuminate\Console\Command;
 class PreviewCustomerCareReclaims extends Command
 {
     protected $signature = 'customer-care:reclaim-stale
-                            {--dry-run : Preview only; Phase D never performs reclaim mutations}
-                            {--shop= : Limit the preview to one shop ID}
+                            {--dry-run : Explicitly preview without changing data}
+                            {--execute : Explicitly reclaim eligible assignments}
+                            {--shop= : Limit processing to one shop ID}
                             {--limit=100 : Maximum active assignments to scan}';
 
-    protected $description = 'Preview stale CustomerCare assignments without changing any data';
+    protected $description = 'Preview stale CustomerCare assignments or explicitly reclaim them';
 
     public function handle(CustomerCareReclaimService $reclaimService): int
     {
+        if ($this->option('dry-run') && $this->option('execute')) {
+            $this->components->error('--dry-run and --execute cannot be used together.');
+
+            return self::INVALID;
+        }
+
         $shopId = $this->positiveIntegerOption('shop', true);
         $limit = $this->positiveIntegerOption('limit');
 
@@ -25,6 +32,11 @@ class PreviewCustomerCareReclaims extends Command
         }
 
         $referenceTime = CarbonImmutable::now(config('app.timezone'));
+
+        if ($this->option('execute')) {
+            return $this->handleExecute($reclaimService, $referenceTime, $shopId, $limit);
+        }
+
         $preview = $reclaimService->preview($referenceTime, $shopId, $limit);
 
         $this->components->info(
@@ -60,6 +72,47 @@ class PreviewCustomerCareReclaims extends Command
                 ['Anomaly', $preview['summary']['anomaly']],
                 ['Invalid/missing relation', $preview['summary']['invalid_relation']],
                 ['Skipped', $preview['summary']['skipped']],
+            ]
+        );
+
+        return self::SUCCESS;
+    }
+
+    private function handleExecute(
+        CustomerCareReclaimService $reclaimService,
+        CarbonImmutable $referenceTime,
+        ?int $shopId,
+        int $limit
+    ): int {
+        $execution = $reclaimService->execute($referenceTime, $shopId, $limit);
+
+        $this->components->warn(
+            "EXECUTE MODE — reference date {$execution['reference_date']} "
+            .'('.config('app.timezone').'). Eligible assignments will be reclaimed.'
+        );
+        $this->table(
+            ['Assignment', 'Source', 'Source ID', 'Assignee', 'Eligible On', 'Result', 'Reason'],
+            array_map(fn (array $row) => [
+                $row['assignment_id'],
+                $row['source'],
+                $row['source_id'],
+                $row['assignee'],
+                $row['eligible_on'],
+                $row['result'],
+                $row['reason'],
+            ], $execution['rows'])
+        );
+        $this->table(
+            ['Summary', 'Count'],
+            [
+                ['Scanned', $execution['summary']['scanned']],
+                ['Eligible', $execution['summary']['eligible']],
+                ['Reclaimed', $execution['summary']['reclaimed']],
+                ['Skipped', $execution['summary']['skipped']],
+                ['Already cared', $execution['summary']['already_cared']],
+                ['Anomaly', $execution['summary']['anomaly']],
+                ['Invalid relation', $execution['summary']['invalid_relation']],
+                ['Errors', $execution['summary']['errors']],
             ]
         );
 
