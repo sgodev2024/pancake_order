@@ -101,6 +101,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 
     Route::get('orders/chance', [OrderController::class, 'chance'])
         ->middleware(PermissionCheckMiddleware::class . ':view-chance');
+    Route::get('orders/{order}/history', [OrderController::class, 'history'])
+        ->middleware(PermissionCheckMiddleware::class . ':view-chance,strict');
     Route::apiResource("orders",    OrderController::class);
 
     Route::get("activity-logs", [ActivityLogController::class, "index"])

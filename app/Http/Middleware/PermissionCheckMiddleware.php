@@ -13,14 +13,16 @@ class PermissionCheckMiddleware
      *
      * @param  Closure(Request): (Response)  $next
      */
-    public function handle(Request $request, Closure $next, $pms_param): Response
+    public function handle(Request $request, Closure $next, $pms_param, $mode = null): Response
     {
         if (can_access($pms_param)) {
             return $next($request);
         }
-        return response()->json([
+        $response = response()->json([
             "success" => false,
             "message" => "Bạn không có quyền."
         ]);
+
+        return $mode === 'strict' ? $response->setStatusCode(403) : $response;
     }
 }

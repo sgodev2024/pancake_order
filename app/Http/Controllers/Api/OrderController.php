@@ -161,8 +161,8 @@ class OrderController extends Controller
             if (isset($inputs["date_to"])) {
                 $queries->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
-            if (! $user->isAdmin()) {
-                $shopIds = $user->shops()->pluck('shops.id');
+            $shopIds = $this->accessibleShopIds($user);
+            if ($shopIds !== null) {
 
                 if (isset($inputs['shop_id']) && ! $shopIds->contains($inputs['shop_id'])) {
                     return response()->json([
@@ -205,5 +205,129 @@ class OrderController extends Controller
                 'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Return the historical local orders related to the exact route-bound order.
+     *
+     * The route parameter is the local orders.id. The related-order lookup uses
+     * pancake_customer_id only after that anchor has been authorized.
+     */
+    public function history(Request $request, Order $order)
+    {
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        try {
+            $user = auth()->user();
+            $shopIds = $this->accessibleShopIds($user);
+
+            if ($shopIds !== null && ! $shopIds->contains($order->shop_id)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Bạn không có quyền truy cập đơn hàng này.',
+                ], 403);
+            }
+
+            $historyQuery = Order::query()
+                ->select([
+                    'id',
+                    'pancake_order_id',
+                    'created_at',
+                    'status',
+                    'status_vtp',
+                    'order_number_vtp',
+                    'shop_id',
+                    'total_quantity',
+                    'cod',
+                    'user_creator_id',
+                    'user_assigning_seller_id',
+                ])
+                ->with([
+                    'shop' => function ($query) {
+                        $query->select('id', 'name');
+                    },
+                    'user_creator',
+                    'user_assigning',
+                ])
+                ->orderByDesc('created_at')
+                ->orderByDesc('id');
+
+            $customerId = $order->pancake_customer_id;
+            if ($customerId === null || trim((string) $customerId) === '') {
+                // Never use whereNull here: a blank customer identity is not a safe grouping key.
+                $historyQuery->whereKey($order->getKey());
+            } else {
+                $historyQuery->where('pancake_customer_id', $customerId);
+            }
+
+            if ($shopIds !== null) {
+                $historyQuery->whereIn('shop_id', $shopIds);
+            }
+
+            $page = (int) ($validated['page'] ?? 1);
+            $perPage = (int) ($validated['per_page'] ?? 30);
+            $orders = $historyQuery->paginate($perPage, ['*'], 'page', $page);
+
+            return response()->json([
+                'success' => true,
+                'data' => collect($orders->items())
+                    ->map(fn (Order $historyOrder) => $this->historyOrderData($historyOrder))
+                    ->values()
+                    ->all(),
+                'meta' => [
+                    'current_page' => $orders->currentPage(),
+                    'per_page' => $orders->perPage(),
+                    'total' => $orders->total(),
+                    'last_page' => $orders->lastPage(),
+                ],
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không thể tải lịch sử đơn hàng.',
+            ], 500);
+        }
+    }
+
+    private function accessibleShopIds($user)
+    {
+        return $user->isAdmin()
+            ? null
+            : $user->shops()->pluck('shops.id');
+    }
+
+    private function historyOrderData(Order $order): array
+    {
+        return [
+            'id' => $order->id,
+            'pancake_order_id' => $order->pancake_order_id,
+            'created_at' => $order->created_at,
+            'status' => $order->status,
+            'status_vtp' => $order->status_vtp,
+            'order_number_vtp' => $order->order_number_vtp,
+            'shop' => $order->shop === null
+                ? null
+                : [
+                    'id' => $order->shop->id,
+                    'name' => $order->shop->name,
+                ],
+            'total_quantity' => $order->total_quantity,
+            'cod' => $order->cod,
+            'creator' => $order->user_creator === null
+                ? null
+                : [
+                    'id' => $order->user_creator->id,
+                    'name' => $order->user_creator->name,
+                ],
+            'historical_care_staff' => $order->user_assigning === null
+                ? null
+                : [
+                    'id' => $order->user_assigning->id,
+                    'name' => $order->user_assigning->name,
+                ],
+        ];
     }
 }
