@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 class CustomerCare extends Model
@@ -37,6 +38,98 @@ class CustomerCare extends Model
     public function order()
     {
         return $this->belongsTo(Order::class, "pancake_order_id", "pancake_order_id");
+    }
+
+    /**
+     * The assignment that currently owns this care task, if any.
+     *
+     * Keeping this relation on the API payload lets clients identify the
+     * source-of-truth row without inferring it from legacy care records.
+     */
+    public function activeAssignment()
+    {
+        return $this->hasOne(CustomerCareAssignment::class)
+            ->where('status', CustomerCareAssignment::STATUS_ACTIVE);
+    }
+
+    /**
+     * Keep imported/manual and non-opportunity order care semantics unchanged.
+     * A status-3 order without an active assignment is managed by Opportunity;
+     * whenever an order has an active assignment, only its referenced care is
+     * actionable.
+     */
+    public function scopeActionable(Builder $query): Builder
+    {
+        return $query->where(function (Builder $query) {
+            $query->whereNull('customer_cares.pancake_order_id')
+                ->orWhereExists(function ($activeAssignmentQuery) {
+                    $activeAssignmentQuery->selectRaw('1')
+                        ->from('customer_care_assignments as actionable_cca')
+                        ->join('orders as actionable_orders', function ($join) {
+                            $join->on('actionable_orders.id', '=', 'actionable_cca.source_id')
+                                ->whereNull('actionable_orders.deleted_at');
+                        })
+                        ->whereColumn(
+                            'actionable_cca.customer_care_id',
+                            'customer_cares.id'
+                        )
+                        ->whereColumn(
+                            'actionable_orders.pancake_order_id',
+                            'customer_cares.pancake_order_id'
+                        )
+                        ->where(
+                            'actionable_cca.source_type',
+                            CustomerCareAssignment::SOURCE_ORDER
+                        )
+                        ->where(
+                            'actionable_cca.status',
+                            CustomerCareAssignment::STATUS_ACTIVE
+                        );
+                })
+                ->orWhere(function (Builder $unassignedOrderCareQuery) {
+                    $unassignedOrderCareQuery
+                        ->whereExists(function ($nonOpportunityOrderQuery) {
+                            $nonOpportunityOrderQuery->selectRaw('1')
+                                ->from('orders as non_opportunity_orders')
+                                ->whereColumn(
+                                    'non_opportunity_orders.pancake_order_id',
+                                    'customer_cares.pancake_order_id'
+                                )
+                                ->whereNull('non_opportunity_orders.deleted_at')
+                                ->where('non_opportunity_orders.status', '!=', 3);
+                        })
+                        ->whereNotExists(function ($opportunityOrderQuery) {
+                            $opportunityOrderQuery->selectRaw('1')
+                                ->from('orders as opportunity_orders')
+                                ->whereColumn(
+                                    'opportunity_orders.pancake_order_id',
+                                    'customer_cares.pancake_order_id'
+                                )
+                                ->whereNull('opportunity_orders.deleted_at')
+                                ->where('opportunity_orders.status', 3);
+                        })
+                        ->whereNotExists(function ($activeSourceQuery) {
+                            $activeSourceQuery->selectRaw('1')
+                                ->from('customer_care_assignments as source_cca')
+                                ->join('orders as source_orders', function ($join) {
+                                    $join->on('source_orders.id', '=', 'source_cca.source_id')
+                                        ->whereNull('source_orders.deleted_at');
+                                })
+                                ->whereColumn(
+                                    'source_orders.pancake_order_id',
+                                    'customer_cares.pancake_order_id'
+                                )
+                                ->where(
+                                    'source_cca.source_type',
+                                    CustomerCareAssignment::SOURCE_ORDER
+                                )
+                                ->where(
+                                    'source_cca.status',
+                                    CustomerCareAssignment::STATUS_ACTIVE
+                                );
+                        });
+                });
+        });
     }
 
     public function user_creator()

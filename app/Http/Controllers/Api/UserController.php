@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
+use App\Models\CustomerCare;
 use App\Models\Order;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -353,9 +354,15 @@ class UserController extends Controller implements HasMiddleware
     public function getAllUser(Request $request)
     {
         try {
-            $inputs = $request->only("shop_id");
+            $inputs = $request->only("shop_id", "assignment_eligible");
             $queries = User::query();
             $user = auth()->user();
+
+            if (filter_var($inputs['assignment_eligible'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                $queries->whereHas('role', function ($query) {
+                    $query->whereIn('slug', ['manager-cskh', 'staff-cskh']);
+                });
+            }
             
             if (isset($inputs["shop_id"])) {
                 $queries->whereHas("shops", function ($query) use ($inputs) {
@@ -400,7 +407,8 @@ class UserController extends Controller implements HasMiddleware
                 ->groupBy('user_creator_id');
 
             // Subquery 2: Thống kê customer_cares
-            $careStats = DB::table('customer_cares')
+            $careStats = CustomerCare::query()
+                ->actionable()
                 ->select([
                     'user_creator_id',
                     DB::raw('

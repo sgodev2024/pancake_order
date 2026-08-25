@@ -108,6 +108,11 @@ class User extends Authenticatable
         return in_array($this->role?->slug, ['staff-cskh']);
     }
 
+    public function canReceiveCustomerCareAssignments(): bool
+    {
+        return $this->isManagerCskh() || $this->isStaffCskh();
+    }
+
     public function customerCares()
     {
         return $this->belongsToMany(

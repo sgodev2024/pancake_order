@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
+use App\Models\Role;
 use App\Models\User;
 use App\Services\CustomerCareAssignmentService;
 use Carbon\CarbonImmutable;
@@ -73,7 +74,8 @@ class CustomerCareAssignmentServiceTest extends TestCase
             CustomerCareAssignment::SOURCE_ORDER,
             501,
             $this->persistedAssignee(31, 'PANCAKE-31'),
-            $assignedAt
+            $assignedAt,
+            CarbonImmutable::parse('2026-08-24', 'Asia/Ho_Chi_Minh')
         );
 
         $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $assignment->status);
@@ -84,7 +86,7 @@ class CustomerCareAssignmentServiceTest extends TestCase
         $this->assertSame(31, $assignment->assignee_user_id);
         $this->assertSame('PANCAKE-31', $assignment->assignee_pancake_user_id);
         $this->assertSame('2026-08-21 23:59:59', $assignment->assigned_at->format('Y-m-d H:i:s'));
-        $this->assertSame('2026-08-24', $assignment->reclaim_eligible_on->toDateString());
+        $this->assertSame('2026-08-27', $assignment->reclaim_eligible_on->toDateString());
         $this->assertNull($assignment->cared_at);
     }
 
@@ -96,7 +98,8 @@ class CustomerCareAssignmentServiceTest extends TestCase
             CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
             601,
             $this->persistedAssignee(32, 'PANCAKE-32'),
-            CarbonImmutable::parse('2026-08-21 09:00:00', 'Asia/Ho_Chi_Minh')
+            CarbonImmutable::parse('2026-08-21 09:00:00', 'Asia/Ho_Chi_Minh'),
+            CarbonImmutable::parse('2026-08-26', 'Asia/Ho_Chi_Minh')
         );
 
         $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $assignment->status);
@@ -104,7 +107,7 @@ class CustomerCareAssignmentServiceTest extends TestCase
         $this->assertSame(601, $assignment->source_id);
         $this->assertSame(32, $assignment->assignee_user_id);
         $this->assertSame('PANCAKE-32', $assignment->assignee_pancake_user_id);
-        $this->assertSame('2026-08-24', $assignment->reclaim_eligible_on->toDateString());
+        $this->assertSame('2026-08-29', $assignment->reclaim_eligible_on->toDateString());
         $this->assertNull($assignment->cared_at);
     }
 
@@ -120,7 +123,8 @@ class CustomerCareAssignmentServiceTest extends TestCase
             CustomerCareAssignment::SOURCE_ORDER,
             701,
             $assignee,
-            $assignedAt
+            $assignedAt,
+            CarbonImmutable::parse('2026-08-24', 'Asia/Ho_Chi_Minh')
         );
 
         $this->expectException(DomainException::class);
@@ -132,7 +136,8 @@ class CustomerCareAssignmentServiceTest extends TestCase
                 CustomerCareAssignment::SOURCE_ORDER,
                 701,
                 $assignee,
-                $assignedAt
+                $assignedAt,
+                CarbonImmutable::parse('2026-08-24', 'Asia/Ho_Chi_Minh')
             );
         } finally {
             $this->assertSame(1, CustomerCareAssignment::query()->count());
@@ -155,7 +160,8 @@ class CustomerCareAssignmentServiceTest extends TestCase
                     CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
                     801,
                     $this->persistedAssignee(34, 'PANCAKE-34'),
-                    CarbonImmutable::parse('2026-08-21 11:00:00', 'Asia/Ho_Chi_Minh')
+                    CarbonImmutable::parse('2026-08-21 11:00:00', 'Asia/Ho_Chi_Minh'),
+                    CarbonImmutable::parse('2026-08-24', 'Asia/Ho_Chi_Minh')
                 );
 
                 throw new RuntimeException('Simulated downstream activity-log failure.');
@@ -181,6 +187,7 @@ class CustomerCareAssignmentServiceTest extends TestCase
     {
         $assignee = new User;
         $assignee->setRawAttributes(['id' => $id, 'pancake_user_id' => $pancakeUserId]);
+        $assignee->setRelation('role', new Role(['slug' => 'staff-cskh']));
         $assignee->exists = true;
 
         return $assignee;

@@ -114,15 +114,21 @@ class ImportedOpportunityController extends Controller
                 return response()->json(["success" => false, "message" => "Không tìm thấy người được phân công"]);
             }
 
+            if (! $user->canReceiveCustomerCareAssignments()) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Người được phân công phải thuộc bộ phận CSKH.",
+                ], 422);
+            }
+
             $actor = auth()->user();
             $assignedAt = now();
-            $eligibleOn = CustomerCareAssignment::calculateReclaimEligibleOn($assignedAt);
 
-            $total_opportunities = DB::transaction(function () use ($ids, $user, $actor, $assignedAt, $eligibleOn) {
+            $total_opportunities = DB::transaction(function () use ($ids, $user, $actor, $assignedAt) {
                 $lockedOpportunities = ImportedOpportunity::query()
                     ->whereIn('id', $ids)
                     ->where('status', 0)
-                    ->with(['shop' => fn ($query) => $query->select('id', 'name')])
+                    ->with(['shop' => fn ($query) => $query->select('id', 'name', 'care_cycle_days')])
                     ->lockForUpdate()
                     ->get();
 
@@ -153,6 +159,14 @@ class ImportedOpportunityController extends Controller
                 }
 
                 foreach ($lockedOpportunities as $opportunity) {
+                    if ($opportunity->shop === null) {
+                        throw new DomainException('Không thể xác định cửa hàng của cơ hội nhập để lên lịch CSKH.');
+                    }
+
+                    $scheduledOn = CustomerCareAssignment::calculateScheduledCareDate(
+                        $assignedAt,
+                        $opportunity->shop->normalizedCareCycleDays()
+                    );
                     $pancakeCustomerId = "IMPORT-" . $opportunity->id;
                     $customerCare = CustomerCare::create([
                         "shop_id" => $opportunity->shop_id,
@@ -161,17 +175,18 @@ class ImportedOpportunityController extends Controller
                         "customer_name" => $opportunity->name,
                         "customer_addresss" => $opportunity->address,
                         "pancake_order_id" => null,
-                        "date_care" => $eligibleOn->toDateString(),
+                        "date_care" => $scheduledOn->toDateString(),
                         "user_creator_id" => $user->pancake_user_id,
                     ]);
 
-                    $this->customerCareAssignmentService->create(
+                    $assignment = $this->customerCareAssignmentService->create(
                         $customerCare,
                         (int) $opportunity->shop_id,
                         CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
                         (int) $opportunity->id,
                         $user,
-                        $assignedAt
+                        $assignedAt,
+                        $scheduledOn
                     );
 
                     $this->activityLogService->log(
@@ -190,8 +205,13 @@ class ImportedOpportunityController extends Controller
                         null,
                         ["assigned_user_id" => $user->id],
                         [
+                            "customer_care_id" => $customerCare->id,
+                            "assignment_id" => $assignment->id,
                             "source_type" => CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
                             "source_id" => $opportunity->id,
+                            "assigned_at" => $assignment->assigned_at->toISOString(),
+                            "assignee_user_id" => $assignment->assignee_user_id,
+                            "assignee_pancake_user_id" => $assignment->assignee_pancake_user_id,
                         ]
                     );
                 }

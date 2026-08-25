@@ -281,13 +281,15 @@ class CustomerCareReclaimExecutionTest extends TestCase
             CustomerCareAssignment::SOURCE_ORDER,
             (int) $order->id,
             User::findOrFail(2),
-            CarbonImmutable::parse('2026-08-24 13:00:00', config('app.timezone'))
+            CarbonImmutable::parse('2026-08-24 13:00:00', config('app.timezone')),
+            CarbonImmutable::parse($newCare->date_care, config('app.timezone'))
         );
 
         $this->assertNotSame($first->id, $second->id);
         $this->assertSame(CustomerCareAssignment::STATUS_RECLAIMED, $first->fresh()->status);
         $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $second->status);
         $this->assertSame(2, CustomerCareAssignment::query()->where('source_id', $order->id)->count());
+        $this->assertSame([$newCare->id], CustomerCare::query()->actionable()->pluck('id')->all());
     }
 
     public function test_source_missing_and_unexpected_import_state_are_reported_without_mutation(): void

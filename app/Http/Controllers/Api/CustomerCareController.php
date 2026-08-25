@@ -11,6 +11,7 @@ use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
 use Carbon\Carbon;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -37,13 +38,14 @@ class CustomerCareController extends Controller
             );
             $user = auth()->user();
             $result = $this->buildQuery($inputs["type"], $user, $inputs)
-                           ->with([
+                            ->with([
+                                "activeAssignment.assignee:id,name",
+                                "activeAssignment.sourceOrder:id,status",
                                 "shop" => function ($q) {
                                     $q->select("shops.id", "shops.name")
                                       ->with([
-                                        "users" => function ($query) {
-                                            $query->select("users.id", "users.role_id", "users.name")
-                                                 ->where("users.role_id", 2);
+                                        "managers" => function ($query) {
+                                            $query->select("users.id", "users.name");
                                         }
                                       ]);
                                 },
@@ -55,6 +57,8 @@ class CustomerCareController extends Controller
                                 "user_assigning"
                             ])
                            ->paginate(30, ['*'], 'page', $inputs["page"]);
+
+            $this->attachAssignableOrderIds($result->getCollection());
 
             return response()->json([
                 "success" => true,
@@ -77,6 +81,14 @@ class CustomerCareController extends Controller
     private function buildQuery(string $type, $user, array $inputs)
     {
         $query = CustomerCare::query();
+        if (in_array($type, [
+            'customer_care_today',
+            'customer_care_pending',
+            'customer_care_in_week',
+            'customer_care_expire',
+        ], true)) {
+            $query->actionable();
+        }
         if (isset($inputs["is_accept"])) {
             $query->where("is_accept", $inputs["is_accept"]);
         }
@@ -144,23 +156,49 @@ class CustomerCareController extends Controller
         }
         if ($user->isAdmin()) return;
         $shopIds = $user->shops()->pluck('shops.id');
-        $q->whereIn("shop_id", $shopIds)
-          ->where(function ($query) use ($user, $type) {
-            $query->where(function ($q) use ($user, $type) {
-                if (!$user->isManagerSale() && !$user->isManagerCskh()) {
-                    $q->where(function ($query1) use ($user) {
-                            $query1->where("user_creator_id", $user->pancake_user_id);
-                                //    ->orWhere("user_care_id", $user->pancake_user_id)
-                                //    ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
-                    });
-                    if ($type != "chance") {
-                        $q->orWhereHas("users", function ($q) use ($user) {
-                            $q->where("users.pancake_user_id", $user->pancake_user_id);
+        $q->whereIn("shop_id", $shopIds);
+
+        if ($user->isManagerSale() || $user->isManagerCskh()) {
+            return;
+        }
+
+        $currentTaskTypes = [
+            'customer_care_today',
+            'customer_care_pending',
+            'customer_care_in_week',
+            'customer_care_expire',
+        ];
+
+        if (in_array($type, $currentTaskTypes, true)) {
+            $q->where(function ($query) use ($user) {
+                $query->whereHas('activeAssignment', function ($assignmentQuery) use ($user) {
+                    $assignmentQuery->where('assignee_user_id', $user->getKey());
+                })->orWhere(function ($legacyQuery) use ($user) {
+                    $legacyQuery->whereDoesntHave('activeAssignment')
+                        ->where(function ($ownershipQuery) use ($user) {
+                            $ownershipQuery->where('user_creator_id', $user->pancake_user_id)
+                                ->orWhere('user_care_id', $user->pancake_user_id)
+                                ->orWhere('user_assigning_seller_id', $user->pancake_user_id)
+                                ->orWhereHas('users', function ($userQuery) use ($user) {
+                                    $userQuery->where('users.pancake_user_id', $user->pancake_user_id);
+                                });
                         });
-                    }
-                    
-                }
-            });    
+                });
+            });
+
+            return;
+        }
+
+        $q->where(function ($query) use ($user, $type) {
+            $query->where('user_creator_id', $user->pancake_user_id)
+                ->orWhere('user_care_id', $user->pancake_user_id)
+                ->orWhere('user_assigning_seller_id', $user->pancake_user_id);
+
+            if ($type !== 'chance') {
+                $query->orWhereHas('users', function ($userQuery) use ($user) {
+                    $userQuery->where('users.pancake_user_id', $user->pancake_user_id);
+                });
+            }
         });
     }
 
@@ -175,29 +213,47 @@ class CustomerCareController extends Controller
             }
             $note = $request->note ?? NULL;
             $time_care = $request->date ?? NULL;
-            // if ($customer_care->status == 1 && $request->status == 0) {
-            //     $note = NULL;
-            //     $time_care = NULL;
-            // }
-            $user_id = auth()->id();
-            $is_manager = is_manager($user_id);
             $is_admin   = auth()->user()->isAdmin() || auth()->user()->isManagerCskh();
-            $customer_care = DB::transaction(function () use ($customer_care, $request, $note, $time_care, $is_admin) {
+            $is_care_completion = (int) $request->input('status') === 1;
+            $customer_care = DB::transaction(function () use (
+                $customer_care,
+                $request,
+                $note,
+                $time_care,
+                $is_admin,
+                $is_care_completion
+            ) {
                 $lockedCustomerCare = CustomerCare::query()
                     ->whereKey($customer_care->getKey())
                     ->lockForUpdate()
                     ->firstOrFail();
 
+                $activeAssignment = $is_care_completion
+                    ? $this->guardCurrentCareMutation($lockedCustomerCare)
+                    : null;
+
+                if ($is_care_completion && $activeAssignment?->cared_at !== null) {
+                    throw new DomainException('CustomerCare này đã được hoàn tất.');
+                }
+
+                $persistedCareTime = $is_care_completion
+                    ? now(config('app.timezone'))
+                    : ($lockedCustomerCare->time_care !== null
+                        ? $lockedCustomerCare->time_care
+                        : $time_care);
+
                 $lockedCustomerCare->update([
                     "status"     => $request->status,
                     "note"       => $note,
-                    "time_care"  => $time_care,
+                    "time_care"  => $persistedCareTime,
                     "is_accept"  => ($lockedCustomerCare->total_edit == 0 || $is_admin) ? 1 : 0,
                     "total_edit" => $lockedCustomerCare->total_edit + 1
                 ]);
 
                 $lockedCustomerCare->refresh();
-                $this->customerCareAssignmentService->markAsCared($lockedCustomerCare);
+                if ($is_care_completion) {
+                    $this->customerCareAssignmentService->markAsCared($lockedCustomerCare);
+                }
 
                 if (!empty($request->next_date_care)) {
                     CustomerCare::create([
@@ -221,6 +277,16 @@ class CustomerCareController extends Controller
                 "success" => true,
                 "message" => ($customer_care->status == 1 && $request->status == 0 && !$is_admin) ? "Đợi duyệt" : "Cập nhật thành công"
             ]);
+        } catch (AuthorizationException $exception) {
+            return response()->json([
+                "success" => false,
+                "message" => $exception->getMessage(),
+            ], 403);
+        } catch (DomainException $exception) {
+            return response()->json([
+                "success" => false,
+                "message" => $exception->getMessage(),
+            ], 409);
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => false,
@@ -321,7 +387,10 @@ class CustomerCareController extends Controller
             $endOfWeek = Carbon::now()->endOfWeek()->format("Y-m-d");
             $user = auth()->user();
             $shop_ids = $user->shops()->pluck('shops.id');
-            $overview = CustomerCare::selectRaw("
+            $taskBaseQuery = CustomerCare::query();
+            $this->applyOverviewAccessScope($taskBaseQuery, $user, $shop_ids, true);
+
+            $taskOverview = (clone $taskBaseQuery)->actionable()->selectRaw("
                 SUM(CASE WHEN date_care = ? AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_today,
                 SUM(CASE WHEN date_care = ? AND status = 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_today_done,
 
@@ -344,10 +413,7 @@ class CustomerCareController extends Controller
                     AND time_care > CONCAT(date_care, ' 23:59:59')
                     AND is_accept = 1
                     THEN 1 ELSE 0
-                END) as customer_care_expire_done,
-
-                SUM(CASE WHEN total_edit > 1  THEN 1 ELSE 0 END) as customer_care_edit,
-                SUM(CASE WHEN total_edit > 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
+                END) as customer_care_expire_done
             ", [
                 // today
                 $today,
@@ -368,32 +434,13 @@ class CustomerCareController extends Controller
                 $today,
                 $today,
             ])
-            ->when(!$user->isAdmin(), function ($q) use ($user, $shop_ids) {
-                // $q->whereIn("shop_id", $shop_ids)
-                //   ->where(function ($q2) use ($user) {
-                //     $q2->where("user_creator_id", $user->pancake_user_id)
-                //         ->orWhere("user_care_id", $user->pancake_user_id)
-                //         ->orWhere("user_assigning_seller_id", $user->pancake_user_id)
-                //         ->orWhereHas("users", function ($q3) use ($user) {
-                //             $q3->where("users.pancake_user_id", $user->pancake_user_id);
-                //         });
-                // });
-                $q->whereIn("shop_id", $shop_ids);
-                if (!$user->isManagerSale() && !$user->isManagerCskh()) {
-                    $q->where(function ($q1) use ($user){
-                        $q1->where(function ($q2) use ($user) {
-                                $q2->where("user_creator_id", $user->pancake_user_id)
-                                    ->orWhere("user_care_id", $user->pancake_user_id)
-                                    ->orWhere("user_assigning_seller_id", $user->pancake_user_id);
-                            })
-                            ->orWhereHas("users", function ($q3) use ($user) {
-                                $q3->where("users.pancake_user_id", $user->pancake_user_id);
-                            });
-                    });
-                }
-            })
-            // ->where("is_accept", 1) // những cái đã được duyệt sửa
             ->first();
+            $editBaseQuery = CustomerCare::query();
+            $this->applyOverviewAccessScope($editBaseQuery, $user, $shop_ids, false);
+            $editOverview = $editBaseQuery->selectRaw("
+                SUM(CASE WHEN total_edit > 1 THEN 1 ELSE 0 END) as customer_care_edit,
+                SUM(CASE WHEN total_edit > 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
+            ")->first();
             $date_start = date("Y-m-d 00:00:00");
             $date_end   = date("Y-m-d 23:59:59");
             $query = Order::whereBetween("created_at", [$date_start, $date_end])
@@ -421,16 +468,16 @@ class CustomerCareController extends Controller
             return response()->json([
                 "success" => true,
                 "data" => [
-                    "customer_care_today"         => (int) $overview->customer_care_today,
-                    "customer_care_today_done"    => (int) $overview->customer_care_today_done,
-                    "customer_care_pending"       => (int) $overview->customer_care_pending,
-                    "customer_care_pending_done"  => (int) $overview->customer_care_pending_done,
-                    "customer_care_in_week"       => (int) $overview->customer_care_in_week,
-                    "customer_care_in_week_done"  => (int) $overview->customer_care_in_week_done,
-                    "customer_care_expire"        => (int) $overview->customer_care_expire,
-                    "customer_care_expire_done"   => (int) $overview->customer_care_expire_done,
-                    "customer_care_edit"          => (int) $overview->customer_care_edit,
-                    "customer_care_edit_accepted" => (int) $overview->customer_care_edit_accepted,
+                    "customer_care_today"         => (int) $taskOverview->customer_care_today,
+                    "customer_care_today_done"    => (int) $taskOverview->customer_care_today_done,
+                    "customer_care_pending"       => (int) $taskOverview->customer_care_pending,
+                    "customer_care_pending_done"  => (int) $taskOverview->customer_care_pending_done,
+                    "customer_care_in_week"       => (int) $taskOverview->customer_care_in_week,
+                    "customer_care_in_week_done"  => (int) $taskOverview->customer_care_in_week_done,
+                    "customer_care_expire"        => (int) $taskOverview->customer_care_expire,
+                    "customer_care_expire_done"   => (int) $taskOverview->customer_care_expire_done,
+                    "customer_care_edit"          => (int) $editOverview->customer_care_edit,
+                    "customer_care_edit_accepted" => (int) $editOverview->customer_care_edit_accepted,
                     "total_order_today"           => $query->total_order_today,
                     "total_revenue"               => $query->total_revenue
                 ]
@@ -443,7 +490,7 @@ class CustomerCareController extends Controller
         }
     }
 
-    public function assign(Request $request, $customer_care_id)
+    public function assign(Request $request, $order_id)
     {
         try {
             $inputs = $request->only(
@@ -454,10 +501,10 @@ class CustomerCareController extends Controller
 
             $is_multiple = filter_var($inputs['is_multiple'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
-            // Xác định danh sách customer_care cần phân công
+            // Public route is kept for compatibility; this parameter is an Order ID.
             $order_ids = $is_multiple
                 ? ($inputs['order_ids'] ?? [])
-                : [$customer_care_id];
+                : [$order_id];
             $order_ids = collect(is_array($order_ids) ? $order_ids : [])
                 ->filter(fn ($id) => is_int($id) || is_string($id))
                 ->unique()
@@ -480,21 +527,67 @@ class CustomerCareController extends Controller
                 ]);
             }
 
+            if (! $user->canReceiveCustomerCareAssignments()) {
+                return response()->json([
+                    "success" => false,
+                    "message" => "Người được phân công phải thuộc bộ phận CSKH.",
+                ], 422);
+            }
+
             $actor = auth()->user();
             $assignedAt = now();
-            $eligibleOn = CustomerCareAssignment::calculateReclaimEligibleOn($assignedAt);
 
-            $total_orders = DB::transaction(function () use ($order_ids, $actor, $user, $assignedAt, $eligibleOn) {
-                $lockedOrders = Order::query()
+            $total_orders = DB::transaction(function () use ($order_ids, $actor, $user, $assignedAt) {
+                $requestedOrders = Order::query()
                     ->whereIn('id', $order_ids)
+                    ->get(['id', 'pancake_order_id']);
+
+                if ($requestedOrders->count() !== $order_ids->count()) {
+                    throw new DomainException('Một hoặc nhiều cơ hội không tồn tại.');
+                }
+
+                $logicalOrderIds = $requestedOrders
+                    ->pluck('pancake_order_id')
+                    ->unique()
+                    ->values();
+
+                if ($logicalOrderIds->count() !== $order_ids->count()
+                    || $logicalOrderIds->contains(null)
+                    || $logicalOrderIds->contains('')) {
+                    throw new DomainException('Không thể phân công nhiều bản ghi của cùng một đơn Pancake.');
+                }
+
+                $lockedLogicalOrders = Order::query()
+                    ->whereIn('pancake_order_id', $logicalOrderIds)
+                    ->whereNull('deleted_at')
                     ->with(['shop' => function ($query) {
-                        $query->select('id', 'name');
+                        $query->select('id', 'name', 'care_cycle_days');
                     }])
+                    ->orderBy('id')
                     ->lockForUpdate()
                     ->get();
 
+                $lockedOrders = $lockedLogicalOrders
+                    ->whereIn('id', $order_ids)
+                    ->values();
+
                 if ($lockedOrders->count() !== $order_ids->count()) {
                     throw new DomainException('Một hoặc nhiều cơ hội không tồn tại.');
+                }
+
+                if ($lockedOrders->contains(fn (Order $order) => (int) $order->status !== 3)) {
+                    throw new DomainException('Chỉ đơn hàng ở trạng thái Đã nhận mới được phân công từ Cơ hội.');
+                }
+
+                $hasActiveLogicalAssignment = CustomerCareAssignment::query()
+                    ->where('source_type', CustomerCareAssignment::SOURCE_ORDER)
+                    ->where('status', CustomerCareAssignment::STATUS_ACTIVE)
+                    ->whereIn('source_id', $lockedLogicalOrders->pluck('id'))
+                    ->lockForUpdate()
+                    ->exists();
+
+                if ($hasActiveLogicalAssignment) {
+                    throw new DomainException('Đơn Pancake này đã có phân công CSKH đang hoạt động.');
                 }
 
                 $sourceShopIds = $lockedOrders->pluck('shop_id')->unique()->values();
@@ -520,6 +613,14 @@ class CustomerCareController extends Controller
                 }
 
                 foreach ($lockedOrders as $order_item) {
+                    if ($order_item->shop === null) {
+                        throw new DomainException('Không thể xác định cửa hàng của cơ hội để lên lịch CSKH.');
+                    }
+
+                    $scheduledOn = CustomerCareAssignment::calculateScheduledCareDate(
+                        $assignedAt,
+                        $order_item->shop->normalizedCareCycleDays()
+                    );
                     $customerCare = CustomerCare::create([
                         "shop_id" => $order_item->shop_id,
                         "pancake_customer_id" => $order_item->pancake_customer_id,
@@ -527,17 +628,18 @@ class CustomerCareController extends Controller
                         "customer_name" => $order_item->customer_name,
                         "customer_addresss" => $order_item->customer_addresss,
                         "pancake_order_id" => $order_item->pancake_order_id,
-                        "date_care" => $eligibleOn->toDateString(),
+                        "date_care" => $scheduledOn->toDateString(),
                         "user_creator_id" => $user->pancake_user_id,
                     ]);
 
-                    $this->customerCareAssignmentService->create(
+                    $assignment = $this->customerCareAssignmentService->create(
                         $customerCare,
                         (int) $order_item->shop_id,
                         CustomerCareAssignment::SOURCE_ORDER,
                         (int) $order_item->id,
                         $user,
-                        $assignedAt
+                        $assignedAt,
+                        $scheduledOn
                     );
 
                     $this->activityLogService->log(
@@ -555,12 +657,20 @@ class CustomerCareController extends Controller
                         $order_item->pancake_customer_id,
                         null,
                         ["assigned_user_id" => $user->id],
-                        null
+                        [
+                            "customer_care_id" => $customerCare->id,
+                            "assignment_id" => $assignment->id,
+                            "source_type" => $assignment->source_type,
+                            "source_id" => $assignment->source_id,
+                            "assigned_at" => $assignment->assigned_at->toISOString(),
+                            "assignee_user_id" => $assignment->assignee_user_id,
+                            "assignee_pancake_user_id" => $assignment->assignee_pancake_user_id,
+                        ]
                     );
                 }
 
                 return $lockedOrders->count();
-            });
+            }, 3);
             $total_order_id = $order_ids->count();
             
             return response()->json([
@@ -575,6 +685,152 @@ class CustomerCareController extends Controller
                 "message" => $th->getMessage()
             ]);
         }
+    }
+
+    private function guardCurrentCareMutation(CustomerCare $customerCare): CustomerCareAssignment
+    {
+        $activeAssignments = CustomerCareAssignment::query()
+            ->where('customer_care_id', $customerCare->getKey())
+            ->where('customer_care_assignments.status', CustomerCareAssignment::STATUS_ACTIVE)
+            ->lockForUpdate()
+            ->get();
+
+        if ($activeAssignments->count() !== 1) {
+            throw new DomainException(
+                'CustomerCare này không có đúng một phân công đang hoạt động để hoàn tất.'
+            );
+        }
+
+        $assignment = $activeAssignments->first();
+
+        if ((int) $assignment->shop_id !== (int) $customerCare->shop_id) {
+            throw new DomainException(
+                'Phân công CSKH không thuộc cùng cửa hàng với CustomerCare.'
+            );
+        }
+
+        $actor = auth()->user();
+
+        if ($actor === null) {
+            throw new AuthorizationException('Bạn chưa đăng nhập.');
+        }
+
+        $hasShopAccess = $actor->isAdmin()
+            || $actor->shops()->whereKey($assignment->shop_id)->exists();
+
+        if (! $hasShopAccess) {
+            throw new AuthorizationException('Bạn không có quyền truy cập cửa hàng của CustomerCare này.');
+        }
+
+        if ($actor->isAdmin() || $actor->isManagerCskh()) {
+            return $assignment;
+        }
+
+        if (! $actor->isStaffCskh()
+            || (int) $assignment->assignee_user_id !== (int) $actor->getKey()) {
+            throw new AuthorizationException('Chỉ nhân sự CSKH được phân công mới có thể hoàn tất CustomerCare này.');
+        }
+
+        return $assignment;
+    }
+
+    private function attachAssignableOrderIds($customerCares): void
+    {
+        if ($customerCares->isEmpty()) {
+            return;
+        }
+
+        $careIds = $customerCares->pluck('id');
+        $pancakeOrderIds = $customerCares->pluck('pancake_order_id')
+            ->filter(fn ($id) => $id !== null && $id !== '')
+            ->unique()
+            ->values();
+
+        $activeSourcesByCare = CustomerCareAssignment::query()
+            ->join('orders as assignment_orders', 'assignment_orders.id', '=', 'customer_care_assignments.source_id')
+            ->whereIn('customer_care_assignments.customer_care_id', $careIds)
+            ->where('customer_care_assignments.source_type', CustomerCareAssignment::SOURCE_ORDER)
+            ->where('customer_care_assignments.status', CustomerCareAssignment::STATUS_ACTIVE)
+            ->whereNull('assignment_orders.deleted_at')
+            ->get([
+                'customer_care_assignments.customer_care_id',
+                'customer_care_assignments.source_id',
+            ])
+            ->groupBy('customer_care_id');
+
+        $uniqueOrdersByPancakeId = $pancakeOrderIds->isEmpty()
+            ? collect()
+            : Order::query()
+                ->whereIn('pancake_order_id', $pancakeOrderIds)
+                ->whereNull('deleted_at')
+                ->selectRaw('pancake_order_id, MIN(id) as id, COUNT(*) as order_count')
+                ->groupBy('pancake_order_id')
+                ->get()
+                ->keyBy('pancake_order_id');
+
+        foreach ($customerCares as $customerCare) {
+            $activeSources = $activeSourcesByCare->get($customerCare->id, collect());
+
+            if ($activeSources->count() === 1) {
+                $customerCare->setAttribute('assignable_order_id', (int) $activeSources->first()->source_id);
+                continue;
+            }
+
+            if ($activeSources->isNotEmpty()) {
+                $customerCare->setAttribute('assignable_order_id', null);
+                continue;
+            }
+
+            $uniqueOrder = $uniqueOrdersByPancakeId->get($customerCare->pancake_order_id);
+            $customerCare->setAttribute(
+                'assignable_order_id',
+                $uniqueOrder !== null && (int) $uniqueOrder->order_count === 1
+                    ? (int) $uniqueOrder->id
+                    : null
+            );
+        }
+    }
+
+    private function applyOverviewAccessScope($query, $user, $shopIds, bool $currentTasks): void
+    {
+        if ($user->isAdmin()) {
+            return;
+        }
+
+        $query->whereIn('shop_id', $shopIds);
+
+        if ($user->isManagerSale() || $user->isManagerCskh()) {
+            return;
+        }
+
+        if ($currentTasks) {
+            $query->where(function ($ownershipQuery) use ($user) {
+                $ownershipQuery->whereHas('activeAssignment', function ($assignmentQuery) use ($user) {
+                    $assignmentQuery->where('assignee_user_id', $user->getKey());
+                })->orWhere(function ($legacyQuery) use ($user) {
+                    $legacyQuery->whereDoesntHave('activeAssignment')
+                        ->where(function ($legacyOwnershipQuery) use ($user) {
+                            $legacyOwnershipQuery->where('user_creator_id', $user->pancake_user_id)
+                                ->orWhere('user_care_id', $user->pancake_user_id)
+                                ->orWhere('user_assigning_seller_id', $user->pancake_user_id)
+                                ->orWhereHas('users', function ($userQuery) use ($user) {
+                                    $userQuery->where('users.pancake_user_id', $user->pancake_user_id);
+                                });
+                        });
+                });
+            });
+
+            return;
+        }
+
+        $query->where(function ($legacyOwnershipQuery) use ($user) {
+            $legacyOwnershipQuery->where('user_creator_id', $user->pancake_user_id)
+                ->orWhere('user_care_id', $user->pancake_user_id)
+                ->orWhere('user_assigning_seller_id', $user->pancake_user_id)
+                ->orWhereHas('users', function ($userQuery) use ($user) {
+                    $userQuery->where('users.pancake_user_id', $user->pancake_user_id);
+                });
+        });
     }
 
     /** 
@@ -710,8 +966,10 @@ class CustomerCareController extends Controller
             }
 
             $applyShop = fn ($q) => $shopFilter
-                ? $q->where('customer_cares.shop_id', $shopFilter)->where("is_accept", 1)
-                : $q->where("is_accept", 1);
+                ? $q->actionable()
+                    ->where('customer_cares.shop_id', $shopFilter)
+                    ->where("is_accept", 1)
+                : $q->actionable()->where("is_accept", 1);
 
             $query->withCount([
                 'customerCareAssign as today_total' => fn ($q) =>

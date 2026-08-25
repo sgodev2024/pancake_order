@@ -5,6 +5,7 @@ namespace App\Models;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
+use InvalidArgumentException;
 
 class CustomerCareAssignment extends Model
 {
@@ -46,9 +47,25 @@ class CustomerCareAssignment extends Model
         'reclaimed_at' => 'datetime',
     ];
 
-    public static function calculateReclaimEligibleOn(CarbonInterface $assignedAt): CarbonImmutable
-    {
+    public static function calculateScheduledCareDate(
+        CarbonInterface $assignedAt,
+        int $careCycleDays
+    ): CarbonImmutable {
+        if ($careCycleDays < 0) {
+            throw new InvalidArgumentException('Số ngày chu kỳ chăm sóc phải lớn hơn hoặc bằng 0.');
+        }
+
         return CarbonImmutable::instance($assignedAt)
+            ->setTimezone(config('app.timezone'))
+            ->startOfDay()
+            ->addDays($careCycleDays);
+    }
+
+    public static function calculateReclaimEligibleOn(
+        CarbonInterface $scheduledCareDate
+    ): CarbonImmutable
+    {
+        return CarbonImmutable::instance($scheduledCareDate)
             ->setTimezone(config('app.timezone'))
             ->startOfDay()
             ->addDays(self::RECLAIM_AFTER_CALENDAR_DAYS);
@@ -67,5 +84,10 @@ class CustomerCareAssignment extends Model
     public function assignee()
     {
         return $this->belongsTo(User::class, 'assignee_user_id');
+    }
+
+    public function sourceOrder()
+    {
+        return $this->belongsTo(Order::class, 'source_id');
     }
 }

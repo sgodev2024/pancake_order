@@ -9,6 +9,8 @@ class Shop extends Model
 {
     use SoftDeletes;
 
+    public const DEFAULT_CARE_CYCLE_DAYS = 5;
+
     protected $table = "shops";
 
     protected $fillable = [
@@ -21,8 +23,19 @@ class Shop extends Model
     ];
 
     protected $casts = [
-        'pancake_full_data'  => 'array'
+        'pancake_full_data' => 'array',
     ];
+
+    public function normalizedCareCycleDays(): int
+    {
+        $careCycleDays = filter_var($this->care_cycle_days, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 0],
+        ]);
+
+        return $careCycleDays === false
+            ? self::DEFAULT_CARE_CYCLE_DAYS
+            : $careCycleDays;
+    }
 
 
     public function customers()
@@ -38,5 +51,11 @@ class Shop extends Model
     public function users()
     {
         return $this->belongsToMany(User::class, ShopUser::class)->withPivot('is_manager');
+    }
+
+    public function managers()
+    {
+        return $this->belongsToMany(User::class, ShopUser::class)
+            ->wherePivot('is_manager', true);
     }
 }

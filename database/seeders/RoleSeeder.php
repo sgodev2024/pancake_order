@@ -19,19 +19,24 @@ class RoleSeeder extends Seeder
     {
         $roles = [
             [
-                "id"   => 1,
                 "name" => "Admin",
                 "slug" => "admin"
             ],
             [
-                "id"   => 2,
                 "name" => "Quản lý",
                 "slug" => "manager"
             ],
             [
-                "id"   => 3,
                 "name" => "Nhân viên",
                 "slug" => "employee"
+            ],
+            [
+                "name" => "Quản lý CSKH",
+                "slug" => "manager-cskh"
+            ],
+            [
+                "name" => "Nhân viên CSKH",
+                "slug" => "staff-cskh"
             ]
         ];
         $pms_groups = [
@@ -86,24 +91,52 @@ class RoleSeeder extends Seeder
                         "slug" => "delete-staff"
                     ]
                 ]
+            ],
+            [
+                "name" => "Cơ hội",
+                "permissions" => [
+                    [
+                        "name" => "Xem cơ hội",
+                        "slug" => "view-chance",
+                        "roles" => ["admin", "manager-cskh", "staff-cskh"]
+                    ],
+                    [
+                        "name" => "Phân công CSKH",
+                        "slug" => "asign-cskh",
+                        "roles" => ["admin", "manager-cskh", "staff-cskh"]
+                    ]
+                ]
             ]
         ];
-        Role::insert($roles);
-        User::where("email", "admin@gmail.com")->update(["role_id" => 1]);
+        foreach ($roles as $role) {
+            Role::updateOrCreate(["slug" => $role["slug"]], ["name" => $role["name"]]);
+        }
+
+        $adminRole = Role::where("slug", "admin")->firstOrFail();
+        User::where("email", "admin@gmail.com")->update(["role_id" => $adminRole->id]);
+
         foreach ($pms_groups as $pms_group_item) {
-            $pms_group = PermissionGroup::create([
+            $pms_group = PermissionGroup::firstOrCreate([
                 "name" => $pms_group_item["name"]
             ]);
             foreach ($pms_group_item["permissions"] as $pms_item) {
-                $pms = Permission::create([
-                    "permission_group_id" => $pms_group->id,
-                    "name"                => $pms_item["name"],
-                    "slug"                => $pms_item["slug"]
-                ]);
-                RolePermission::updateOrCreate([
-                    "role_id"       => 1,
-                    "permission_id" => $pms->id
-                ]);
+                $pms = Permission::updateOrCreate(
+                    ["slug" => $pms_item["slug"]],
+                    [
+                        "permission_group_id" => $pms_group->id,
+                        "name" => $pms_item["name"]
+                    ]
+                );
+
+                $roleSlugs = $pms_item["roles"] ?? ["admin"];
+                $roleIds = Role::whereIn("slug", $roleSlugs)->pluck("id");
+
+                foreach ($roleIds as $roleId) {
+                    RolePermission::updateOrCreate([
+                        "role_id" => $roleId,
+                        "permission_id" => $pms->id
+                    ]);
+                }
             }
         }
     }
