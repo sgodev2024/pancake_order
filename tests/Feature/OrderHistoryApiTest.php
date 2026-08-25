@@ -55,7 +55,25 @@ class OrderHistoryApiTest extends TestCase
             'total_quantity' => 2,
             'cod' => 125000,
             'created_at' => '2026-08-21 10:00:00',
-            'pancake_full_data' => ['secret' => 'must-not-leak'],
+            'pancake_full_data' => [
+                'items' => [
+                    [
+                        'variation_info' => [
+                            'name' => 'Canxi váng sữa',
+                            'images' => ['https://cdn.example.test/canxi.jpg'],
+                        ],
+                        'quantity' => 1,
+                    ],
+                    [
+                        'variation_info' => [
+                            'name' => 'VITAMIN D3K2 DROP',
+                            'images' => [],
+                        ],
+                        'quantity' => 2,
+                    ],
+                ],
+                'secret' => 'must-not-leak',
+            ],
         ]);
         $sameTimestampHigherId = $this->createOrder($shop, [
             'pancake_customer_id' => 'CUSTOMER-1',
@@ -99,26 +117,22 @@ class OrderHistoryApiTest extends TestCase
             ->assertJsonPath('data.1.id', $sameTimestampHigherId->id)
             ->assertJsonPath('data.2.id', $anchor->id)
             ->assertJsonPath('data.3.id', $olderDuplicate->id)
-            ->assertJsonPath('data.2.historical_care_staff.id', $careStaff->id)
-            ->assertJsonPath('data.2.historical_care_staff.name', 'Historical Care')
+            ->assertJsonPath('data.2.amount', 125000)
             ->assertJsonPath('data.2.creator.id', $creator->id)
-            ->assertJsonPath('data.2.shop.id', $shop->id)
-            ->assertJsonPath('data.2.status', 7)
-            ->assertJsonPath('data.2.status_vtp', 'delivered')
-            ->assertJsonPath('data.2.order_number_vtp', 'VTP-1');
+            ->assertJsonPath('data.2.creator.name', 'Creator')
+            ->assertJsonPath('data.2.products.0.name', 'Canxi váng sữa')
+            ->assertJsonPath('data.2.products.0.image', 'https://cdn.example.test/canxi.jpg')
+            ->assertJsonPath('data.2.products.0.quantity', 1)
+            ->assertJsonPath('data.2.products.1.name', 'VITAMIN D3K2 DROP')
+            ->assertJsonPath('data.2.products.1.image', null)
+            ->assertJsonPath('data.2.products.1.quantity', 2);
 
         $this->assertSame([
             'id',
-            'pancake_order_id',
             'created_at',
-            'status',
-            'status_vtp',
-            'order_number_vtp',
-            'shop',
-            'total_quantity',
-            'cod',
+            'amount',
             'creator',
-            'historical_care_staff',
+            'products',
         ], array_keys($response->json('data.2')));
         $this->assertArrayNotHasKey('pancake_full_data', $response->json('data.2'));
         $this->assertSame($before, $this->orderSnapshot());

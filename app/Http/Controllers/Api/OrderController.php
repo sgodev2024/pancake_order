@@ -227,30 +227,20 @@ class OrderController extends Controller
             if ($shopIds !== null && ! $shopIds->contains($order->shop_id)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Bạn không có quyền truy cập đơn hàng này.',
+                    'message' => 'Bạn không có quyền xem lịch sử đơn hàng này.',
                 ], 403);
             }
 
             $historyQuery = Order::query()
                 ->select([
                     'id',
-                    'pancake_order_id',
                     'created_at',
-                    'status',
-                    'status_vtp',
-                    'order_number_vtp',
-                    'shop_id',
-                    'total_quantity',
                     'cod',
                     'user_creator_id',
-                    'user_assigning_seller_id',
+                    'pancake_full_data',
                 ])
                 ->with([
-                    'shop' => function ($query) {
-                        $query->select('id', 'name');
-                    },
                     'user_creator',
-                    'user_assigning',
                 ])
                 ->orderByDesc('created_at')
                 ->orderByDesc('id');
@@ -301,33 +291,41 @@ class OrderController extends Controller
 
     private function historyOrderData(Order $order): array
     {
+        $items = is_array($order->pancake_full_data)
+            ? ($order->pancake_full_data['items'] ?? [])
+            : [];
+
+        $products = collect(is_array($items) ? $items : [])
+            ->filter(fn ($item) => is_array($item))
+            ->map(function (array $item): array {
+                $variation = is_array($item['variation_info'] ?? null)
+                    ? $item['variation_info']
+                    : [];
+                $images = is_array($variation['images'] ?? null)
+                    ? $variation['images']
+                    : [];
+                $image = $images[0] ?? null;
+
+                return [
+                    'name' => $variation['name'] ?? null,
+                    'image' => is_string($image) && trim($image) !== '' ? $image : null,
+                    'quantity' => $item['quantity'] ?? 0,
+                ];
+            })
+            ->values()
+            ->all();
+
         return [
             'id' => $order->id,
-            'pancake_order_id' => $order->pancake_order_id,
             'created_at' => $order->created_at,
-            'status' => $order->status,
-            'status_vtp' => $order->status_vtp,
-            'order_number_vtp' => $order->order_number_vtp,
-            'shop' => $order->shop === null
-                ? null
-                : [
-                    'id' => $order->shop->id,
-                    'name' => $order->shop->name,
-                ],
-            'total_quantity' => $order->total_quantity,
-            'cod' => $order->cod,
+            'amount' => $order->cod,
             'creator' => $order->user_creator === null
                 ? null
                 : [
                     'id' => $order->user_creator->id,
                     'name' => $order->user_creator->name,
                 ],
-            'historical_care_staff' => $order->user_assigning === null
-                ? null
-                : [
-                    'id' => $order->user_assigning->id,
-                    'name' => $order->user_assigning->name,
-                ],
+            'products' => $products,
         ];
     }
 }
