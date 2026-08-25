@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\Role;
 use App\Models\User;
+use Illuminate\Http\Request;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -17,6 +19,7 @@ class ReportAndLogAuthorizationTest extends TestCase
         foreach ([
             '/api/v1/activity-logs',
             '/api/v1/users/all-user?page_name=activity_log',
+            '/api/v1/provinces',
             '/api/v1/provinces/report',
             '/api/v1/users?page_name=report_page',
         ] as $endpoint) {
@@ -49,6 +52,7 @@ class ReportAndLogAuthorizationTest extends TestCase
 
         foreach ([
             '/api/v1/activity-logs',
+            '/api/v1/provinces',
             '/api/v1/provinces/report',
         ] as $endpoint) {
             $this->actingAs($actor, 'api')
@@ -61,6 +65,20 @@ class ReportAndLogAuthorizationTest extends TestCase
     {
         $this->getJson('/api/v1/activity-logs')
             ->assertStatus(401);
+    }
+
+    public function test_explicit_admin_role_passes_the_admin_only_middleware(): void
+    {
+        $request = Request::create('/api/v1/activity-logs', 'GET');
+        $request->setUserResolver(fn () => $this->userWithRole('admin'));
+
+        $response = (new AdminOnlyMiddleware())->handle(
+            $request,
+            fn () => response()->json(['success' => true])
+        );
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame(['success' => true], $response->getData(true));
     }
 
     private function userWithRole(string $roleSlug): User
