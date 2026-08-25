@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\WebhookController;
 use App\Http\Controllers\Api\LoyaltyTierController;
 use App\Http\Controllers\Api\ProvinceController;
+use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\ApiKey;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -106,7 +107,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource("orders",    OrderController::class);
 
     Route::get("activity-logs", [ActivityLogController::class, "index"])
-        ->middleware(PermissionCheckMiddleware::class . ":view-action");
+        ->middleware(AdminOnlyMiddleware::class);
 
     Route::get('imported-opportunities/template', [ImportedOpportunityController::class, "downloadTemplate"]);
     Route::post('imported-opportunities/import',  [ImportedOpportunityController::class, "import"]);
@@ -120,7 +121,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource("products", ProductController::class);
 
     Route::get("users/mornitoring",              [UserController::class, "getMornitoring"]);
-    Route::get("users/all-user",                 [UserController::class, "getAllUser"]);
+    Route::get("users/all-user",                 [UserController::class, "getAllUser"])
+        ->middleware(AdminOnlyMiddleware::class . ':activity-log-query');
     Route::apiResource('users',                  UserController::class);
     Route::get("users/{pancake_user_id}/orders", [UserController::class, "getOrder"]);
     
@@ -132,7 +134,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('customer-cares/{id}/orders',    [CustomerCareController::class, "getOrder"]);
     Route::apiResource('customer-cares',        CustomerCareController::class);
 
-    Route::get('provinces/report',  [ProvinceController::class, "report"]);
+    Route::get('provinces/report',  [ProvinceController::class, "report"])
+        ->middleware(AdminOnlyMiddleware::class);
     Route::apiResource('provinces', ProvinceController::class);
     
     Route::post("settings", [SettingController::class, "store"]);

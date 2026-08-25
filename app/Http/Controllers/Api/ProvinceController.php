@@ -3,12 +3,22 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\Province;
 use App\Models\Shop;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 
-class ProvinceController extends Controller
+class ProvinceController extends Controller implements HasMiddleware
 {
+    public static function middleware(): array
+    {
+        return [
+            new Middleware(AdminOnlyMiddleware::class, only: ['index']),
+        ];
+    }
+
     public function index()
     {
         return response()->json([
