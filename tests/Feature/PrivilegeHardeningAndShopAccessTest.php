@@ -272,6 +272,7 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
             ['getJson', '/api/v1/roles', []],
             ['postJson', '/api/v1/roles', ['name' => 'Injected', 'code' => 'injected']],
             ['putJson', '/api/v1/roles/1', ['name' => 'Injected']],
+            ['patchJson', '/api/v1/roles/1', ['name' => 'Injected']],
             ['deleteJson', '/api/v1/roles/1', []],
             ['getJson', '/api/v1/permission-groups', []],
             ['postJson', '/api/v1/permission-groups', ['name' => 'Injected']],
@@ -319,9 +320,17 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
         $legacyRoles = $this->actingAs($managerCskh, 'api')
             ->getJson('/api/v1/roles')
             ->assertOk()
-            ->assertJsonStructure(['success', 'data' => [['id', 'name', 'slug']]]);
-        $this->assertArrayNotHasKey('permissionGroups', $legacyRoles->json());
-        $this->assertArrayNotHasKey('permissionRoles', $legacyRoles->json());
+            ->assertJsonStructure([
+                'success',
+                'data' => ['roles', 'permissionGroups', 'permissionRoles'],
+            ]);
+        $this->assertIsArray($legacyRoles->json('data.roles'));
+        $this->assertNotEmpty($legacyRoles->json('data.roles'));
+        foreach ($legacyRoles->json('data.roles') as $role) {
+            $this->assertSame(['id', 'name', 'slug'], array_keys($role));
+        }
+        $this->assertSame([], $legacyRoles->json('data.permissionGroups'));
+        $this->assertSame([], $legacyRoles->json('data.permissionRoles'));
 
         $cskhUsers = $this->actingAs($managerCskh, 'api')
             ->getJson('/api/v1/users?is_all=1')
@@ -354,12 +363,20 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
         $this->actingAs($manager, 'api')
             ->getJson('/api/v1/roles')
             ->assertOk()
-            ->assertJsonStructure(['success', 'data' => [['id', 'name', 'slug']]]);
+            ->assertJsonStructure([
+                'success',
+                'data' => ['roles', 'permissionGroups', 'permissionRoles'],
+            ])
+            ->assertJsonPath('data.permissionGroups', [])
+            ->assertJsonPath('data.permissionRoles', []);
         $this->actingAs($manager, 'api')
             ->postJson('/api/v1/roles', ['name' => 'Injected', 'code' => 'injected'])
             ->assertForbidden();
         $this->actingAs($manager, 'api')
             ->putJson('/api/v1/roles/'.$role->id, ['name' => 'Injected'])
+            ->assertForbidden();
+        $this->actingAs($manager, 'api')
+            ->patchJson('/api/v1/roles/'.$role->id, ['name' => 'Injected'])
             ->assertForbidden();
         $this->actingAs($manager, 'api')
             ->deleteJson('/api/v1/roles/'.$role->id)

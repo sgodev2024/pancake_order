@@ -43,7 +43,11 @@ class RoleController extends Controller implements HasMiddleware
     public function index(Request $request)
     {
         if (! $request->user()->isAdmin()) {
-            return $this->roleOptionsResponse();
+            return response()->json(['success' => true, 'data' => [
+                'roles' => Role::select('id', 'name', 'slug')->latest()->get(),
+                'permissionGroups' => [],
+                'permissionRoles' => [],
+            ]], 200);
         }
 
         $roles = Role::select("id", "name")->latest()->get();
