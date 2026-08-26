@@ -159,6 +159,11 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
         $this->assertDatabaseMissing('users', ['email' => 'attacker@example.test']);
     }
 
+    public function test_legacy_public_test_route_is_not_registered(): void
+    {
+        $this->getJson('/api/test')->assertNotFound();
+    }
+
     public function test_user_role_and_shop_assignment_endpoints_are_admin_only(): void
     {
         $this->createShop(11);
@@ -189,6 +194,18 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
         $target->refresh();
         $this->assertSame('staff-cskh', $target->role->slug);
         $this->assertSame([11], $target->shops()->pluck('shops.id')->all());
+    }
+
+    public function test_non_admin_cannot_delete_users_through_the_staff_permission_path(): void
+    {
+        $manager = $this->createUser('manager-cskh', 'Manager M1');
+        $target = $this->createUser('staff-cskh', 'Staff B');
+
+        $this->actingAs($manager, 'api')
+            ->deleteJson("/api/v1/users/{$target->id}")
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('users', ['id' => $target->id]);
     }
 
     public function test_non_admin_cannot_add_themselves_or_another_user_to_a_shop(): void

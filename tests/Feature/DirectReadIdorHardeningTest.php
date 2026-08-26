@@ -226,6 +226,40 @@ class DirectReadIdorHardeningTest extends TestCase
         );
     }
 
+    public function test_list_endpoints_reject_tampered_shop_ids_instead_of_silently_broadening_scope(): void
+    {
+        $shop11 = $this->createShop(11);
+        $shop12 = $this->createShop(12);
+        $manager = $this->createUser('manager-cskh', 'Manager M1');
+        $this->attach($manager, $shop11);
+        $this->grantPermission($manager, 'list-customer');
+        $this->grantPermission($manager, 'view-chance');
+
+        $this->createOrder($shop11);
+        $this->createOrder($shop12);
+        $this->createCustomer($shop11);
+        $this->createCustomer($shop12);
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?shop_id='.$shop12->id)
+            ->assertForbidden();
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders/chance?shop_id='.$shop12->id)
+            ->assertForbidden();
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/customers?shop_id='.$shop12->id)
+            ->assertForbidden();
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1);
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/customers?page=1')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1);
+    }
+
     public function test_customer_care_reads_require_feature_shop_and_staff_assignment_and_fail_closed_for_bad_links(): void
     {
         $shop11 = $this->createShop(11);

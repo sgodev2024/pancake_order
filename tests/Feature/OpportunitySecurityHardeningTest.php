@@ -100,9 +100,8 @@ class OpportunitySecurityHardeningTest extends TestCase
 
         $this->actingAs($actor, 'api')
             ->getJson("/api/v1/orders/chance?shop_id={$otherShop->id}")
-            ->assertOk()
-            ->assertJsonPath('success', false)
-            ->assertJsonPath('message', 'Bạn không có quyền truy cập cửa hàng này.');
+            ->assertForbidden()
+            ->assertJsonPath('message', 'You do not have access to the requested shop.');
     }
 
     public function test_admin_uses_role_slug_convention_and_can_query_any_shop(): void

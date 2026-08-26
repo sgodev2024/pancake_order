@@ -5,12 +5,26 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
+use App\Services\ShopAccessService;
 use Illuminate\Http\Request;
 
 class OrderController extends Controller
 {
+    private ShopAccessService $shopAccessService;
+
+    public function __construct(?ShopAccessService $shopAccessService = null)
+    {
+        $this->shopAccessService = $shopAccessService ?? app(ShopAccessService::class);
+    }
+
     public function index(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+
         try {
             $inputs = $request->only(
                 "search",
@@ -23,7 +37,6 @@ class OrderController extends Controller
                 "date_to",
                 "user_id"
             );
-            $user = auth()->user();
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
             $query->with([
@@ -34,11 +47,12 @@ class OrderController extends Controller
                 "user_care",
                 "user_assigning"
             ]);
-            if (isset($inputs["shop_id"])) {
-                $query->where("shop_id", $inputs["shop_id"]);
+            if ($requestedShopId !== null) {
+                $query->where("shop_id", $requestedShopId);
+            } elseif (! $this->shopAccessService->isGlobal($user)) {
+                $query->whereIn("shop_id", $this->shopAccessService->ids($user));
             }
-            if (!$user->isAdmin()) {
-                $query->whereIn("shop_id", $user->shops()->select("shops.id"));
+            if (! $this->shopAccessService->isGlobal($user)) {
                 if (!$user->isManagerSale() && !$user->isManagerCskh()) {
                     $query->where(function ($q) use ($user) {
                         $q->where("user_creator_id", $user->pancake_user_id)
@@ -137,6 +151,14 @@ class OrderController extends Controller
      */
     public function chance(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $user === null
+            ? null
+            : $this->shopAccessService->authorizeRequestedShopId(
+                $user,
+                $request->filled('shop_id') ? $request->integer('shop_id') : null
+            );
+
         try {
             $inputs = $request->only(
                 "shop_id",
@@ -144,7 +166,6 @@ class OrderController extends Controller
                 "date_from",
                 "date_to"
             );
-            $user = auth()->user();
             $queries = Order::query();
             $queries->where("status", 3)
                    ->whereDoesntHave("customerCareAssignments", function ($query) {
@@ -161,20 +182,11 @@ class OrderController extends Controller
             if (isset($inputs["date_to"])) {
                 $queries->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
-            $shopIds = $this->accessibleShopIds($user);
-            if ($shopIds !== null) {
-
-                if (isset($inputs['shop_id']) && ! $shopIds->contains($inputs['shop_id'])) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Bạn không có quyền truy cập cửa hàng này.',
-                    ]);
-                }
-
+            $shopIds = $user === null ? null : $this->accessibleShopIds($user);
+            if ($requestedShopId !== null) {
+                $queries->where('shop_id', $requestedShopId);
+            } elseif ($shopIds !== null) {
                 $queries->whereIn('shop_id', $shopIds);
-            }
-            if (isset($inputs['shop_id'])) {
-                $queries->where('shop_id', $inputs['shop_id']);
             }
             $queries->select([
                 'id', 
@@ -284,9 +296,9 @@ class OrderController extends Controller
 
     private function accessibleShopIds($user)
     {
-        return $user->isAdmin()
+        return $this->shopAccessService->isGlobal($user)
             ? null
-            : $user->shops()->pluck('shops.id');
+            : $this->shopAccessService->ids($user);
     }
 
     private function historyOrderData(Order $order): array

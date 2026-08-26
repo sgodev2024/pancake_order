@@ -10,6 +10,8 @@ use App\Jobs\GetEmployeeByShopJob;
 use App\Jobs\OrderByShopChunkJob;
 use App\Jobs\ProductByShopChunkJob;
 use App\Models\Shop;
+use App\Services\ShopAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Support\Facades\Http;
@@ -34,7 +36,7 @@ class ShopController extends Controller implements HasMiddleware
         ];
     }
 
-    public function __construct()
+    public function __construct(private readonly ShopAccessService $shopAccessService)
     {
         $this->apiUrl = env("PANCAKE_API_V1");
     }
@@ -135,6 +137,10 @@ class ShopController extends Controller implements HasMiddleware
 
     public function update(Request $request, Shop $shop)
     {
+        if (! $this->shopAccessService->canAccessShop($request->user(), $shop)) {
+            throw new AuthorizationException('You do not have access to this shop.');
+        }
+
         try {
             $shop->update([
                 "care_cycle_days" => $request->care_cycle_days
@@ -302,8 +308,12 @@ class ShopController extends Controller implements HasMiddleware
         return;
     }
 
-    public function destroy(Shop $shop)
+    public function destroy(Request $request, Shop $shop)
     {
+        if (! $this->shopAccessService->canAccessShop($request->user(), $shop)) {
+            throw new AuthorizationException('You do not have access to this shop.');
+        }
+
         $shop->delete();
         return response()->json(['success' => true, 'message' => 'Đã xóa Shop thành công'], 200);
     }

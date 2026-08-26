@@ -32,6 +32,12 @@ class CustomerController extends Controller implements HasMiddleware
 
     public function index(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+
         try {
             $inputs = $request->only(
                 "page",
@@ -42,12 +48,12 @@ class CustomerController extends Controller implements HasMiddleware
                 "search",
                 "loyalty_tier_id"
             );
-            $user = auth()->user();
             // 1. Khởi tạo query từ relationship
             $query = Customer::query();
-            $shop_ids = $user->shops()->pluck('shops.id')->toArray();
-            if (isset($inputs["shop_id"])) {
-                $query->where("shop_id", $inputs["shop_id"]);
+            if ($requestedShopId !== null) {
+                $query->where("shop_id", $requestedShopId);
+            } elseif (! $this->shopAccessService->isGlobal($user)) {
+                $query->whereIn("shop_id", $this->shopAccessService->ids($user));
             }
             if (isset($inputs["loyalty_tier_id"])) {
                 $query->where("loyalty_tier_id", $inputs["loyalty_tier_id"]);
@@ -91,8 +97,7 @@ class CustomerController extends Controller implements HasMiddleware
             if (isset($inputs["date_to"])) {
                 $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
-            if (!$user->isAdmin()) {
-                $query->whereIn("shop_id", $shop_ids);
+            if (! $this->shopAccessService->isGlobal($user)) {
                 if (!$user->isManagerSale() && !$user->isManagerCskh()) {
                     $user_id = $user->pancake_user_id ?? $user->id;
                     $query->where("assigned_user_id", $user_id);

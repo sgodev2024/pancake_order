@@ -31,10 +31,9 @@ class UserController extends Controller implements HasMiddleware
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
             new Middleware(AdminOnlyMiddleware::class . ':report-query', only: ['index']),
-            new Middleware(AdminOnlyMiddleware::class, only: ['store', 'update']),
+            new Middleware(AdminOnlyMiddleware::class, only: ['store', 'update', 'destroy']),
             new Middleware(PermissionCheckMiddleware::class . ':list-staff', only: ['index']),
             new Middleware(PermissionCheckMiddleware::class . ':list-staff,strict', only: ['show']),
-            new Middleware(PermissionCheckMiddleware::class . ':delete-staff', only: ['destroy']),
         ];
     }
 
