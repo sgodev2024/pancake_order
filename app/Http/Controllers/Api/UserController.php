@@ -25,9 +25,8 @@ class UserController extends Controller implements HasMiddleware
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
             new Middleware(AdminOnlyMiddleware::class . ':report-query', only: ['index']),
+            new Middleware(AdminOnlyMiddleware::class, only: ['store', 'update']),
             new Middleware(PermissionCheckMiddleware::class . ':list-staff', only: ['index', 'show']),
-            new Middleware(PermissionCheckMiddleware::class . ':create-staff', only: ['store']),
-            new Middleware(PermissionCheckMiddleware::class . ':update-staff', only: ['update']),
             new Middleware(PermissionCheckMiddleware::class . ':delete-staff', only: ['destroy']),
         ];
     }
@@ -258,8 +257,40 @@ class UserController extends Controller implements HasMiddleware
     public function updateProfile(Request $request)
     {
         try {
-            $user = auth()->user();
-            $validator = $this->validateData($request, $user->id);
+            $user = $request->user();
+
+            $blockedFields = [
+                'role',
+                'role_id',
+                'shop_ids',
+                'permissions',
+                'permission_ids',
+                'is_admin',
+                'is_manager',
+                'pancake_user_id',
+                'fb_id',
+                'is_first_login',
+                'status',
+                'api_key',
+                'access_token',
+                'wallet',
+                'balance',
+            ];
+
+            if ($request->hasAny($blockedFields)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Authorization fields cannot be changed through the profile endpoint.',
+                ], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'name'         => 'sometimes|string|max:255',
+                'email'        => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
+                'password'     => 'sometimes|string|min:6',
+                'phone_number' => 'sometimes|string|min:10',
+            ]);
+
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
@@ -268,7 +299,17 @@ class UserController extends Controller implements HasMiddleware
                 ], 422);
             }
 
-            return $this->updateUser($validator, $user);
+            $validatedData = $validator->validated();
+            if (isset($validatedData['password'])) {
+                $validatedData['password'] = Hash::make($validatedData['password']);
+            }
+
+            $user->update($validatedData);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cập nhật user thành công'
+            ], 200);
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => false,

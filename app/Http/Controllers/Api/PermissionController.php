@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Middleware\PermissionCheckMiddleware;
+use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\Permission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -21,7 +21,7 @@ class PermissionController extends Controller implements HasMiddleware
     {
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
-            new Middleware(PermissionCheckMiddleware::class . ':role'),
+            new Middleware(AdminOnlyMiddleware::class),
         ];
     }
     

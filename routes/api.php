@@ -98,7 +98,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('shops',           ShopController::class);
     Route::apiResource('shops.customers', ShopCustomerController::class);
     Route::apiResource('shops.orders',    ShopOrderController::class);
-    Route::apiResource('shops.users',     ShopUserController::class);
+    Route::apiResource('shops.users',     ShopUserController::class)
+        ->middleware(AdminOnlyMiddleware::class);
 
     Route::get('orders/chance', [OrderController::class, 'chance'])
         ->middleware(PermissionCheckMiddleware::class . ':view-chance');
@@ -163,13 +164,13 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
             "success" => true,
             "message" => "Cập nhật thành công"
         ]);
-    });
+    })->middleware(AdminOnlyMiddleware::class);
     Route::get("api-key", function () {
         return response()->json([
             "success" => true,
             "data"    => ApiKey::select("id", "api_key")->first()
         ]);
-    });
+    })->middleware(AdminOnlyMiddleware::class);
 
 });
 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Jobs\CustomerByShopChunkJob;
 use App\Jobs\GetEmployeeByShopJob;
@@ -26,7 +27,7 @@ class ShopController extends Controller implements HasMiddleware
     {
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
-            new Middleware(PermissionCheckMiddleware::class . ':create-shop', only: ['store']),
+            new Middleware(AdminOnlyMiddleware::class, only: ['store', 'getDataPancake', 'updateEmployeeFromPancake']),
             new Middleware(PermissionCheckMiddleware::class . ':delete-shop', only: ['destroy']),
             new Middleware(PermissionCheckMiddleware::class . ':update-shop', only: ['update']),
             // new Middleware(PermissionCheckMiddleware::class . ':list-shop', only: ['index']),
