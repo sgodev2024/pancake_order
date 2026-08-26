@@ -61,6 +61,7 @@ class CustomerCareController extends Controller
                            ->paginate(30, ['*'], 'page', $inputs["page"]);
 
             $this->attachCurrentAssignments($result->getCollection());
+            $this->attachLegacyV1DisplayCompatibility($result->getCollection());
             $this->attachAssignableOrderIds($result->getCollection());
 
             return response()->json([
@@ -821,6 +822,110 @@ class CustomerCareController extends Controller
             );
             $customerCare->setAttribute('current_assignment_ambiguous', $isAmbiguous);
         }
+    }
+
+    /**
+     * The legacy V1 table reads user_assigning for "NV chăm sóc" and
+     * shop.users for "Người quản lý".  Those two fields are compatibility
+     * display data on this list only; CustomerCareAssignment remains the
+     * authorization and ownership source of truth.
+     */
+    private function attachLegacyV1DisplayCompatibility($customerCares): void
+    {
+        if ($customerCares->isEmpty()) {
+            return;
+        }
+
+        $assignmentCounts = CustomerCareAssignment::query()
+            ->whereIn('customer_care_id', $customerCares->pluck('id'))
+            ->selectRaw('customer_care_id, COUNT(*) as assignment_count')
+            ->groupBy('customer_care_id')
+            ->pluck('assignment_count', 'customer_care_id');
+
+        foreach ($customerCares as $customerCare) {
+            $legacyUserAssigning = $customerCare->getRelation('user_assigning');
+            $displayUser = $this->resolveLegacyV1CareStaff(
+                $customerCare,
+                (int) $assignmentCounts->get($customerCare->id, 0) > 0
+            );
+
+            // Preserve V2's "Người phân công" value while repurposing the
+            // V1-only stale field as a display alias for care staff.
+            $customerCare->unsetRelation('user_assigning');
+            $customerCare->setAttribute(
+                'legacy_user_assigning',
+                $this->compactUserIdentity($legacyUserAssigning)
+            );
+            $customerCare->setAttribute(
+                'user_assigning',
+                $this->compactUserIdentity($displayUser)
+            );
+
+            $shop = $customerCare->getRelation('shop');
+            if ($shop !== null) {
+                // V1 incorrectly labels shop.users as managers.  Only expose
+                // the configured manager relation under that compatibility key.
+                $shop->setRelation(
+                    'users',
+                    $shop->relationLoaded('managers') ? $shop->getRelation('managers') : collect()
+                );
+            }
+        }
+    }
+
+    /**
+     * Resolve the V1 care-staff alias without changing current ownership.
+     * Ambiguous assignments and reclaimed/non-current CCA rows intentionally
+     * do not fall through to a legacy user.
+     */
+    private function resolveLegacyV1CareStaff(CustomerCare $customerCare, bool $hasAssignment): ?User
+    {
+        if ($customerCare->getAttribute('current_assignment_ambiguous')) {
+            return null;
+        }
+
+        $currentAssignment = $customerCare->getRelation('currentAssignment');
+        if ($this->isCurrentAssignmentForCustomerCare($currentAssignment, $customerCare)) {
+            return $currentAssignment->getRelation('assignee');
+        }
+
+        $activeAssignment = $customerCare->getRelation('activeAssignment');
+        if (
+            (int) $customerCare->status === 1
+            && $this->isCompletedAssignmentForCustomerCare($activeAssignment, $customerCare)
+        ) {
+            return $activeAssignment->getRelation('assignee');
+        }
+
+        return $hasAssignment ? null : $customerCare->getRelation('user_care');
+    }
+
+    private function isCurrentAssignmentForCustomerCare(?CustomerCareAssignment $assignment, CustomerCare $customerCare): bool
+    {
+        return $assignment !== null
+            && (int) $assignment->customer_care_id === (int) $customerCare->id
+            && $assignment->status === CustomerCareAssignment::STATUS_ACTIVE
+            && $assignment->cared_at === null
+            && $assignment->getRelation('assignee') !== null;
+    }
+
+    private function isCompletedAssignmentForCustomerCare(?CustomerCareAssignment $assignment, CustomerCare $customerCare): bool
+    {
+        return $assignment !== null
+            && (int) $assignment->customer_care_id === (int) $customerCare->id
+            && $assignment->status === CustomerCareAssignment::STATUS_ACTIVE
+            && $assignment->cared_at !== null
+            && $assignment->getRelation('assignee') !== null;
+    }
+
+    private function compactUserIdentity(?User $user): ?array
+    {
+        return $user === null
+            ? null
+            : [
+                'id' => $user->getKey(),
+                'name' => $user->name,
+            ];
     }
 
     private function applyOverviewAccessScope($query, $user, $shopIds, bool $currentTasks): void

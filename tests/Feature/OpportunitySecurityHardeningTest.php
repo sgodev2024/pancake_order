@@ -191,6 +191,22 @@ class OpportunitySecurityHardeningTest extends TestCase
             $log->metadata['assignee_pancake_user_id']
         );
         $this->assertNotEmpty($log->metadata['assigned_at']);
+
+        $listResponse = $this->actingAs($actor, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_pending&page=1')
+            ->assertOk()
+            ->assertJsonPath('data.customers.0.id', $customerCare->id)
+            ->assertJsonPath('data.customers.0.user_creator.id', $actor->id)
+            ->assertJsonPath('data.customers.0.user_creator.name', $actor->name)
+            ->assertJsonPath('data.customers.0.user_assigning.id', $assignee->id)
+            ->assertJsonPath('data.customers.0.user_assigning.name', $assignee->name)
+            ->assertJsonPath('data.customers.0.legacy_user_assigning', null)
+            ->assertJsonPath('data.customers.0.customer_addresss', $order->customer_address)
+            ->assertJsonPath('data.customers.0.time_care', null)
+            ->assertJsonPath('data.customers.0.current_assignment.assignee.id', $assignee->id)
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', false);
+
+        $this->assertSame(['id', 'name'], array_keys($listResponse->json('data.customers.0.user_assigning')));
     }
 
     public function test_order_assignment_preserves_null_address(): void
@@ -546,6 +562,7 @@ class OpportunitySecurityHardeningTest extends TestCase
         $care->update([
             'status' => 1,
             'time_care' => date('Y-m-d H:i:s'),
+            'user_assigning_seller_id' => $roleOnlyManager->pancake_user_id,
         ]);
         $assignment = $this->createAssignment(
             $sourceOrder->fresh(),
@@ -570,7 +587,13 @@ class OpportunitySecurityHardeningTest extends TestCase
             ->assertJsonPath('data.customers.0.active_assignment.source_order.id', $sourceOrder->id)
             ->assertJsonPath('data.customers.0.active_assignment.source_order.status', 3)
             ->assertJsonPath('data.customers.0.current_assignment', null)
-            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', false);
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', false)
+            ->assertJsonPath('data.customers.0.user_assigning.id', $assignee->id)
+            ->assertJsonPath('data.customers.0.user_assigning.name', $assignee->name)
+            ->assertJsonPath('data.customers.0.legacy_user_assigning.id', $roleOnlyManager->id)
+            ->assertJsonPath('data.customers.0.legacy_user_assigning.name', $roleOnlyManager->name)
+            ->assertJsonPath('data.customers.0.shop.users.0.id', $exactManager->id)
+            ->assertJsonPath('data.customers.0.shop.users.0.name', $exactManager->name);
 
         $this->assertNotNull($response->json('data.customers.0.active_assignment.cared_at'));
         $this->assertSame($assignment->id, $care->activeAssignment()->sole()->id);
@@ -597,7 +620,11 @@ class OpportunitySecurityHardeningTest extends TestCase
         $assignee = $this->createUser('staff-cskh', 'Assignee');
         $order = $this->createOrder($shop);
         $care = $this->createCustomerCare($order, $assignee);
-        $care->update(['total_edit' => 2, 'is_accept' => 1]);
+        $care->update([
+            'total_edit' => 2,
+            'is_accept' => 1,
+            'user_care_id' => $assignee->pancake_user_id,
+        ]);
         $assignment = $this->createAssignment(
             $order,
             $care,
@@ -611,7 +638,8 @@ class OpportunitySecurityHardeningTest extends TestCase
             ->assertJsonPath('data.customers.0.id', $care->id)
             ->assertJsonPath('data.customers.0.active_assignment', null)
             ->assertJsonPath('data.customers.0.current_assignment', null)
-            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', false);
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', false)
+            ->assertJsonPath('data.customers.0.user_assigning', null);
 
         $this->assertSame(
             CustomerCareAssignment::STATUS_RECLAIMED,
@@ -647,9 +675,12 @@ class OpportunitySecurityHardeningTest extends TestCase
         $this->assertNull($cares[$legacyCare->id]['current_assignment']);
         $this->assertFalse($cares[$legacyCare->id]['current_assignment_ambiguous']);
         $this->assertSame($legacyAssignee->name, $cares[$legacyCare->id]['user_care']['name']);
+        $this->assertSame($legacyAssignee->id, $cares[$legacyCare->id]['user_assigning']['id']);
+        $this->assertSame($legacyAssignee->name, $cares[$legacyCare->id]['user_assigning']['name']);
         $this->assertNull($cares[$emptyCare->id]['current_assignment']);
         $this->assertFalse($cares[$emptyCare->id]['current_assignment_ambiguous']);
         $this->assertNull($cares[$emptyCare->id]['user_care']);
+        $this->assertNull($cares[$emptyCare->id]['user_assigning']);
     }
 
     public function test_multiple_current_assignments_are_reported_as_ambiguous_without_selecting_an_employee(): void
@@ -668,7 +699,8 @@ class OpportunitySecurityHardeningTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.customers.0.id', $care->id)
             ->assertJsonPath('data.customers.0.current_assignment', null)
-            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', true);
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', true)
+            ->assertJsonPath('data.customers.0.user_assigning', null);
     }
 
     public function test_mixed_cared_and_uncared_active_assignments_are_still_ambiguous(): void
@@ -693,7 +725,8 @@ class OpportunitySecurityHardeningTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.customers.0.id', $care->id)
             ->assertJsonPath('data.customers.0.current_assignment', null)
-            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', true);
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', true)
+            ->assertJsonPath('data.customers.0.user_assigning', null);
     }
 
     public function test_legacy_edit_requests_remain_visible_but_are_hidden_from_actionable_task_lists(): void
