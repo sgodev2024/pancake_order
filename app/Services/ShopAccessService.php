@@ -52,6 +52,33 @@ class ShopAccessService
     }
 
     /**
+     * Return the shops through which a non-admin actor can read a target user.
+     *
+     * A user relationship is not itself a global authorization boundary: the
+     * actor and target must share an explicit local shop_users membership.
+     * Admin is intentionally handled by callers through isGlobal(), because a
+     * global actor must not be reduced to the target's memberships.
+     *
+     * @return Collection<int, int>
+     */
+    public function sharedIds(User $actor, User $target): Collection
+    {
+        if ($this->isGlobal($actor)) {
+            return $this->ids($target);
+        }
+
+        return $this->ids($actor)
+            ->intersect($this->ids($target))
+            ->values();
+    }
+
+    public function canAccessUser(User $actor, User $target): bool
+    {
+        return $this->isGlobal($actor)
+            || $this->sharedIds($actor, $target)->isNotEmpty();
+    }
+
+    /**
      * Null means no explicit filter. An unauthorized explicit filter is tampering
      * and must not be silently broadened to the user's full scope.
      *

@@ -4,12 +4,25 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shop;
+use App\Models\User;
+use App\Services\ShopAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 
 class ShopOrderController extends Controller
 {
+    public function __construct(private readonly ShopAccessService $shopAccessService)
+    {
+    }
+
     public function index(Request $request, Shop $shop)
     {
+        $actor = $request->user();
+
+        if (! $this->shopAccessService->canAccessShop($actor, $shop)) {
+            throw new AuthorizationException('You do not have access to this shop.');
+        }
+
         try {
             // 1. Khởi tạo query từ relationship
             $query = $shop->orders();
@@ -33,6 +46,8 @@ class ShopOrderController extends Controller
                 'orders.customer_address',
                 'orders.pancake_order_id'
             ]);
+
+            $this->applyOrderRecordScope($query, $actor);
 
             // 3. Xử lý các điều kiện lọc (Filters)
             // Lọc theo từ khóa tìm kiếm (Tên hoặc Số điện thoại)
@@ -64,5 +79,17 @@ class ShopOrderController extends Controller
                 'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
             ], 500);
         }
+    }
+
+    private function applyOrderRecordScope($query, User $actor): void
+    {
+        if ($actor->isAdmin() || $actor->isManagerSale() || $actor->isManagerCskh()) {
+            return;
+        }
+
+        $query->where(function ($scope) use ($actor) {
+            $scope->where('orders.user_creator_id', $actor->pancake_user_id)
+                ->orWhere('orders.user_care_id', $actor->pancake_user_id);
+        });
     }
 }

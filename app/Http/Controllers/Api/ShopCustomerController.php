@@ -4,12 +4,25 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shop;
+use App\Models\User;
+use App\Services\ShopAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 
 class ShopCustomerController extends Controller
 {
+    public function __construct(private readonly ShopAccessService $shopAccessService)
+    {
+    }
+
     public function index(Request $request, Shop $shop)
     {
+        $actor = $request->user();
+
+        if (! $this->shopAccessService->canAccessShop($actor, $shop)) {
+            throw new AuthorizationException('You do not have access to this shop.');
+        }
+
         try {
             // 1. Khởi tạo query từ relationship
             $query = $shop->customers();
@@ -23,6 +36,8 @@ class ShopCustomerController extends Controller
                 'customers.pancake_full_data',
                 'customers.created_at'
             ]);
+
+            $this->applyCustomerRecordScope($query, $actor);
 
             // 3. Xử lý các điều kiện lọc (Filters)
             // Lọc theo từ khóa tìm kiếm (Tên hoặc Số điện thoại)
@@ -55,5 +70,14 @@ class ShopCustomerController extends Controller
                 'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
             ], 500);
         }
+    }
+
+    private function applyCustomerRecordScope($query, User $actor): void
+    {
+        if ($actor->isAdmin() || $actor->isManagerSale() || $actor->isManagerCskh()) {
+            return;
+        }
+
+        $query->where('customers.assigned_user_id', $actor->pancake_user_id ?? $actor->getKey());
     }
 }

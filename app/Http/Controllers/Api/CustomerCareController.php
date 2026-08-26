@@ -14,6 +14,7 @@ use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
@@ -31,7 +32,7 @@ class CustomerCareController extends Controller implements HasMiddleware
     public static function middleware(): array
     {
         return [
-            new Middleware(CustomerCareListAccessMiddleware::class, only: ['index']),
+            new Middleware(CustomerCareListAccessMiddleware::class, only: ['index', 'getHistory', 'getOrder']),
         ];
     }
 
@@ -339,54 +340,217 @@ class CustomerCareController extends Controller implements HasMiddleware
         }
     }
 
-    public function getHistory($id)
+    public function getHistory(Request $request, $id)
     {
-        try {
-            $customer_care = CustomerCare::find($id);
+        $customerCare = $this->authorizeCustomerCareRead($request, $id);
+        $historyQuery = CustomerCare::query()
+            ->with([
+                'shop:id,name',
+                'user_creator',
+            ]);
 
-            return response()->json([
-                "success" => true,
-                "data"    => CustomerCare::where("pancake_customer_id", $customer_care->pancake_customer_id)
-                                          ->with([
-                                                "shop" => function ($q) {
-                                                    $q->select("shops.id", "shops.name");
-                                                },
-                                                "user_creator"
-                                          ])
-                                          ->get()
+        if (! $this->shopAccessService->isGlobal($request->user())) {
+            $historyQuery->where('shop_id', $customerCare->shop_id);
+        }
+
+        if ($this->hasUsablePancakeCustomerId($customerCare)) {
+            $historyQuery->where('pancake_customer_id', $customerCare->pancake_customer_id);
+        } else {
+            // A blank external customer ID is not a safe grouping key.
+            $historyQuery->whereKey($customerCare->getKey());
+        }
+
+        $this->applyCustomerCareReadScope($historyQuery, $request->user());
+
+        return response()->json([
+            'success' => true,
+            'data' => $historyQuery->get(),
+        ]);
+    }
+
+    public function getOrder(Request $request, $id)
+    {
+        $customerCare = $this->authorizeCustomerCareRead($request, $id);
+        $actor = $request->user();
+
+        $this->ensureCustomerCareOrderLinkIsConsistent($customerCare, $actor);
+
+        $ordersQuery = Order::query()
+            ->with([
+                'shop:id,name',
+                'user_creator',
+                'user_care',
+                'user_assigning',
             ]);
-        } catch (\Throwable $th) {
-            return response()->json([
-                "success" => true,
-                "message" => $th->getMessage()
-            ]);
+
+        if ($this->hasUsablePancakeCustomerId($customerCare)) {
+            $ordersQuery->where('pancake_customer_id', $customerCare->pancake_customer_id);
+        } else {
+            // A blank external customer ID is not a safe grouping key.
+            $ordersQuery->whereRaw('1 = 0');
+        }
+
+        if (! $this->shopAccessService->isGlobal($actor)) {
+            $ordersQuery->where('shop_id', $customerCare->shop_id);
+            $this->applyOrderReadScope($ordersQuery, $actor);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $ordersQuery->get(),
+        ]);
+    }
+
+    private function authorizeCustomerCareRead(Request $request, int|string $id): CustomerCare
+    {
+        $customerCare = CustomerCare::query()->findOrFail($id);
+        $actor = $request->user();
+
+        if (! $this->shopAccessService->canAccessShop($actor, (int) $customerCare->shop_id)) {
+            throw new AuthorizationException('You do not have access to this CustomerCare shop.');
+        }
+
+        if ($actor->isAdmin() || $actor->isManagerCskh()) {
+            return $customerCare;
+        }
+
+        if (! $actor->isStaffCskh()) {
+            throw new AuthorizationException('You do not have CustomerCare read access.');
+        }
+
+        $activeAssignments = CustomerCareAssignment::query()
+            ->where('customer_care_id', $customerCare->getKey())
+            ->where('status', CustomerCareAssignment::STATUS_ACTIVE)
+            ->get(['id', 'shop_id', 'assignee_user_id']);
+
+        if ($activeAssignments->isNotEmpty()) {
+            if ($activeAssignments->count() !== 1
+                || (int) $activeAssignments->first()->shop_id !== (int) $customerCare->shop_id
+                || (int) $activeAssignments->first()->assignee_user_id !== (int) $actor->getKey()) {
+                throw new AuthorizationException('This CustomerCare task is not assigned to you.');
+            }
+
+            return $customerCare;
+        }
+
+        $actorPancakeUserId = trim((string) $actor->pancake_user_id);
+        $hasLegacyOwnership = $actorPancakeUserId !== '' && (
+            $customerCare->user_creator_id === $actorPancakeUserId
+            || $customerCare->user_care_id === $actorPancakeUserId
+            || $customerCare->user_assigning_seller_id === $actorPancakeUserId
+            || $customerCare->users()
+                ->where('users.pancake_user_id', $actorPancakeUserId)
+                ->exists()
+        );
+
+        if (! $hasLegacyOwnership) {
+            throw new AuthorizationException('This CustomerCare task is not assigned to you.');
+        }
+
+        return $customerCare;
+    }
+
+    private function ensureCustomerCareOrderLinkIsConsistent(CustomerCare $customerCare, User $actor): void
+    {
+        if ($this->shopAccessService->isGlobal($actor)
+            || $customerCare->pancake_order_id === null
+            || trim((string) $customerCare->pancake_order_id) === '') {
+            return;
+        }
+
+        $hasCrossShopSourceOrder = Order::query()
+            ->where('pancake_order_id', $customerCare->pancake_order_id)
+            ->where('shop_id', '!=', $customerCare->shop_id)
+            ->exists();
+
+        if ($hasCrossShopSourceOrder) {
+            throw new HttpException(409, 'CustomerCare source order belongs to a different shop.');
         }
     }
 
-    public function getOrder($id)
+    private function applyCustomerCareReadScope($query, User $actor): void
     {
-        try {
-            $customer_care = CustomerCare::find($id);
-
-            return response()->json([
-                "success" => true,
-                "data"    => Order::where("pancake_customer_id", $customer_care->pancake_customer_id)
-                                   ->with([
-                                        "shop" => function ($q) {
-                                            $q->select("shops.id", "shops.name");
-                                        },
-                                        "user_creator",
-                                        "user_care",
-                                        "user_assigning"
-                                   ])
-                                  ->get()
-            ]);
-        } catch (\Throwable $th) {
-            return response()->json([
-                "success" => true,
-                "message" => $th->getMessage()
-            ]);
+        if ($actor->isAdmin() || $actor->isManagerCskh()) {
+            return;
         }
+
+        $actorPancakeUserId = trim((string) $actor->pancake_user_id);
+        if ($actorPancakeUserId === '') {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $activeAssignmentExists = static function ($assignmentQuery): void {
+            $assignmentQuery->selectRaw('1')
+                ->from('customer_care_assignments as direct_read_active_assignment')
+                ->whereColumn(
+                    'direct_read_active_assignment.customer_care_id',
+                    'customer_cares.id'
+                )
+                ->where(
+                    'direct_read_active_assignment.status',
+                    CustomerCareAssignment::STATUS_ACTIVE
+                );
+        };
+
+        $query->where(function ($scope) use ($actor, $actorPancakeUserId, $activeAssignmentExists) {
+            $scope->where(function ($assignedScope) use ($actor, $activeAssignmentExists) {
+                $assignedScope->whereExists(function ($assignmentQuery) use ($actor) {
+                    $assignmentQuery->selectRaw('1')
+                        ->from('customer_care_assignments as direct_read_actor_assignment')
+                        ->whereColumn(
+                            'direct_read_actor_assignment.customer_care_id',
+                            'customer_cares.id'
+                        )
+                        ->whereColumn(
+                            'direct_read_actor_assignment.shop_id',
+                            'customer_cares.shop_id'
+                        )
+                        ->where(
+                            'direct_read_actor_assignment.status',
+                            CustomerCareAssignment::STATUS_ACTIVE
+                        )
+                        ->where(
+                            'direct_read_actor_assignment.assignee_user_id',
+                            $actor->getKey()
+                        );
+                })->whereRaw(
+                    "(SELECT COUNT(*) FROM customer_care_assignments AS direct_read_assignment_count
+                      WHERE direct_read_assignment_count.customer_care_id = customer_cares.id
+                        AND direct_read_assignment_count.status = ?) = 1",
+                    [CustomerCareAssignment::STATUS_ACTIVE]
+                );
+            })->orWhere(function ($legacyScope) use ($actorPancakeUserId, $activeAssignmentExists) {
+                $legacyScope->whereNotExists($activeAssignmentExists)
+                    ->where(function ($ownershipScope) use ($actorPancakeUserId) {
+                        $ownershipScope->where('user_creator_id', $actorPancakeUserId)
+                            ->orWhere('user_care_id', $actorPancakeUserId)
+                            ->orWhere('user_assigning_seller_id', $actorPancakeUserId)
+                            ->orWhereHas('users', function ($userQuery) use ($actorPancakeUserId) {
+                                $userQuery->where('users.pancake_user_id', $actorPancakeUserId);
+                            });
+                    });
+            });
+        });
+    }
+
+    private function applyOrderReadScope($query, User $actor): void
+    {
+        if ($actor->isAdmin() || $actor->isManagerSale() || $actor->isManagerCskh()) {
+            return;
+        }
+
+        $query->where(function ($scope) use ($actor) {
+            $scope->where('user_creator_id', $actor->pancake_user_id)
+                ->orWhere('user_care_id', $actor->pancake_user_id);
+        });
+    }
+
+    private function hasUsablePancakeCustomerId(CustomerCare $customerCare): bool
+    {
+        return $customerCare->pancake_customer_id !== null
+            && trim((string) $customerCare->pancake_customer_id) !== '';
     }
 
     public function destroy(CustomerCare $customer_care)

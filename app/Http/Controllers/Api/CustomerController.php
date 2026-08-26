@@ -6,13 +6,18 @@ use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\Customer;
 use App\Models\Order;
+use App\Models\User;
+use App\Services\ShopAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
-use Illuminate\Support\Facades\Http;
 
 class CustomerController extends Controller implements HasMiddleware
 {
+    public function __construct(private readonly ShopAccessService $shopAccessService)
+    {
+    }
+
     /**
      * Khai báo middleware cho Controller
      */
@@ -20,7 +25,8 @@ class CustomerController extends Controller implements HasMiddleware
     {
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
-            new Middleware(PermissionCheckMiddleware::class . ':list-customer'),
+            new Middleware(PermissionCheckMiddleware::class . ':list-customer', except: ['getOrder']),
+            new Middleware(PermissionCheckMiddleware::class . ':list-customer,strict', only: ['getOrder']),
         ];
     }
 
@@ -119,58 +125,59 @@ class CustomerController extends Controller implements HasMiddleware
     public function getOrder(Request $request, $pancake_customer_id)
     {
         try {
-            $page_number = $request->page_number ?? 1;
-            $page_size   = 10;
-            $customer = Customer::where("pancake_customer_id", $pancake_customer_id)->with("shop")->first();
-            if (!$customer) {
-                return response()->json([
-                    "success" => false,
-                    "message" => "Khách hàng không tồn tại"
+            $actor = $request->user();
+            $pageNumber = $request->integer('page_number', 1);
+            $pageSize = 10;
+
+            $ordersQuery = Order::query()
+                ->where('pancake_customer_id', $pancake_customer_id)
+                ->with([
+                    'shop:id,name',
+                    'user_creator',
+                    'user_care',
+                    'user_assigning',
+                ])
+                ->select([
+                    'id',
+                    'shop_id',
+                    'order_number_vtp',
+                    'total_quantity',
+                    'cod',
+                    'cash',
+                    'note',
+                    'created_at',
+                    'status',
+                    'status_vtp',
+                    'pancake_full_data',
+                    'received_at_shop',
+                    'customer_name',
+                    'customer_phone',
+                    'customer_address',
+                    'pancake_order_id',
+                    'user_creator_id',
+                    'user_care_id',
+                    'user_assigning_seller_id',
                 ]);
+
+            if (! $this->shopAccessService->isGlobal($actor)) {
+                $ordersQuery->whereIn('shop_id', $this->shopAccessService->ids($actor));
+                $this->applyOrderRecordScope($ordersQuery, $actor);
             }
-            $pancake_shop_id = $customer->shop->pancake_shop_id;
-            $api_key         = $customer->shop->api_key;
-            $response = Http::get(env("PANCAKE_API_V1") . "shops/{$pancake_shop_id}/orders?page_size={$page_size}&page_number={$page_number}&customer_id={$pancake_customer_id}&api_key={$api_key}")->json();
-            // $orders = Order::where("pancake_customer_id", $pancake_customer_id)
-            //                 ->with([
-            //                     "shop" => function ($query) {
-            //                         $query->select("id", "name");
-            //                     },
-            //                     "user_creator",
-            //                     "user_care",
-            //                     "user_assigning"
-            //                 ])
-            //                 ->select([
-            //                     'id', 
-            //                     'shop_id',
-            //                     'order_number_vtp', 
-            //                     'total_quantity',
-            //                     'cod',
-            //                     'cash',
-            //                     'note',
-            //                     'created_at',
-            //                     'status',
-            //                     'status_vtp',
-            //                     'pancake_full_data',
-            //                     'received_at_shop',
-            //                     'customer_name',
-            //                     'customer_phone',
-            //                     'customer_address',
-            //                     'pancake_order_id',
-            //                     'user_creator_id',
-            //                     'user_care_id',
-            //                     'user_assigning_seller_id'
-            //                 ])
-            //                ->get();
-            if (!empty($response["data"])) {
-                return response()->json([
-                    "success" => true,
-                    "data"    => $response
-                ]);
-            }
+
+            $orders = $ordersQuery->latest('created_at')
+                ->paginate($pageSize, ['*'], 'page_number', $pageNumber);
+
+            // Keep the legacy wrapper returned by the Pancake proxy while using
+            // a locally constrained query as the authorization boundary.
             return response()->json([
-                "success" => false,
-                "message" => $response["message"] ?? NULL
+                'success' => true,
+                'data' => [
+                    'data' => $orders->items(),
+                    'page_number' => $orders->currentPage(),
+                    'page_size' => $orders->perPage(),
+                    'total_pages' => $orders->lastPage(),
+                    'total_items' => $orders->total(),
+                ],
             ]);
         } catch (\Throwable $th) {
             return response()->json([
@@ -178,5 +185,17 @@ class CustomerController extends Controller implements HasMiddleware
                 'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
             ], 500);
         }
+    }
+
+    private function applyOrderRecordScope($query, User $actor): void
+    {
+        if ($actor->isAdmin() || $actor->isManagerSale() || $actor->isManagerCskh()) {
+            return;
+        }
+
+        $query->where(function ($scope) use ($actor) {
+            $scope->where('user_creator_id', $actor->pancake_user_id)
+                ->orWhere('user_care_id', $actor->pancake_user_id);
+        });
     }
 }

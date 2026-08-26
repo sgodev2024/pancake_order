@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller implements HasMiddleware
@@ -31,7 +32,8 @@ class UserController extends Controller implements HasMiddleware
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
             new Middleware(AdminOnlyMiddleware::class . ':report-query', only: ['index']),
             new Middleware(AdminOnlyMiddleware::class, only: ['store', 'update']),
-            new Middleware(PermissionCheckMiddleware::class . ':list-staff', only: ['index', 'show']),
+            new Middleware(PermissionCheckMiddleware::class . ':list-staff', only: ['index']),
+            new Middleware(PermissionCheckMiddleware::class . ':list-staff,strict', only: ['show']),
             new Middleware(PermissionCheckMiddleware::class . ':delete-staff', only: ['destroy']),
         ];
     }
@@ -176,10 +178,29 @@ class UserController extends Controller implements HasMiddleware
 
     public function getOrder(Request $request, $pancake_user_id)
     {
+        $actor = $request->user();
+        $target = User::query()
+            ->where('pancake_user_id', $pancake_user_id)
+            ->firstOrFail();
+
+        if (! $this->shopAccessService->canAccessUser($actor, $target)) {
+            throw new AuthorizationException('You do not have access to this user.');
+        }
+
         try {
             $inputs = $request->only("page");
-            $orders = Order::where("user_creator_id", $pancake_user_id)
-                           ->select(
+            $ordersQuery = Order::query()
+                           ->where("user_creator_id", $target->pancake_user_id);
+
+            if (! $this->shopAccessService->isGlobal($actor)) {
+                $ordersQuery->whereIn(
+                    'shop_id',
+                    $this->shopAccessService->sharedIds($actor, $target)
+                );
+                $this->applyOrderRecordScope($ordersQuery, $actor);
+            }
+
+            $orders = $ordersQuery->select(
                                 'id', 
                                 'shop_id',
                                 'order_number_vtp', 
@@ -266,12 +287,28 @@ class UserController extends Controller implements HasMiddleware
      * Lấy thông tin 1 user cụ thể (Show - bổ sung cho đủ bộ RESTful)
      * GET /api/users/{user}
      */
-    public function show(User $user)
+    public function show(Request $request, User $user)
     {
+        if (! $this->shopAccessService->canAccessUser($request->user(), $user)) {
+            throw new AuthorizationException('You do not have access to this user.');
+        }
+
         return response()->json([
             'success' => true,
             'data' => $user
         ], 200);
+    }
+
+    private function applyOrderRecordScope($query, User $actor): void
+    {
+        if ($actor->isAdmin() || $actor->isManagerSale() || $actor->isManagerCskh()) {
+            return;
+        }
+
+        $query->where(function ($scope) use ($actor) {
+            $scope->where('user_creator_id', $actor->pancake_user_id)
+                ->orWhere('user_care_id', $actor->pancake_user_id);
+        });
     }
 
     public function updateProfile(Request $request)
