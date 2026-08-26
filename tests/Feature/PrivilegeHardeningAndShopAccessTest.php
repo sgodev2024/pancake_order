@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\PermissionGroup;
+use App\Models\Permission;
 use App\Models\Role;
 use App\Models\Shop;
 use App\Models\User;
@@ -270,12 +271,16 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
         $endpoints = [
             ['getJson', '/api/v1/roles', []],
             ['postJson', '/api/v1/roles', ['name' => 'Injected', 'code' => 'injected']],
+            ['putJson', '/api/v1/roles/1', ['name' => 'Injected']],
+            ['deleteJson', '/api/v1/roles/1', []],
             ['getJson', '/api/v1/permission-groups', []],
             ['postJson', '/api/v1/permission-groups', ['name' => 'Injected']],
             ['getJson', '/api/v1/permissions', []],
             ['postJson', '/api/v1/permissions', []],
             ['getJson', '/api/v1/role-permissions/1', []],
             ['postJson', '/api/v1/role-permissions', []],
+            ['putJson', '/api/v1/role-permissions/1', []],
+            ['deleteJson', '/api/v1/role-permissions/1', []],
         ];
 
         foreach (['manager-cskh', 'manager-sale', 'staff-cskh'] as $slug) {
@@ -286,16 +291,123 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
         }
     }
 
+    public function test_employee_role_options_use_list_staff_access_without_exposing_permission_metadata(): void
+    {
+        $shop11 = $this->createShop(11);
+        $shop12 = $this->createShop(12);
+        $managerCskh = $this->createUser('manager-cskh', 'Manager CSKH');
+        $managerSale = $this->createUser('manager-sale', 'Manager Sale');
+        $staff11 = $this->createUser('staff-cskh', 'Staff S11');
+        $staff12 = $this->createUser('staff-cskh', 'Staff S12');
+
+        $this->attachShops($managerCskh, [$shop11->id]);
+        $this->attachShops($managerSale, [$shop12->id]);
+        $this->attachShops($staff11, [$shop11->id]);
+        $this->attachShops($staff12, [$shop12->id]);
+        $this->grantPermission($managerCskh, 'list-staff');
+        $this->grantPermission($managerSale, 'list-staff');
+
+        $options = $this->actingAs($managerCskh, 'api')
+            ->getJson('/api/v1/roles/options')
+            ->assertOk()
+            ->assertJsonStructure(['success', 'data' => [['id', 'name', 'slug']]]);
+
+        $this->assertNotEmpty($options->json('data'));
+        $this->assertArrayNotHasKey('permissionGroups', $options->json());
+        $this->assertArrayNotHasKey('permissionRoles', $options->json());
+
+        $legacyRoles = $this->actingAs($managerCskh, 'api')
+            ->getJson('/api/v1/roles')
+            ->assertOk()
+            ->assertJsonStructure(['success', 'data' => [['id', 'name', 'slug']]]);
+        $this->assertArrayNotHasKey('permissionGroups', $legacyRoles->json());
+        $this->assertArrayNotHasKey('permissionRoles', $legacyRoles->json());
+
+        $cskhUsers = $this->actingAs($managerCskh, 'api')
+            ->getJson('/api/v1/users?is_all=1')
+            ->assertOk()
+            ->json('data.items');
+        $this->assertContains($staff11->id, collect($cskhUsers)->pluck('id')->all());
+        $this->assertNotContains($staff12->id, collect($cskhUsers)->pluck('id')->all());
+
+        $saleUsers = $this->actingAs($managerSale, 'api')
+            ->getJson('/api/v1/users?is_all=1')
+            ->assertOk()
+            ->json('data.items');
+        $this->assertContains($staff12->id, collect($saleUsers)->pluck('id')->all());
+        $this->assertNotContains($staff11->id, collect($saleUsers)->pluck('id')->all());
+
+        $this->actingAs($managerCskh, 'api')
+            ->getJson('/api/v1/users?shop_id='.$shop12->id)
+            ->assertForbidden();
+    }
+
+    public function test_role_reads_require_employee_list_access_and_do_not_relax_role_administration(): void
+    {
+        $manager = $this->createUser('manager-cskh', 'Manager CSKH');
+        $this->grantPermission($manager, 'list-staff');
+        $role = Role::create(['name' => 'Existing Role', 'slug' => 'existing-role']);
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/roles/options')
+            ->assertOk();
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/roles')
+            ->assertOk()
+            ->assertJsonStructure(['success', 'data' => [['id', 'name', 'slug']]]);
+        $this->actingAs($manager, 'api')
+            ->postJson('/api/v1/roles', ['name' => 'Injected', 'code' => 'injected'])
+            ->assertForbidden();
+        $this->actingAs($manager, 'api')
+            ->putJson('/api/v1/roles/'.$role->id, ['name' => 'Injected'])
+            ->assertForbidden();
+        $this->actingAs($manager, 'api')
+            ->deleteJson('/api/v1/roles/'.$role->id)
+            ->assertForbidden();
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/permissions')
+            ->assertForbidden();
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/role-permissions/'.$role->id)
+            ->assertForbidden();
+    }
+
+    public function test_staff_without_employee_list_access_cannot_read_role_options(): void
+    {
+        $staff = $this->createUser('staff-cskh', 'Staff without list access');
+
+        $this->actingAs($staff, 'api')
+            ->getJson('/api/v1/roles/options')
+            ->assertForbidden();
+        $this->actingAs($staff, 'api')
+            ->getJson('/api/v1/roles')
+            ->assertForbidden();
+    }
+
     public function test_admin_can_use_existing_role_and_permission_administration_actions(): void
     {
         $admin = $this->createUser('admin', 'Admin A');
         $group = PermissionGroup::create(['name' => 'Existing Group']);
         $role = Role::create(['name' => 'Existing Role', 'slug' => 'existing-role']);
 
-        $this->actingAs($admin, 'api')->getJson('/api/v1/roles')->assertOk();
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/roles')
+            ->assertOk()
+            ->assertJsonStructure([
+                'success',
+                'data' => ['roles', 'permissionGroups', 'permissionRoles'],
+            ]);
         $this->actingAs($admin, 'api')
             ->postJson('/api/v1/roles', ['name' => 'New Role', 'code' => 'new-role'])
             ->assertCreated();
+        $roleToMutate = Role::create(['name' => 'Mutable Role', 'slug' => 'mutable-role']);
+        $this->actingAs($admin, 'api')
+            ->putJson('/api/v1/roles/'.$roleToMutate->id, ['name' => 'Updated Role'])
+            ->assertOk();
+        $this->actingAs($admin, 'api')
+            ->deleteJson('/api/v1/roles/'.$roleToMutate->id)
+            ->assertOk();
         $this->actingAs($admin, 'api')
             ->postJson('/api/v1/permission-groups', ['name' => 'New Group'])
             ->assertCreated();
@@ -418,6 +530,14 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
             $table->unique(['user_id', 'shop_id']);
             $table->timestamps();
         });
+        Schema::create('orders', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->string('user_creator_id')->nullable();
+            $table->decimal('cod', 12, 2)->default(0);
+            $table->softDeletes();
+            $table->timestamps();
+        });
         Schema::create('api_keys', function (Blueprint $table) {
             $table->id();
             $table->string('api_key')->nullable();
@@ -461,5 +581,21 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
         foreach ($shopIds as $shopId) {
             $user->shops()->attach($shopId, ['is_manager' => $isManager]);
         }
+    }
+
+    private function grantPermission(User $user, string $slug): void
+    {
+        $group = PermissionGroup::firstOrCreate(['name' => 'Test permissions']);
+        $permission = Permission::firstOrCreate(
+            ['slug' => $slug],
+            ['permission_group_id' => $group->id, 'name' => $slug]
+        );
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $user->role_id,
+            'permission_id' => $permission->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 }

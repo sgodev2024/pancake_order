@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\AdminOnlyMiddleware;
+use App\Http\Middleware\RoleReadAccessMiddleware;
 use App\Models\PermissionGroup;
 use App\Models\Role;
 use App\Models\RolePermission;
@@ -22,14 +23,29 @@ class RoleController extends Controller implements HasMiddleware
     public static function middleware(): array
     {
         return [
-            // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
-            new Middleware(AdminOnlyMiddleware::class),
+            new Middleware(AdminOnlyMiddleware::class, except: ['index', 'options']),
+            new Middleware(RoleReadAccessMiddleware::class, only: ['index', 'options']),
         ];
     }
 
-    // 1. Lấy danh sách Role
-    public function index()
+    /**
+     * Return only the role fields needed by employee-list filters.
+     *
+     * This is intentionally separate from the admin role-management index,
+     * which also exposes permission groups and role-permission assignments.
+     */
+    public function options()
     {
+        return $this->roleOptionsResponse();
+    }
+
+    // 1. Lấy danh sách Role
+    public function index(Request $request)
+    {
+        if (! $request->user()->isAdmin()) {
+            return $this->roleOptionsResponse();
+        }
+
         $roles = Role::select("id", "name")->latest()->get();
         $permissionGroups = PermissionGroup::select("id", "name")
                                             ->with(["permissions" => function ($q) {
@@ -44,6 +60,17 @@ class RoleController extends Controller implements HasMiddleware
             "permissionGroups" => $permissionGroups,
             "permissionRoles" => $permissionRoles
         ]], 200);
+    }
+
+    private function roleOptionsResponse()
+    {
+        return response()->json([
+            'success' => true,
+            'data' => Role::query()
+                ->select('id', 'name', 'slug')
+                ->latest()
+                ->get(),
+        ], 200);
     }
 
     // 2. Thêm Role mới

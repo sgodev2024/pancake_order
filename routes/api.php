@@ -64,6 +64,10 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
         Route::post('logout', [AuthController::class, 'logout']);
     });
 
+    // Read-only role options for employee-list filters. Keep this before the
+    // apiResource route so "options" is not treated as a role ID.
+    Route::get('roles/options', [RoleController::class, 'options']);
+
     // Các router quản lý dự án, nhân sự khác sẽ nằm ở đây...
     Route::apiResource('roles',             RoleController::class);
     Route::apiResource('permission-groups', PermissionGroupController::class);
