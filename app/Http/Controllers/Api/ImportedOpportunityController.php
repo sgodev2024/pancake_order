@@ -11,6 +11,7 @@ use App\Models\ImportedOpportunity;
 use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
+use App\Services\ShopAccessService;
 use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,15 +21,21 @@ class ImportedOpportunityController extends Controller
 {
     public function __construct(
         private readonly CustomerCareAssignmentService $customerCareAssignmentService,
-        private readonly ActivityLogService $activityLogService
+        private readonly ActivityLogService $activityLogService,
+        private readonly ShopAccessService $shopAccessService
     ) {
     }
 
     public function index(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+
         try {
-            $inputs = $request->only("shop_id", "page", "date_from", "date_to");
-            $user = auth()->user();
+            $inputs = $request->only("page", "date_from", "date_to");
             $queries = ImportedOpportunity::query();
             $queries->where("status", 0);
             $queries->with(["shop" => fn($q) => $q->select("id", "name")]);
@@ -39,13 +46,10 @@ class ImportedOpportunityController extends Controller
             if (isset($inputs["date_to"])) {
                 $queries->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
-            if (isset($inputs["shop_id"])) {
-                $queries->where("shop_id", $inputs["shop_id"]);
-            } else {
-                if (!$user->isAdmin()) {
-                    $shop_ids = $user->shops()->pluck("shops.id");
-                    $queries->whereIn("shop_id", $shop_ids);
-                }
+            if ($requestedShopId !== null) {
+                $queries->where("shop_id", $requestedShopId);
+            } elseif (! $this->shopAccessService->isGlobal($user)) {
+                $queries->whereIn("shop_id", $this->shopAccessService->ids($user));
             }
 
             $queries->latest("created_at");

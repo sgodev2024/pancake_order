@@ -5,11 +5,16 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\Product;
+use App\Services\ShopAccessService;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 
-class ProductController extends Controller
+class ProductController extends Controller implements HasMiddleware
 {
+    public function __construct(private readonly ShopAccessService $shopAccessService)
+    {
+    }
 
     public static function middleware(): array
     {
@@ -22,6 +27,12 @@ class ProductController extends Controller
 
     public function index(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+
         try {
             $inputs = $request->only(
                 "page",
@@ -36,8 +47,10 @@ class ProductController extends Controller
                     $q->select("id", "name");
                 }
             ]);
-            if (isset($inputs["shop_id"])) {
-                $query->where("shop_id", $inputs["shop_id"]);
+            if ($requestedShopId !== null) {
+                $query->where("shop_id", $requestedShopId);
+            } elseif (! $this->shopAccessService->isGlobal($user)) {
+                $query->whereIn("shop_id", $this->shopAccessService->ids($user));
             }
             // 3. Xử lý các điều kiện lọc (Filters)
             // Lọc theo từ khóa tìm kiếm (Tên hoặc Số điện thoại)

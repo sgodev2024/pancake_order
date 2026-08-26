@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
+use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
@@ -44,7 +45,8 @@ class CustomerCareMarkerIntegrationTest extends TestCase
 
         $this->controller = new CustomerCareController(
             new CustomerCareAssignmentService,
-            new ActivityLogService
+            new ActivityLogService,
+            new ShopAccessService
         );
     }
 
@@ -559,11 +561,13 @@ class CustomerCareMarkerIntegrationTest extends TestCase
 
     private function indexCustomerCareIds(string $type): array
     {
-        $response = $this->controller->index(Request::create(
+        $request = Request::create(
             '/api/v1/customer-cares',
             'GET',
             ['type' => $type, 'page' => 1]
-        ));
+        );
+        $request->setUserResolver(fn () => Auth::user());
+        $response = $this->controller->index($request);
 
         $payload = $response->getData(true);
         $this->assertTrue($payload['success'], $payload['message'] ?? 'CustomerCare index failed.');

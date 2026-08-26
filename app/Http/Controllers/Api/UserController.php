@@ -8,6 +8,7 @@ use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\CustomerCare;
 use App\Models\Order;
 use App\Models\User;
+use App\Services\ShopAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -17,6 +18,10 @@ use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller implements HasMiddleware
 {
+    public function __construct(private readonly ShopAccessService $shopAccessService)
+    {
+    }
+
     /**
      * Khai báo middleware cho Controller
      */
@@ -37,9 +42,20 @@ class UserController extends Controller implements HasMiddleware
      */
     public function index(Request $request)
     {
+        $actor = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $actor,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $effectiveShopIds = $requestedShopId !== null
+            ? collect([$requestedShopId])
+            : (! $this->shopAccessService->isGlobal($actor)
+                ? $this->shopAccessService->ids($actor)
+                : null);
+
         try {
             $inputs = $request->only("role_id", "date", "page", "search", "is_all", "page_name", "shop_id");
-            $user = auth()->user();
+            $inputs['shop_id'] = $requestedShopId;
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $queries = User::with([
                             "shops" => function ($q) use ($inputs) {
@@ -62,7 +78,10 @@ class UserController extends Controller implements HasMiddleware
                         ])
                         ->select("id", "name", "phone_number", "email", "role_id", "pancake_user_id");
             if (($inputs["page_name"] ?? null) == "report_page") {
-                $queries->withCount(['orders' => function ($q) use ($inputs) {
+                $queries->withCount(['orders' => function ($q) use ($inputs, $effectiveShopIds) {
+                            if ($effectiveShopIds !== null) {
+                                $q->whereIn('orders.shop_id', $effectiveShopIds);
+                            }
                             if (isset($inputs["date"])) {
                                 $q->whereBetween("orders.created_at", [
                                     $inputs["date"] . " 00:00:00",
@@ -70,7 +89,10 @@ class UserController extends Controller implements HasMiddleware
                                 ]);
                             }
                         }])
-                        ->withSum(['orders' => function ($q) use ($inputs) {
+                        ->withSum(['orders' => function ($q) use ($inputs, $effectiveShopIds) {
+                            if ($effectiveShopIds !== null) {
+                                $q->whereIn('orders.shop_id', $effectiveShopIds);
+                            }
                             if (isset($inputs["date"])) {
                                 $q->whereBetween("orders.created_at", [
                                     $inputs["date"] . " 00:00:00",
@@ -79,7 +101,7 @@ class UserController extends Controller implements HasMiddleware
                             }
                         }], 'cod');
             }    
-            $queries->where(function ($q) use ($inputs, $user) {
+            $queries->where(function ($q) use ($inputs, $effectiveShopIds) {
                 if (isset($inputs["role_id"])) {
                     $q->where("role_id", $inputs["role_id"]);
                 }
@@ -91,20 +113,18 @@ class UserController extends Controller implements HasMiddleware
                         ->orWhere("phone_number", "like", $searchTerm);
                     });
                 }
-                if (!$user->isAdmin()) {
-                    $q->whereHas("shops", function ($query) use ($user){
-                        $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
-                    });
-                }
-                if (isset($inputs["shop_id"])) {
-                    $q->whereHas("shops", function ($query) use ($inputs) {
-                        $query->where("shops.id", $inputs["shop_id"]);
+                if ($effectiveShopIds !== null) {
+                    $q->whereHas("shops", function ($query) use ($effectiveShopIds) {
+                        $query->whereIn("shops.id", $effectiveShopIds);
                     });
                 }
             })
             ->latest();
             $userIds = (clone $queries)->pluck('users.pancake_user_id');
             $total_cod = Order::whereIn('user_creator_id', $userIds)
+                                ->when($effectiveShopIds !== null, function ($q) use ($effectiveShopIds) {
+                                    $q->whereIn('shop_id', $effectiveShopIds);
+                                })
                                 ->when(isset($inputs["date"]), function ($q) use ($inputs) {
                                     $q->whereBetween("created_at", [
                                         $inputs["date"] . " 00:00:00",
@@ -396,10 +416,15 @@ class UserController extends Controller implements HasMiddleware
 
     public function getAllUser(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+
         try {
-            $inputs = $request->only("shop_id", "assignment_eligible");
+            $inputs = $request->only("assignment_eligible");
             $queries = User::query();
-            $user = auth()->user();
 
             if (filter_var($inputs['assignment_eligible'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
                 $queries->whereHas('role', function ($query) {
@@ -407,16 +432,15 @@ class UserController extends Controller implements HasMiddleware
                 });
             }
             
-            if (isset($inputs["shop_id"])) {
-                $queries->whereHas("shops", function ($query) use ($inputs) {
-                    $query->where("shops.id", $inputs["shop_id"]);
+            if ($requestedShopId !== null) {
+                $queries->whereHas("shops", function ($query) use ($requestedShopId) {
+                    $query->where("shops.id", $requestedShopId);
                 });
-            } else {
-                if (!$user->isAdmin()) {
-                    $queries->whereHas("shops", function ($query) use ($user) {
-                        $query->whereIn("shops.id", $user->shops()->pluck('shops.id'));
-                    });
-                }
+            } elseif (! $this->shopAccessService->isGlobal($user)) {
+                $shopIds = $this->shopAccessService->ids($user);
+                $queries->whereHas("shops", function ($query) use ($shopIds) {
+                    $query->whereIn("shops.id", $shopIds);
+                });
             }
             return response()->json([
                 "success" => true,
@@ -432,13 +456,20 @@ class UserController extends Controller implements HasMiddleware
         }
     }
 
-    public function getMornitoring()
+    public function getMornitoring(Request $request)
     {
-        try {
-            $user     = auth()->user();
-            $is_admin = $user->isAdmin();
-            $shop_ids = $user->shops()->pluck('shops.id');
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $isGlobal = $this->shopAccessService->isGlobal($user);
+        $shopIds = $requestedShopId !== null
+            ? collect([$requestedShopId])
+            : $this->shopAccessService->ids($user);
+        $mustScopeByShop = $requestedShopId !== null || ! $isGlobal;
 
+        try {
             // Subquery 1: Thống kê orders
             $orderStats = DB::table('orders')
                 ->select([
@@ -446,7 +477,7 @@ class UserController extends Controller implements HasMiddleware
                     DB::raw('COUNT(id) as total_orders'),
                     DB::raw('COALESCE(SUM(cod), 0) as total_revenue'),
                 ])
-                ->when(!$is_admin, fn($q) => $q->whereIn('shop_id', $shop_ids))
+                ->when($mustScopeByShop, fn($q) => $q->whereIn('shop_id', $shopIds))
                 ->groupBy('user_creator_id');
 
             // Subquery 2: Thống kê customer_cares
@@ -456,16 +487,16 @@ class UserController extends Controller implements HasMiddleware
                     'user_creator_id',
                     DB::raw('
                         ROUND(
-                            100.0 * SUM(CASE WHEN date_care = CURDATE() AND status = 1 THEN 1 ELSE 0 END)
-                            / NULLIF(SUM(CASE WHEN date_care = CURDATE() THEN 1 ELSE 0 END), 0),
+                            100.0 * SUM(CASE WHEN date_care = CURRENT_DATE AND status = 1 THEN 1 ELSE 0 END)
+                            / NULLIF(SUM(CASE WHEN date_care = CURRENT_DATE THEN 1 ELSE 0 END), 0),
                         2) as care_progress_today
                     '),
                     DB::raw('
-                        SUM(CASE WHEN date_care < CURDATE() AND status = 0 THEN 1 ELSE 0 END) 
+                        SUM(CASE WHEN date_care < CURRENT_DATE AND status = 0 THEN 1 ELSE 0 END)
                         as overdue_care_count
                     '),
                 ])
-                ->when(!$is_admin, fn($q) => $q->whereIn('shop_id', $shop_ids))
+                ->when($mustScopeByShop, fn($q) => $q->whereIn('shop_id', $shopIds))
                 ->groupBy('user_creator_id');
 
             // Query chính: JOIN với subquery đã aggregate sẵn
@@ -481,6 +512,11 @@ class UserController extends Controller implements HasMiddleware
                 ->leftJoinSub($orderStats, 'o', 'o.user_creator_id', '=', 'users.pancake_user_id')
                 ->leftJoinSub($careStats, 'c', 'c.user_creator_id', '=', 'users.pancake_user_id')
                 ->whereNotNull('users.pancake_user_id')
+                ->when($mustScopeByShop, function ($query) use ($shopIds) {
+                    $query->whereHas('shops', function ($shopQuery) use ($shopIds) {
+                        $shopQuery->whereIn('shops.id', $shopIds);
+                    });
+                })
                 ->get();
 
             return response()->json([

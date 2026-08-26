@@ -9,6 +9,7 @@ use App\Models\ImportedOpportunity;
 use App\Models\Order;
 use App\Models\Permission;
 use App\Models\PermissionGroup;
+use App\Models\Product;
 use App\Models\Role;
 use App\Models\Shop;
 use App\Models\User;
@@ -1117,6 +1118,382 @@ class OpportunitySecurityHardeningTest extends TestCase
         $this->assertSame('customer_care.assigned', ActivityLog::query()->sole()->action);
     }
 
+    public function test_phase_3_all_user_scope_rejects_tampering_and_preserves_assignment_eligibility(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $manager = $this->createUser('manager-cskh', 'Manager CSKH');
+        $ownStaff = $this->createUser('staff-cskh', 'Own CSKH Staff');
+        $otherStaff = $this->createUser('staff-cskh', 'Other CSKH Staff');
+        $ownSaleManager = $this->createUser('manager-sale', 'Own Sale Manager');
+        $zeroShopManager = $this->createUser('manager-cskh', 'Zero Shop Manager');
+        $admin = $this->createUser('admin', 'Admin');
+
+        $this->attachShop($manager, $ownShop);
+        $this->attachShop($ownStaff, $ownShop);
+        $this->attachShop($otherStaff, $otherShop);
+        $this->attachShop($ownSaleManager, $ownShop);
+
+        $unfiltered = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/users/all-user')
+            ->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$manager->id, $ownStaff->id, $ownSaleManager->id],
+            collect($unfiltered->json('data'))->pluck('id')->all()
+        );
+
+        $eligible = $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/users/all-user?shop_id={$ownShop->id}&assignment_eligible=1")
+            ->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$manager->id, $ownStaff->id],
+            collect($eligible->json('data'))->pluck('id')->all()
+        );
+
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/users/all-user?shop_id={$otherShop->id}")
+            ->assertForbidden();
+        $this->actingAs($zeroShopManager, 'api')
+            ->getJson('/api/v1/users/all-user')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+        $this->actingAs($zeroShopManager, 'api')
+            ->getJson("/api/v1/users/all-user?shop_id={$otherShop->id}")
+            ->assertForbidden();
+
+        $adminResponse = $this->actingAs($admin, 'api')
+            ->getJson("/api/v1/users/all-user?shop_id={$otherShop->id}")
+            ->assertOk();
+        $this->assertSame(
+            [$otherStaff->id],
+            collect($adminResponse->json('data'))->pluck('id')->all()
+        );
+    }
+
+    public function test_phase_3_monitoring_returns_only_users_intersecting_the_effective_shop_scope(): void
+    {
+        $shopA = $this->createShop('Shop A');
+        $shopB = $this->createShop('Shop B');
+        $shopC = $this->createShop('Shop C');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $staffA = $this->createUser('staff-cskh', 'Staff A');
+        $staffB = $this->createUser('staff-cskh', 'Staff B');
+        $staffC = $this->createUser('staff-cskh', 'Staff C');
+        $zeroShopManager = $this->createUser('manager-cskh', 'Zero Shop Manager');
+
+        $this->attachShop($manager, $shopA);
+        $this->attachShop($manager, $shopB);
+        $this->attachShop($staffA, $shopA);
+        $this->attachShop($staffB, $shopB);
+        $this->attachShop($staffC, $shopC);
+
+        $response = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/users/mornitoring')
+            ->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$manager->pancake_user_id, $staffA->pancake_user_id, $staffB->pancake_user_id],
+            collect($response->json('data'))->pluck('id')->all()
+        );
+
+        $shopAResponse = $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/users/mornitoring?shop_id={$shopA->id}")
+            ->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$manager->pancake_user_id, $staffA->pancake_user_id],
+            collect($shopAResponse->json('data'))->pluck('id')->all()
+        );
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/users/mornitoring?shop_id={$shopC->id}")
+            ->assertForbidden();
+        $this->actingAs($zeroShopManager, 'api')
+            ->getJson('/api/v1/users/mornitoring')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+    }
+
+    public function test_phase_3_imported_opportunity_list_enforces_feature_and_shop_scope(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $manager = $this->createUser('manager-cskh', 'Manager CSKH');
+        $zeroShopManager = $this->createUser('manager-cskh', 'Zero Shop Manager');
+        $managerSale = $this->createUser('manager-sale', 'Manager Sale');
+        $admin = $this->createUser('admin', 'Admin');
+        $this->attachShop($manager, $ownShop);
+        $this->attachShop($managerSale, $ownShop);
+        foreach ([$manager, $zeroShopManager, $admin] as $user) {
+            $this->grantPermission($user, 'view-chance');
+        }
+        $ownOpportunity = $this->createImportedOpportunity($ownShop);
+        $otherOpportunity = $this->createImportedOpportunity($otherShop);
+
+        $response = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/imported-opportunities?page=1')
+            ->assertOk();
+        $this->assertSame(
+            [$ownOpportunity->id],
+            collect($response->json('data.orders'))->pluck('id')->all()
+        );
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/imported-opportunities?shop_id={$otherShop->id}&page=1")
+            ->assertForbidden();
+        $this->actingAs($zeroShopManager, 'api')
+            ->getJson('/api/v1/imported-opportunities?page=1')
+            ->assertOk()
+            ->assertJsonCount(0, 'data.orders');
+        $this->actingAs($managerSale, 'api')
+            ->getJson('/api/v1/imported-opportunities?page=1')
+            ->assertForbidden();
+
+        $adminResponse = $this->actingAs($admin, 'api')
+            ->getJson("/api/v1/imported-opportunities?shop_id={$otherShop->id}&page=1")
+            ->assertOk();
+        $this->assertSame(
+            [$otherOpportunity->id],
+            collect($adminResponse->json('data.orders'))->pluck('id')->all()
+        );
+    }
+
+    public function test_phase_3_product_list_is_scoped_through_its_product_shop_relationship(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $zeroShopManager = $this->createUser('manager-cskh', 'Zero Shop Manager');
+        $admin = $this->createUser('admin', 'Admin');
+        $this->attachShop($manager, $ownShop);
+        foreach ([$manager, $zeroShopManager, $admin] as $user) {
+            $this->grantPermission($user, 'list-product');
+        }
+        $ownProduct = Product::create(['shop_id' => $ownShop->id, 'name' => 'Own Product']);
+        $otherProduct = Product::create(['shop_id' => $otherShop->id, 'name' => 'Other Product']);
+
+        $response = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/products?page=1')
+            ->assertOk();
+        $this->assertSame(
+            [$ownProduct->id],
+            collect($response->json('data.products'))->pluck('id')->all()
+        );
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/products?shop_id={$otherShop->id}&page=1")
+            ->assertForbidden();
+        $this->actingAs($zeroShopManager, 'api')
+            ->getJson('/api/v1/products?page=1')
+            ->assertOk()
+            ->assertJsonCount(0, 'data.products');
+
+        $adminResponse = $this->actingAs($admin, 'api')
+            ->getJson("/api/v1/products?shop_id={$otherShop->id}&page=1")
+            ->assertOk();
+        $this->assertSame(
+            [$otherProduct->id],
+            collect($adminResponse->json('data.products'))->pluck('id')->all()
+        );
+    }
+
+    public function test_phase_3_customer_care_list_role_and_shop_scope_are_separate(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $managerCskh = $this->createUser('manager-cskh', 'Manager CSKH');
+        $managerSale = $this->createUser('manager-sale', 'Manager Sale');
+        $admin = $this->createUser('admin', 'Admin');
+        $this->attachShop($managerCskh, $ownShop);
+        $this->attachShop($managerSale, $ownShop);
+        $ownCare = $this->createCustomerCare(
+            $this->createOrder($ownShop, 2),
+            $managerCskh,
+            '2030-01-01'
+        );
+        $otherCare = $this->createCustomerCare(
+            $this->createOrder($otherShop, 2),
+            $managerCskh,
+            '2030-01-01'
+        );
+
+        $this->actingAs($managerSale, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_pending&page=1')
+            ->assertForbidden();
+
+        $managerResponse = $this->actingAs($managerCskh, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_pending&page=1')
+            ->assertOk();
+        $this->assertSame(
+            [$ownCare->id],
+            collect($managerResponse->json('data.customers'))->pluck('id')->all()
+        );
+        $this->actingAs($managerCskh, 'api')
+            ->getJson("/api/v1/customer-cares?type=customer_care_pending&shop_id={$otherShop->id}&page=1")
+            ->assertForbidden();
+
+        $adminResponse = $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_pending&page=1')
+            ->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$ownCare->id, $otherCare->id],
+            collect($adminResponse->json('data.customers'))->pluck('id')->all()
+        );
+    }
+
+    public function test_phase_3_1_customer_care_list_allows_real_staff_role_without_view_chance(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $staff = $this->createUser('staff-cskh', 'Staff CSKH');
+        $managerCskh = $this->createUser('manager-cskh', 'Manager CSKH');
+        $managerSale = $this->createUser('manager-sale', 'Manager Sale');
+        $staffSale = $this->createUser('staff-sale', 'Staff Sale');
+        $zeroShopManager = $this->createUser('manager-cskh', 'Zero Shop Manager');
+        $this->attachShop($staff, $ownShop);
+        $this->attachShop($managerCskh, $ownShop);
+        $this->attachShop($managerSale, $ownShop);
+        $this->attachShop($staffSale, $ownShop);
+
+        $today = date('Y-m-d');
+        $order = $this->createOrder($ownShop);
+        $care = $this->createCustomerCare($order, $staff, $today);
+        $this->createAssignment(
+            $order,
+            $care,
+            $staff,
+            CustomerCareAssignment::STATUS_ACTIVE,
+            $today
+        );
+
+        $staffResponse = $this->actingAs($staff, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_today&page=1')
+            ->assertOk();
+        $this->assertSame(
+            [$care->id],
+            collect($staffResponse->json('data.customers'))->pluck('id')->all()
+        );
+
+        $managerResponse = $this->actingAs($managerCskh, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_today&page=1')
+            ->assertOk();
+        $this->assertSame(
+            [$care->id],
+            collect($managerResponse->json('data.customers'))->pluck('id')->all()
+        );
+        $this->actingAs($managerCskh, 'api')
+            ->getJson("/api/v1/customer-cares?type=customer_care_today&shop_id={$otherShop->id}&page=1")
+            ->assertForbidden();
+
+        $this->actingAs($managerSale, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_today&page=1')
+            ->assertForbidden();
+        $this->actingAs($staffSale, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_today&page=1')
+            ->assertForbidden();
+        $this->actingAs($zeroShopManager, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_today&page=1')
+            ->assertOk()
+            ->assertJsonCount(0, 'data.customers');
+    }
+
+    public function test_phase_3_related_user_list_scopes_visible_users_and_order_totals_before_pagination(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $sharedStaff = $this->createUser('staff-cskh', 'Shared Staff');
+        $outsideStaff = $this->createUser('staff-cskh', 'Outside Staff');
+        $this->attachShop($manager, $ownShop);
+        $this->attachShop($sharedStaff, $ownShop);
+        $this->attachShop($sharedStaff, $otherShop);
+        $this->attachShop($outsideStaff, $otherShop);
+        $this->grantPermission($manager, 'list-staff');
+
+        $ownOrder = $this->createOrder($ownShop);
+        $ownOrder->update(['user_creator_id' => $sharedStaff->pancake_user_id, 'cod' => 100]);
+        $otherOrder = $this->createOrder($otherShop);
+        $otherOrder->update(['user_creator_id' => $sharedStaff->pancake_user_id, 'cod' => 200]);
+
+        $response = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/users?page=1')
+            ->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$manager->id, $sharedStaff->id],
+            collect($response->json('data.items'))->pluck('id')->all()
+        );
+        $this->assertEquals(100.0, (float) $response->json('data.total_cod'));
+
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/users?shop_id={$otherShop->id}&page=1")
+            ->assertForbidden();
+    }
+
+    public function test_phase_3_related_staff_assignment_metrics_do_not_count_other_shop_work(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $sharedStaff = $this->createUser('staff-cskh', 'Shared Staff');
+        $sharedStaff->update(['pancake_user_id' => (string) $sharedStaff->id]);
+        $sharedStaff->refresh();
+        $this->attachShop($manager, $ownShop);
+        $this->attachShop($sharedStaff, $ownShop);
+        $this->attachShop($sharedStaff, $otherShop);
+
+        $today = now()->toDateString();
+        $this->createCustomerCare($this->createOrder($ownShop, 2), $sharedStaff, $today);
+        $this->createCustomerCare($this->createOrder($otherShop, 2), $sharedStaff, $today);
+
+        $response = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/customer-assigned-by-staff?page=1')
+            ->assertOk();
+        $staffMetrics = collect($response->json('data.customers'))->firstWhere('id', $sharedStaff->id);
+        $this->assertNotNull($staffMetrics);
+        $this->assertSame(1, $staffMetrics['today_total']);
+
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/customer-assigned-by-staff?shop_id={$otherShop->id}&page=1")
+            ->assertForbidden();
+    }
+
+    public function test_phase_3_current_safe_order_history_chance_and_shop_lists_do_not_regress(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($manager, $ownShop);
+        $this->grantPermission($manager, 'view-chance');
+        $ownOrder = $this->createOrder($ownShop);
+        $otherOrder = $this->createOrder($otherShop);
+
+        $ordersResponse = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1')
+            ->assertOk();
+        $this->assertSame(
+            [$ownOrder->id],
+            collect($ordersResponse->json('data.orders'))->pluck('id')->all()
+        );
+
+        $chanceResponse = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders/chance?page=1')
+            ->assertOk();
+        $this->assertSame(
+            [$ownOrder->id],
+            collect($chanceResponse->json('data.orders'))->pluck('id')->all()
+        );
+
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/orders/{$ownOrder->id}/history")
+            ->assertOk();
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/orders/{$otherOrder->id}/history")
+            ->assertForbidden();
+
+        $shopsResponse = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/shops')
+            ->assertOk();
+        $this->assertSame(
+            [$ownShop->id],
+            collect($shopsResponse->json('data'))->pluck('id')->all()
+        );
+    }
+
     private function createSchema(): void
     {
         Schema::create('permission_groups', function (Blueprint $table) {
@@ -1158,6 +1535,7 @@ class OpportunitySecurityHardeningTest extends TestCase
         });
         Schema::create('shops', function (Blueprint $table) {
             $table->id();
+            $table->string('pancake_shop_id')->nullable();
             $table->string('name');
             $table->integer('care_cycle_days')->default(5);
             $table->softDeletes();
@@ -1176,11 +1554,20 @@ class OpportunitySecurityHardeningTest extends TestCase
             $table->string('pancake_order_id');
             $table->string('pancake_customer_id')->nullable();
             $table->string('user_creator_id')->nullable();
+            $table->string('user_care_id')->nullable();
+            $table->string('user_assigning_seller_id')->nullable();
+            $table->string('order_number_vtp')->nullable();
+            $table->integer('total_quantity')->nullable();
             $table->decimal('cod', 15, 2)->default(0);
+            $table->decimal('cash', 15, 2)->default(0);
+            $table->text('note')->nullable();
             $table->string('customer_name')->nullable();
             $table->string('customer_phone')->nullable();
             $table->string('customer_address')->nullable();
             $table->integer('status')->default(3);
+            $table->string('status_vtp')->nullable();
+            $table->json('pancake_full_data')->nullable();
+            $table->boolean('received_at_shop')->default(false);
             $table->softDeletes();
             $table->timestamps();
         });
@@ -1222,6 +1609,12 @@ class OpportunitySecurityHardeningTest extends TestCase
             $table->string('reclaim_reason')->nullable();
             $table->timestamps();
         });
+        Schema::create('customer_assigneds', function (Blueprint $table) {
+            $table->id();
+            $table->string('customer_care_id');
+            $table->string('pancake_user_id');
+            $table->timestamps();
+        });
         Schema::create('imported_opportunities', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('shop_id');
@@ -1230,6 +1623,14 @@ class OpportunitySecurityHardeningTest extends TestCase
             $table->string('address')->nullable();
             $table->integer('status')->default(0);
             $table->unsignedBigInteger('imported_by')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('products', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->string('name');
+            $table->string('pancake_product_id')->nullable();
+            $table->json('pancake_full_data')->nullable();
             $table->timestamps();
         });
         Schema::create('activity_logs', function (Blueprint $table) {
@@ -1258,13 +1659,15 @@ class OpportunitySecurityHardeningTest extends TestCase
         $role = Role::create(['name' => $roleSlug, 'slug' => $roleSlug]);
         $nextId = (int) User::query()->max('id') + 1;
 
-        return User::create([
+        $user = User::create([
             'role_id' => $role->id,
             'name' => $name,
             'email' => strtolower($name)."-{$nextId}@example.test",
             'password' => 'unused',
             'pancake_user_id' => "PANCAKE-{$nextId}",
         ]);
+
+        return $user;
     }
 
     private function createShop(string $name = 'Shop', int $careCycleDays = 5): Shop

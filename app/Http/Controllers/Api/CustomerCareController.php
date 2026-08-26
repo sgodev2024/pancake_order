@@ -3,28 +3,46 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\CustomerCareListAccessMiddleware;
 use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
+use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\DB;
 
-class CustomerCareController extends Controller
+class CustomerCareController extends Controller implements HasMiddleware
 {
     public function __construct(
         private readonly CustomerCareAssignmentService $customerCareAssignmentService,
-        private readonly ActivityLogService $activityLogService
+        private readonly ActivityLogService $activityLogService,
+        private readonly ShopAccessService $shopAccessService
     ) {
+    }
+
+    public static function middleware(): array
+    {
+        return [
+            new Middleware(CustomerCareListAccessMiddleware::class, only: ['index']),
+        ];
     }
 
     public function index(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+
         try {
             $inputs = $request->only(
                 "type",
@@ -36,7 +54,7 @@ class CustomerCareController extends Controller
                 "is_confirm_care",
                 "search"
             );
-            $user = auth()->user();
+            $inputs['shop_id'] = $requestedShopId;
             $result = $this->buildQuery($inputs["type"], $user, $inputs)
                             ->with([
                                 "activeAssignment.assignee:id,name",
@@ -138,7 +156,7 @@ class CustomerCareController extends Controller
                 $query->where("date_care", "<", $today)
                         ->where(function ($q) {
                             $q->where("status", 0)
-                                ->orWhereRaw("time_care > CONCAT(date_care, ' 23:59:59')");
+                                ->orWhereDate('time_care', '>', DB::raw('date_care'));
                         })
                         ->oldest("date_care");
                 break;
@@ -406,7 +424,7 @@ class CustomerCareController extends Controller
 
                 SUM(CASE
                     WHEN date_care < ?
-                    AND (status = 0 OR time_care > CONCAT(date_care, ' 23:59:59'))
+                    AND (status = 0 OR DATE(time_care) > date_care)
                     AND is_accept = 1
                     THEN 1 ELSE 0
                 END) as customer_care_expire,
@@ -414,7 +432,7 @@ class CustomerCareController extends Controller
                 SUM(CASE
                     WHEN date_care < ?
                     AND status = 1
-                    AND time_care > CONCAT(date_care, ' 23:59:59')
+                    AND DATE(time_care) > date_care
                     AND is_accept = 1
                     THEN 1 ELSE 0
                 END) as customer_care_expire_done
@@ -1014,6 +1032,17 @@ class CustomerCareController extends Controller
 
     public function customerAssignedByCustomer(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $effectiveShopIds = $requestedShopId !== null
+            ? collect([$requestedShopId])
+            : (! $this->shopAccessService->isGlobal($user)
+                ? $this->shopAccessService->ids($user)
+                : null);
+
         try {
             $inputs = $request->only(
                 "status",
@@ -1021,16 +1050,12 @@ class CustomerCareController extends Controller
                 "shop_id",
                 "page"
             );
-            $user = auth()->user();
             $query = CustomerCare::query();
-            if (!$user->isAdmin()) {
-                $query->whereIn("shop_id", $user->shops()->pluck("shops.id"));
+            if ($effectiveShopIds !== null) {
+                $query->whereIn("shop_id", $effectiveShopIds);
             }
             if (isset($inputs["status"])) {
                 $query->where("status", $inputs["status"]);
-            }
-            if (isset($inputs["shop_id"])) {
-                $query->where("shop_id", $inputs["shop_id"]);
             }
             $query->with(["users" => function ($q) {
                 $q->select("users.pancake_user_id", "users.id", "users.name");
@@ -1073,28 +1098,30 @@ class CustomerCareController extends Controller
 
     public function customerAssignedByStaff(Request $request)
     {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $effectiveShopIds = $requestedShopId !== null
+            ? collect([$requestedShopId])
+            : (! $this->shopAccessService->isGlobal($user)
+                ? $this->shopAccessService->ids($user)
+                : null);
+
         try {
             $inputs = $request->only(
                 "page",
                 "user_id",
                 "shop_id"
             );
-            $user = auth()->user();
-            $shop_ids = $user->shops()->pluck("shops.id");
             $today = now()->toDateString();
-            $shopFilter = $inputs["shop_id"] ?? null;
 
             $query = User::query()->where("id", "!=", $user->id)->whereColumn('id', 'pancake_user_id');
 
-            if (!$user->isAdmin()) {
-                $query->whereHas('shops', function ($q) use ($shop_ids) {
-                    $q->whereIn('shops.id', $shop_ids);
-                });
-            }
-
-            if (isset($inputs["shop_id"])) {
-                $query->whereHas('shops', function ($q) use ($inputs) {
-                    $q->where('shops.id', $inputs["shop_id"]);
+            if ($effectiveShopIds !== null) {
+                $query->whereHas('shops', function ($q) use ($effectiveShopIds) {
+                    $q->whereIn('shops.id', $effectiveShopIds);
                 });
             }
 
@@ -1102,11 +1129,11 @@ class CustomerCareController extends Controller
                 $query->where("id", $inputs["user_id"]);
             }
 
-            $applyShop = fn ($q) => $shopFilter
-                ? $q->actionable()
-                    ->where('customer_cares.shop_id', $shopFilter)
-                    ->where("is_accept", 1)
-                : $q->actionable()->where("is_accept", 1);
+            $applyShop = fn ($q) => $q->actionable()
+                ->when($effectiveShopIds !== null, function ($shopQuery) use ($effectiveShopIds) {
+                    $shopQuery->whereIn('customer_cares.shop_id', $effectiveShopIds);
+                })
+                ->where("is_accept", 1);
 
             $query->withCount([
                 'customerCareAssign as today_total' => fn ($q) =>
@@ -1126,7 +1153,7 @@ class CustomerCareController extends Controller
                         $q->where('date_care', '<', $today)
                         ->where(function ($q) {
                             $q->where('status', 0)
-                                ->orWhereRaw("time_care > CONCAT(date_care, ' 23:59:59')");
+                                ->orWhereDate('time_care', '>', DB::raw('date_care'));
                         })
                     ),
 
@@ -1134,7 +1161,7 @@ class CustomerCareController extends Controller
                     $applyShop(
                         $q->where('date_care', '<', $today)
                         ->where('status', 1)
-                        ->whereRaw("time_care > CONCAT(date_care, ' 23:59:59')")
+                        ->whereDate('time_care', '>', DB::raw('date_care'))
                     ),
             ]);
 

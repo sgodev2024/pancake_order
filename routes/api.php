@@ -114,7 +114,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post('imported-opportunities/import',  [ImportedOpportunityController::class, "import"]);
     Route::post('imported-opportunities/assign', [ImportedOpportunityController::class, "assign"])
         ->middleware(PermissionCheckMiddleware::class . ':asign-cskh');
-    Route::get('imported-opportunities',          [ImportedOpportunityController::class, "index"]);
+    Route::get('imported-opportunities',          [ImportedOpportunityController::class, "index"])
+        ->middleware(PermissionCheckMiddleware::class . ':view-chance,strict');
 
     Route::apiResource("customers",                      CustomerController::class);
     Route::get("customers/{pancake_customer_id}/orders", [CustomerController::class, "getOrder"]);
