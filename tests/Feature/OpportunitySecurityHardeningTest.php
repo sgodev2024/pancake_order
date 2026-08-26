@@ -1027,7 +1027,7 @@ class OpportunitySecurityHardeningTest extends TestCase
         $this->actingAs($actor, 'api')->postJson(
             "/api/v1/customer-cares/{$order->id}/assign",
             ['pancake_user_ids' => [$assignee->pancake_user_id], 'is_multiple' => false]
-        )->assertOk()->assertExactJson([
+        )->assertForbidden()->assertExactJson([
             'success' => false,
             'message' => 'Bạn không có quyền.',
         ]);
@@ -1050,7 +1050,7 @@ class OpportunitySecurityHardeningTest extends TestCase
         $this->actingAs($actor, 'api')->postJson(
             "/api/v1/customer-cares/{$order->id}/assign",
             ['pancake_user_ids' => [$assignee->pancake_user_id], 'is_multiple' => false]
-        )->assertOk()
+        )->assertForbidden()
             ->assertJsonPath('success', false)
             ->assertJsonPath('message', 'Bạn không có quyền phân công cơ hội thuộc cửa hàng này.');
 
@@ -1095,7 +1095,7 @@ class OpportunitySecurityHardeningTest extends TestCase
         $this->actingAs($actor, 'api')->postJson('/api/v1/imported-opportunities/assign', [
             'ids' => [$outside->id],
             'pancake_user_ids' => [$assignee->pancake_user_id],
-        ])->assertOk()
+        ])->assertForbidden()
             ->assertJsonPath('success', false)
             ->assertJsonPath('message', 'Bạn không có quyền phân công cơ hội thuộc cửa hàng này.');
 
@@ -1111,11 +1111,37 @@ class OpportunitySecurityHardeningTest extends TestCase
         $assignment = CustomerCareAssignment::query()->sole();
         $this->assertSame(CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY, $assignment->source_type);
         $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $assignment->status);
+        $this->assertSame($actor->pancake_user_id, $assignment->customerCare->user_creator_id);
+        $this->assertSame($assignee->id, $assignment->assignee_user_id);
         $this->assertSame('2026-08-29', $assignment->customerCare->date_care);
         $this->assertSame('2026-09-01', $assignment->reclaim_eligible_on->toDateString());
         $this->assertSame(0, (int) $outside->fresh()->status);
         $this->assertSame(1, (int) $inside->fresh()->status);
-        $this->assertSame('customer_care.assigned', ActivityLog::query()->sole()->action);
+        $log = ActivityLog::query()->sole();
+        $this->assertSame('customer_care.assigned', $log->action);
+        $this->assertSame($actor->id, $log->actor_user_id);
+        $this->assertSame($assignee->id, $log->target_user_id);
+    }
+
+    public function test_import_authorizes_feature_and_shop_before_processing_the_file(): void
+    {
+        $ownShop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $zeroShopManager = $this->createUser('manager-cskh', 'Zero Shop Manager');
+        $saleManager = $this->createUser('manager-sale', 'Sale Manager');
+        $admin = $this->createUser('admin', 'Admin');
+        $this->attachShop($manager, $ownShop);
+        $this->attachShop($saleManager, $ownShop);
+        $this->grantPermission($manager, 'view-chance');
+
+        $this->actingAs($manager, 'api')->postJson('/api/v1/imported-opportunities/import', ['shop_id' => $otherShop->id])->assertForbidden();
+        $this->actingAs($zeroShopManager, 'api')->postJson('/api/v1/imported-opportunities/import', ['shop_id' => $ownShop->id])->assertForbidden();
+        $this->actingAs($saleManager, 'api')->postJson('/api/v1/imported-opportunities/import', ['shop_id' => $ownShop->id])->assertForbidden();
+
+        $this->actingAs($manager, 'api')->postJson('/api/v1/imported-opportunities/import', ['shop_id' => $ownShop->id])->assertStatus(422);
+        $this->actingAs($admin, 'api')->postJson('/api/v1/imported-opportunities/import', ['shop_id' => $otherShop->id])->assertStatus(422);
+        $this->assertDatabaseCount('imported_opportunities', 0);
     }
 
     public function test_phase_3_all_user_scope_rejects_tampering_and_preserves_assignment_eligibility(): void

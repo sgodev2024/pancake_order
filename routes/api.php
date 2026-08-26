@@ -113,7 +113,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('imported-opportunities/template', [ImportedOpportunityController::class, "downloadTemplate"]);
     Route::post('imported-opportunities/import',  [ImportedOpportunityController::class, "import"]);
     Route::post('imported-opportunities/assign', [ImportedOpportunityController::class, "assign"])
-        ->middleware(PermissionCheckMiddleware::class . ':asign-cskh');
+        ->middleware(PermissionCheckMiddleware::class . ':asign-cskh,strict');
     Route::get('imported-opportunities',          [ImportedOpportunityController::class, "index"])
         ->middleware(PermissionCheckMiddleware::class . ':view-chance,strict');
 
@@ -130,7 +130,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     
     Route::post('customer-cares/{id}/confirm',  [CustomerCareController::class, "confirmCare"]);
     Route::post('customer-cares/{id}/assign', [CustomerCareController::class, "assign"])
-        ->middleware(PermissionCheckMiddleware::class . ':asign-cskh');
+        ->middleware(PermissionCheckMiddleware::class . ':asign-cskh,strict');
     Route::post('customer-cares/{id}/accept',   [CustomerCareController::class, "accept"]);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
     Route::get('customer-cares/{id}/orders',    [CustomerCareController::class, "getOrder"]);

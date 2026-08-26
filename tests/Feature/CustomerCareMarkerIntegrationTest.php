@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
+use App\Services\CustomerCareWriteAccessService;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
@@ -46,7 +47,8 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         $this->controller = new CustomerCareController(
             new CustomerCareAssignmentService,
             new ActivityLogService,
-            new ShopAccessService
+            new ShopAccessService,
+            new CustomerCareWriteAccessService(new ShopAccessService)
         );
     }
 
@@ -111,20 +113,96 @@ class CustomerCareMarkerIntegrationTest extends TestCase
 
     public function test_confirm_does_not_set_cared_at(): void
     {
-        $customerCare = $this->createCustomerCare();
+        $creator = $this->createUser(32, 'staff-cskh', 'Original Creator', [7]);
+        $customerCare = $this->createCustomerCare([
+            'user_creator_id' => $creator->pancake_user_id,
+        ]);
         $assignment = $this->createAssignment($customerCare);
 
         $response = $this->controller->confirmCare($customerCare->id);
 
         $this->assertTrue($response->getData(true)['success']);
         $this->assertTrue((bool) $customerCare->fresh()->is_confirm_care);
+        $this->assertSame($creator->pancake_user_id, $customerCare->fresh()->user_creator_id);
         $this->assertNull($assignment->fresh()->cared_at);
+    }
+
+    public function test_same_shop_staff_cannot_update_another_assignees_customer_care(): void
+    {
+        $otherStaff = $this->createUser(32, 'staff-cskh', 'Other Staff', [7]);
+        $customerCare = $this->createCustomerCare(['note' => 'original']);
+        $this->createAssignment($customerCare, assigneeUserId: $otherStaff->id);
+
+        $response = $this->updateCare($customerCare, 0, null);
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertSame('original', $customerCare->fresh()->note);
+        $this->assertSame(0, (int) $customerCare->fresh()->status);
+    }
+
+    public function test_cross_shop_manager_cskh_cannot_confirm_or_update_customer_care(): void
+    {
+        $manager = $this->createUser(32, 'manager-cskh', 'Other Shop Manager', [8]);
+        $customerCare = $this->createCustomerCare(['note' => 'original']);
+        $this->createAssignment($customerCare);
+        $this->authenticateAs($manager);
+
+        $confirm = $this->controller->confirmCare($customerCare->id);
+        $update = $this->updateCare($customerCare, 0, null);
+
+        $this->assertSame(403, $confirm->getStatusCode());
+        $this->assertSame(403, $update->getStatusCode());
+        $this->assertFalse((bool) $customerCare->fresh()->is_confirm_care);
+        $this->assertSame('original', $customerCare->fresh()->note);
+    }
+
+    public function test_manager_sale_cannot_mutate_customer_care_even_in_same_shop(): void
+    {
+        $saleManager = $this->createUser(32, 'manager-sale', 'Sale Manager', [7]);
+        $customerCare = $this->createCustomerCare();
+        $this->createAssignment($customerCare);
+        $this->authenticateAs($saleManager);
+        $request = Request::create("/api/v1/customer-cares/{$customerCare->id}/accept", 'POST', ['is_accept' => 1]);
+
+        $accept = $this->controller->accept($customerCare->id, $request);
+        $confirm = $this->controller->confirmCare($customerCare->id);
+        $update = $this->updateCare($customerCare, 0, null);
+
+        $this->assertSame(403, $accept->getStatusCode());
+        $this->assertSame(403, $confirm->getStatusCode());
+        $this->assertSame(403, $update->getStatusCode());
+        $this->assertSame(0, (int) $customerCare->fresh()->status);
+        $this->assertFalse((bool) $customerCare->fresh()->is_confirm_care);
+    }
+
+    public function test_delete_requires_manager_cskh_or_admin_and_checks_the_shop(): void
+    {
+        $saleManager = $this->createUser(32, 'manager-sale', 'Sale Manager', [7]);
+        $customerCare = $this->createCustomerCare();
+        $this->authenticateAs($saleManager);
+        $request = Request::create("/api/v1/customer-cares/{$customerCare->id}", 'DELETE');
+
+        try {
+            $this->controller->destroy($request, $customerCare);
+            $this->fail('A sale manager must not delete CustomerCare.');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            $this->assertDatabaseHas('customer_cares', ['id' => $customerCare->id]);
+        }
+
+        $manager = $this->createUser(33, 'manager-cskh', 'Care Manager', [7]);
+        $this->authenticateAs($manager);
+        $response = $this->controller->destroy($request, $customerCare->fresh());
+
+        $this->assertTrue($response->getData(true)['success']);
+        $this->assertDatabaseMissing('customer_cares', ['id' => $customerCare->id]);
     }
 
     public function test_accept_does_not_set_cared_at(): void
     {
         $customerCare = $this->createCustomerCare();
         $assignment = $this->createAssignment($customerCare);
+        $manager = $this->createUser(32, 'manager-cskh', 'Care Manager', [7]);
+        $this->authenticateAs($manager);
         $request = Request::create(
             "/api/v1/customer-cares/{$customerCare->id}/accept",
             'POST',
@@ -793,6 +871,17 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         Schema::create('customer_assigneds', function (Blueprint $table) {
             $table->unsignedBigInteger('customer_care_id');
             $table->string('pancake_user_id');
+        });
+
+        Schema::create('imported_opportunities', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->string('name');
+            $table->string('phone');
+            $table->string('address')->nullable();
+            $table->integer('status')->default(0);
+            $table->unsignedBigInteger('imported_by')->nullable();
+            $table->timestamps();
         });
     }
 }

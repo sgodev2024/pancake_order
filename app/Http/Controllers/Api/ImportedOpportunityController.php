@@ -11,8 +11,10 @@ use App\Models\ImportedOpportunity;
 use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
+use App\Services\CustomerCareWriteAccessService;
 use App\Services\ShopAccessService;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Facades\Excel;
@@ -22,7 +24,8 @@ class ImportedOpportunityController extends Controller
     public function __construct(
         private readonly CustomerCareAssignmentService $customerCareAssignmentService,
         private readonly ActivityLogService $activityLogService,
-        private readonly ShopAccessService $shopAccessService
+        private readonly ShopAccessService $shopAccessService,
+        private readonly CustomerCareWriteAccessService $customerCareWriteAccessService
     ) {
     }
 
@@ -80,10 +83,22 @@ class ImportedOpportunityController extends Controller
         try {
             $request->validate([
                 "shop_id" => "required|exists:shops,id",
+            ]);
+            $actor = $request->user();
+            if ($actor === null) {
+                throw new AuthorizationException('Unauthenticated.');
+            }
+            // There is no dedicated import permission in the current permission
+            // catalog. view-chance is the narrowest existing opportunity feature.
+            if (! $actor->isAdmin() && ! can_access('view-chance')) {
+                throw new AuthorizationException('You do not have opportunity import access.');
+            }
+            $this->shopAccessService->authorizeRequestedShopId($actor, (int) $request->input('shop_id'));
+            $request->validate([
                 "file" => "required|file|mimes:xlsx,xls,csv",
             ]);
 
-            $import = new OpportunityImport((int) $request->shop_id, auth()->id());
+            $import = new OpportunityImport((int) $request->shop_id, $actor->getKey());
             Excel::import($import, $request->file('file'));
 
             return response()->json([
@@ -91,6 +106,8 @@ class ImportedOpportunityController extends Controller
                 "message" => "Đã import thành công {$import->importedCount} khách hàng",
                 "data" => ["imported_count" => $import->importedCount],
             ]);
+        } catch (AuthorizationException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         } catch (\Throwable $th) {
@@ -126,6 +143,10 @@ class ImportedOpportunityController extends Controller
             }
 
             $actor = auth()->user();
+            if ($actor === null) {
+                throw new AuthorizationException('Unauthenticated.');
+            }
+            $this->customerCareWriteAccessService->authorizeFeature($actor);
             $assignedAt = now();
 
             $total_opportunities = DB::transaction(function () use ($ids, $user, $actor, $assignedAt) {
@@ -142,24 +163,18 @@ class ImportedOpportunityController extends Controller
 
                 $sourceShopIds = $lockedOpportunities->pluck('shop_id')->unique()->values();
 
-                if (! $actor->isAdmin()) {
-                    $actorShopIds = $actor->shops()
-                        ->whereIn('shops.id', $sourceShopIds)
-                        ->pluck('shops.id');
-
-                    if ($actorShopIds->count() !== $sourceShopIds->count()) {
-                        throw new DomainException('Bạn không có quyền phân công cơ hội thuộc cửa hàng này.');
+                foreach ($sourceShopIds as $sourceShopId) {
+                    if (! $this->shopAccessService->canAccessShop($actor, (int) $sourceShopId)) {
+                        throw new AuthorizationException('Bạn không có quyền phân công cơ hội thuộc cửa hàng này.');
                     }
                 }
 
-                $assigneeShopIds = $user->shops()
-                    ->whereIn('shops.id', $sourceShopIds)
-                    ->pluck('shops.id');
-
-                if ($assigneeShopIds->count() !== $sourceShopIds->count()) {
+                foreach ($sourceShopIds as $sourceShopId) {
+                    if (! $this->shopAccessService->canAccessShop($user, (int) $sourceShopId)) {
                     throw new DomainException(
                         "Các khách hàng bạn phân công không thuộc cửa hàng mà {$user->name} nằm trong"
                     );
+                    }
                 }
 
                 foreach ($lockedOpportunities as $opportunity) {
@@ -180,7 +195,7 @@ class ImportedOpportunityController extends Controller
                         "customer_addresss" => $opportunity->address,
                         "pancake_order_id" => null,
                         "date_care" => $scheduledOn->toDateString(),
-                        "user_creator_id" => $user->pancake_user_id,
+                        "user_creator_id" => $actor->pancake_user_id,
                     ]);
 
                     $assignment = $this->customerCareAssignmentService->create(
@@ -233,6 +248,8 @@ class ImportedOpportunityController extends Controller
                     ? "Phân công thành công"
                     : "Phân công thành công " . $total_opportunities . " khách hàng. Còn lại " . ($total_ids - $total_opportunities) . " khách hàng không thuộc cửa hàng mà " . $user->name . " nằm trong",
             ]);
+        } catch (AuthorizationException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
         } catch (\Throwable $th) {
             return response()->json(["success" => false, "message" => $th->getMessage()]);
         }

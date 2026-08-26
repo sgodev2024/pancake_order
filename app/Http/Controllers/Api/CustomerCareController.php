@@ -10,6 +10,7 @@ use App\Models\Order;
 use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
+use App\Services\CustomerCareWriteAccessService;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use DomainException;
@@ -25,7 +26,8 @@ class CustomerCareController extends Controller implements HasMiddleware
     public function __construct(
         private readonly CustomerCareAssignmentService $customerCareAssignmentService,
         private readonly ActivityLogService $activityLogService,
-        private readonly ShopAccessService $shopAccessService
+        private readonly ShopAccessService $shopAccessService,
+        private readonly CustomerCareWriteAccessService $customerCareWriteAccessService
     ) {
     }
 
@@ -234,9 +236,13 @@ class CustomerCareController extends Controller implements HasMiddleware
                     "message" => "Không tồn tại"
                 ]);
             }
+            $actor = $request->user() ?? auth()->user();
+            if ($actor === null) {
+                throw new AuthorizationException('Unauthenticated.');
+            }
             $note = $request->note ?? NULL;
             $time_care = $request->date ?? NULL;
-            $is_admin   = auth()->user()->isAdmin() || auth()->user()->isManagerCskh();
+            $is_admin   = $actor->isAdmin() || $actor->isManagerCskh();
             $is_care_completion = (int) $request->input('status') === 1;
             $customer_care = DB::transaction(function () use (
                 $customer_care,
@@ -244,15 +250,23 @@ class CustomerCareController extends Controller implements HasMiddleware
                 $note,
                 $time_care,
                 $is_admin,
-                $is_care_completion
+                $is_care_completion,
+                $actor
             ) {
                 $lockedCustomerCare = CustomerCare::query()
                     ->whereKey($customer_care->getKey())
                     ->lockForUpdate()
                     ->firstOrFail();
 
+                $this->customerCareWriteAccessService->authorize(
+                    $actor,
+                    $lockedCustomerCare,
+                    $is_care_completion ? 'completion' : 'update'
+                );
+                $this->customerCareWriteAccessService->ensureSourceConsistency($lockedCustomerCare);
+
                 $activeAssignment = $is_care_completion
-                    ? $this->guardCurrentCareMutation($lockedCustomerCare)
+                    ? $this->guardCurrentCareMutation($lockedCustomerCare, $actor)
                     : null;
 
                 if ($is_care_completion && $activeAssignment?->cared_at !== null) {
@@ -321,22 +335,40 @@ class CustomerCareController extends Controller implements HasMiddleware
     public function accept($id, Request $request)
     {
         try {
-            $customer_care = CustomerCare::find($id);
-            $customer_care->update([
-                "is_accept"      => $request->is_accept,
-                "reason"         => $request->reason ?? NULL,
-                "user_accept_id" => auth()->id()
+            $actor = $request->user() ?? auth()->user();
+            if ($actor === null) {
+                throw new AuthorizationException('Unauthenticated.');
+            }
+            $request->validate([
+                'is_accept' => ['required', 'boolean'],
+                'reason' => ['nullable', 'string'],
             ]);
+            DB::transaction(function () use ($id, $request, $actor) {
+                $customerCare = CustomerCare::query()->whereKey($id)->lockForUpdate()->firstOrFail();
+                $this->customerCareWriteAccessService->authorize($actor, $customerCare, 'accept');
+                $this->customerCareWriteAccessService->ensureSourceConsistency($customerCare);
+                $customerCare->update([
+                    "is_accept" => $request->boolean('is_accept'),
+                    "reason" => $request->input('reason'),
+                    "user_accept_id" => $actor->getKey(),
+                ]);
+            });
 
             return response()->json([
                 "success" => true,
                 "message" => "Duyệt thành công"
             ]);
+        } catch (AuthorizationException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 409);
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => true,
+                "success" => false,
                 "message" => $th->getMessage()
-            ]);
+            ], 500);
         }
     }
 
@@ -553,9 +585,18 @@ class CustomerCareController extends Controller implements HasMiddleware
             && trim((string) $customerCare->pancake_customer_id) !== '';
     }
 
-    public function destroy(CustomerCare $customer_care)
+    public function destroy(Request $request, CustomerCare $customer_care)
     {
-        $customer_care->delete();
+        $actor = $request->user() ?? auth()->user();
+        if ($actor === null) {
+            throw new AuthorizationException('Unauthenticated.');
+        }
+        DB::transaction(function () use ($actor, $customer_care) {
+            $lockedCustomerCare = CustomerCare::query()->whereKey($customer_care->getKey())->lockForUpdate()->firstOrFail();
+            $this->customerCareWriteAccessService->authorize($actor, $lockedCustomerCare, 'delete');
+            $this->customerCareWriteAccessService->ensureSourceConsistency($lockedCustomerCare);
+            $lockedCustomerCare->delete();
+        });
 
         // Trả về response
         return response()->json([
@@ -721,6 +762,10 @@ class CustomerCareController extends Controller implements HasMiddleware
             }
 
             $actor = auth()->user();
+            if ($actor === null) {
+                throw new AuthorizationException('Unauthenticated.');
+            }
+            $this->customerCareWriteAccessService->authorizeFeature($actor);
             $assignedAt = now();
 
             $total_orders = DB::transaction(function () use ($order_ids, $actor, $user, $assignedAt) {
@@ -778,24 +823,18 @@ class CustomerCareController extends Controller implements HasMiddleware
 
                 $sourceShopIds = $lockedOrders->pluck('shop_id')->unique()->values();
 
-                if (! $actor->isAdmin()) {
-                    $actorShopIds = $actor->shops()
-                        ->whereIn('shops.id', $sourceShopIds)
-                        ->pluck('shops.id');
-
-                    if ($actorShopIds->count() !== $sourceShopIds->count()) {
-                        throw new DomainException('Bạn không có quyền phân công cơ hội thuộc cửa hàng này.');
+                foreach ($sourceShopIds as $sourceShopId) {
+                    if (! $this->shopAccessService->canAccessShop($actor, (int) $sourceShopId)) {
+                        throw new AuthorizationException('Bạn không có quyền phân công cơ hội thuộc cửa hàng này.');
                     }
                 }
 
-                $assigneeShopIds = $user->shops()
-                    ->whereIn('shops.id', $sourceShopIds)
-                    ->pluck('shops.id');
-
-                if ($assigneeShopIds->count() !== $sourceShopIds->count()) {
+                foreach ($sourceShopIds as $sourceShopId) {
+                    if (! $this->shopAccessService->canAccessShop($user, (int) $sourceShopId)) {
                     throw new DomainException(
                         "Các khách hàng bạn phân công không thuộc cửa hàng mà {$user->name} nằm trong"
                     );
+                    }
                 }
 
                 foreach ($lockedOrders as $order_item) {
@@ -865,6 +904,8 @@ class CustomerCareController extends Controller implements HasMiddleware
                             "Phân công thành công" : 
                             "Phân công thành công " . $total_orders . " khách hàng. Còn lại " . ($total_order_id - $total_orders) . " khách hàng không thuộc cửa hạng mà " . $user->name . " nằm trong"
             ]);
+        } catch (AuthorizationException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
         } catch (\Throwable $th) {
             return response()->json([
                 "success" => false,
@@ -873,7 +914,7 @@ class CustomerCareController extends Controller implements HasMiddleware
         }
     }
 
-    private function guardCurrentCareMutation(CustomerCare $customerCare): CustomerCareAssignment
+    private function guardCurrentCareMutation(CustomerCare $customerCare, User $actor): CustomerCareAssignment
     {
         $activeAssignments = CustomerCareAssignment::query()
             ->where('customer_care_id', $customerCare->getKey())
@@ -893,28 +934,6 @@ class CustomerCareController extends Controller implements HasMiddleware
             throw new DomainException(
                 'Phân công CSKH không thuộc cùng cửa hàng với CustomerCare.'
             );
-        }
-
-        $actor = auth()->user();
-
-        if ($actor === null) {
-            throw new AuthorizationException('Bạn chưa đăng nhập.');
-        }
-
-        $hasShopAccess = $actor->isAdmin()
-            || $actor->shops()->whereKey($assignment->shop_id)->exists();
-
-        if (! $hasShopAccess) {
-            throw new AuthorizationException('Bạn không có quyền truy cập cửa hàng của CustomerCare này.');
-        }
-
-        if ($actor->isAdmin() || $actor->isManagerCskh()) {
-            return $assignment;
-        }
-
-        if (! $actor->isStaffCskh()
-            || (int) $assignment->assignee_user_id !== (int) $actor->getKey()) {
-            throw new AuthorizationException('Chỉ nhân sự CSKH được phân công mới có thể hoàn tất CustomerCare này.');
         }
 
         return $assignment;
@@ -1155,38 +1174,31 @@ class CustomerCareController extends Controller implements HasMiddleware
     /** 
      * Xác nhận cskh khi được phân công
      */
-    public function confirmCare($customer_care_id)
+    public function confirmCare($customer_care_id, ?Request $request = null)
     {
         try {
-            $user = auth()->user();
-            if ($user->isAdmin()) {
-                return response()->json([
-                    "success" => false,
-                    "message" => "Nhận CSKH chỉ dành cho nhân viên của cửa hàng"
-                ]);
+            $actor = $request?->user() ?? auth()->user();
+            if ($actor === null) {
+                throw new AuthorizationException('Unauthenticated.');
             }
-            DB::beginTransaction();
-            $customer_care = CustomerCare::find($customer_care_id);
-            if (!$customer_care) {
-                return response()->json([
-                    "success" => false,
-                    "message" => "Lịch chăm sóc này không tồn tại"
-                ]);
-            }
-            $customer_care->update([
-                "is_confirm_care" => true,
-                "user_creator_id" => auth()->user()->pancake_user_id
-            ]);
-            // $customer_care->users()->detach();
-            DB::commit();
+            DB::transaction(function () use ($customer_care_id, $actor) {
+                $customerCare = CustomerCare::query()->whereKey($customer_care_id)->lockForUpdate()->firstOrFail();
+                $this->customerCareWriteAccessService->authorize($actor, $customerCare, 'confirm');
+                $this->customerCareWriteAccessService->ensureSourceConsistency($customerCare);
+                $customerCare->update(['is_confirm_care' => true]);
+            });
             
             return response()->json([
                 "success" => true,
                 "message" => "Nhận thành công"
             ]);
+        } catch (AuthorizationException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
+        } catch (DomainException $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 409);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return response()->json(['success' => false, 'message' => 'Lịch chăm sóc này không tồn tại'], 404);
         } catch (\Throwable $th) {
-            DB::rollback();
-            
             return response()->json([
                 "success" => false,
                 "message" => $th->getMessage()
