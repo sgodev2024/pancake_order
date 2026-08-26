@@ -41,6 +41,8 @@ class CustomerCareController extends Controller
                             ->with([
                                 "activeAssignment.assignee:id,name",
                                 "activeAssignment.sourceOrder:id,status",
+                                "currentAssignments.assignee:id,name",
+                                "currentAssignments.sourceOrder:id,status",
                                 "shop" => function ($q) {
                                     $q->select("shops.id", "shops.name")
                                       ->with([
@@ -58,6 +60,7 @@ class CustomerCareController extends Controller
                             ])
                            ->paginate(30, ['*'], 'page', $inputs["page"]);
 
+            $this->attachCurrentAssignments($result->getCollection());
             $this->attachAssignableOrderIds($result->getCollection());
 
             return response()->json([
@@ -626,10 +629,10 @@ class CustomerCareController extends Controller
                         "pancake_customer_id" => $order_item->pancake_customer_id,
                         "customer_phones" => $order_item->customer_phone,
                         "customer_name" => $order_item->customer_name,
-                        "customer_addresss" => $order_item->customer_addresss,
+                        "customer_addresss" => $order_item->customer_address,
                         "pancake_order_id" => $order_item->pancake_order_id,
                         "date_care" => $scheduledOn->toDateString(),
-                        "user_creator_id" => $user->pancake_user_id,
+                        "user_creator_id" => $actor->pancake_user_id,
                     ]);
 
                     $assignment = $this->customerCareAssignmentService->create(
@@ -788,6 +791,35 @@ class CustomerCareController extends Controller
                     ? (int) $uniqueOrder->id
                     : null
             );
+        }
+    }
+
+    private function attachCurrentAssignments($customerCares): void
+    {
+        if ($customerCares->isEmpty()) {
+            return;
+        }
+
+        $activeAssignmentCounts = CustomerCareAssignment::query()
+            ->whereIn('customer_care_id', $customerCares->pluck('id'))
+            ->where('status', CustomerCareAssignment::STATUS_ACTIVE)
+            ->selectRaw('customer_care_id, COUNT(*) as assignment_count')
+            ->groupBy('customer_care_id')
+            ->pluck('assignment_count', 'customer_care_id');
+
+        foreach ($customerCares as $customerCare) {
+            $currentAssignments = $customerCare->getRelation('currentAssignments');
+            $activeAssignmentCount = (int) $activeAssignmentCounts->get($customerCare->id, 0);
+            $isAmbiguous = $activeAssignmentCount > 1;
+
+            $customerCare->unsetRelation('currentAssignments');
+            $customerCare->setRelation(
+                'currentAssignment',
+                $activeAssignmentCount === 1 && $currentAssignments->count() === 1
+                    ? $currentAssignments->first()
+                    : null
+            );
+            $customerCare->setAttribute('current_assignment_ambiguous', $isAmbiguous);
         }
     }
 

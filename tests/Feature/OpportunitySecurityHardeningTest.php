@@ -163,12 +163,17 @@ class OpportunitySecurityHardeningTest extends TestCase
         ]);
 
         $assignment = CustomerCareAssignment::query()->sole();
+        $customerCare = $assignment->customerCare;
+        $this->assertNotSame($actor->id, $assignee->id);
         $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $assignment->status);
         $this->assertSame($order->id, $assignment->source_id);
         $this->assertSame($shop->id, $assignment->shop_id);
         $this->assertSame($assignee->id, $assignment->assignee_user_id);
+        $this->assertSame($actor->pancake_user_id, $customerCare->user_creator_id);
+        $this->assertSame($actor->id, $customerCare->user_creator->id);
+        $this->assertSame($order->customer_address, $customerCare->customer_addresss);
         $this->assertSame('2026-08-24 23:50:00', $assignment->assigned_at->format('Y-m-d H:i:s'));
-        $this->assertSame('2026-08-27', $assignment->customerCare->date_care);
+        $this->assertSame('2026-08-27', $customerCare->date_care);
         $this->assertSame('2026-08-30', $assignment->reclaim_eligible_on->toDateString());
 
         $log = ActivityLog::query()->sole();
@@ -186,6 +191,25 @@ class OpportunitySecurityHardeningTest extends TestCase
             $log->metadata['assignee_pancake_user_id']
         );
         $this->assertNotEmpty($log->metadata['assigned_at']);
+    }
+
+    public function test_order_assignment_preserves_null_address(): void
+    {
+        $shop = $this->createShop();
+        $actor = $this->createUser('manager-cskh', 'Actor');
+        $assignee = $this->createUser('staff-cskh', 'Assignee');
+        $this->attachShop($actor, $shop);
+        $this->attachShop($assignee, $shop);
+        $this->grantPermission($actor, 'asign-cskh');
+        $order = $this->createOrder($shop);
+        $order->update(['customer_address' => null]);
+
+        $this->actingAs($actor, 'api')->postJson(
+            "/api/v1/customer-cares/{$order->id}/assign",
+            ['pancake_user_ids' => [$assignee->pancake_user_id], 'is_multiple' => false]
+        )->assertOk()->assertJsonPath('success', true);
+
+        $this->assertNull(CustomerCare::query()->sole()->customer_addresss);
     }
 
     public function test_order_assignment_uses_five_day_shop_schedule_before_reclaim_grace(): void
@@ -457,6 +481,13 @@ class OpportunitySecurityHardeningTest extends TestCase
             );
             $response->assertJsonPath('data.customers.0.active_assignment.assignee.id', $assignee->id);
             $response->assertJsonPath('data.customers.0.active_assignment.assignee.name', $assignee->name);
+            $response->assertJsonPath(
+                'data.customers.0.current_assignment.customer_care_id',
+                $assignment->customer_care_id
+            );
+            $response->assertJsonPath('data.customers.0.current_assignment.assignee.id', $assignee->id);
+            $response->assertJsonPath('data.customers.0.current_assignment.assignee.name', $assignee->name);
+            $response->assertJsonPath('data.customers.0.current_assignment_ambiguous', false);
         }
 
         $unassignedOrder = $this->createOrder($shop);
@@ -537,7 +568,12 @@ class OpportunitySecurityHardeningTest extends TestCase
             ->assertJsonPath('data.customers.0.active_assignment.assignee.id', $assignee->id)
             ->assertJsonPath('data.customers.0.active_assignment.assignee.name', $assignee->name)
             ->assertJsonPath('data.customers.0.active_assignment.source_order.id', $sourceOrder->id)
-            ->assertJsonPath('data.customers.0.active_assignment.source_order.status', 3);
+            ->assertJsonPath('data.customers.0.active_assignment.source_order.status', 3)
+            ->assertJsonPath('data.customers.0.current_assignment', null)
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', false);
+
+        $this->assertNotNull($response->json('data.customers.0.active_assignment.cared_at'));
+        $this->assertSame($assignment->id, $care->activeAssignment()->sole()->id);
 
         $managerIds = collect($response->json('data.customers.0.shop.managers'))->pluck('id');
         $this->assertSame([$exactManager->id], $managerIds->all());
@@ -552,6 +588,112 @@ class OpportunitySecurityHardeningTest extends TestCase
             ->getJson('/api/v1/customer-cares?type=customer_care_pending&status=1&page=1')
             ->assertOk()
             ->assertJsonPath('data.customers.0.id', $care->id);
+    }
+
+    public function test_reclaimed_assignment_is_not_exposed_as_current(): void
+    {
+        $shop = $this->createShop();
+        $admin = $this->createUser('admin', 'Admin');
+        $assignee = $this->createUser('staff-cskh', 'Assignee');
+        $order = $this->createOrder($shop);
+        $care = $this->createCustomerCare($order, $assignee);
+        $care->update(['total_edit' => 2, 'is_accept' => 1]);
+        $assignment = $this->createAssignment(
+            $order,
+            $care,
+            $assignee,
+            CustomerCareAssignment::STATUS_RECLAIMED
+        );
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_edit&page=1')
+            ->assertOk()
+            ->assertJsonPath('data.customers.0.id', $care->id)
+            ->assertJsonPath('data.customers.0.active_assignment', null)
+            ->assertJsonPath('data.customers.0.current_assignment', null)
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', false);
+
+        $this->assertSame(
+            CustomerCareAssignment::STATUS_RECLAIMED,
+            CustomerCareAssignment::query()->findOrFail($assignment->id)->status
+        );
+    }
+
+    public function test_list_preserves_legacy_assignee_data_without_synthesizing_assignment_data(): void
+    {
+        $shop = $this->createShop();
+        $admin = $this->createUser('admin', 'Admin');
+        $legacyAssignee = $this->createUser('staff-cskh', 'Legacy Assignee');
+        $legacyOrder = $this->createOrder($shop, 2);
+        $emptyOrder = $this->createOrder($shop, 2);
+        $legacyCare = $this->createCustomerCare(
+            $legacyOrder,
+            $legacyAssignee,
+            date('Y-m-d')
+        );
+        $legacyCare->update(['user_care_id' => $legacyAssignee->pancake_user_id]);
+        $emptyCare = $this->createCustomerCare(
+            $emptyOrder,
+            $legacyAssignee,
+            date('Y-m-d')
+        );
+
+        $response = $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_today&page=1')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $cares = collect($response->json('data.customers'))->keyBy('id');
+        $this->assertNull($cares[$legacyCare->id]['current_assignment']);
+        $this->assertFalse($cares[$legacyCare->id]['current_assignment_ambiguous']);
+        $this->assertSame($legacyAssignee->name, $cares[$legacyCare->id]['user_care']['name']);
+        $this->assertNull($cares[$emptyCare->id]['current_assignment']);
+        $this->assertFalse($cares[$emptyCare->id]['current_assignment_ambiguous']);
+        $this->assertNull($cares[$emptyCare->id]['user_care']);
+    }
+
+    public function test_multiple_current_assignments_are_reported_as_ambiguous_without_selecting_an_employee(): void
+    {
+        $shop = $this->createShop();
+        $admin = $this->createUser('admin', 'Admin');
+        $assigneeA = $this->createUser('staff-cskh', 'Assignee A');
+        $assigneeB = $this->createUser('staff-cskh', 'Assignee B');
+        $order = $this->createOrder($shop);
+        $care = $this->createCustomerCare($order, $assigneeA, date('Y-m-d'));
+        $this->createAssignment($order, $care, $assigneeA, CustomerCareAssignment::STATUS_ACTIVE);
+        $this->createAssignment($order, $care, $assigneeB, CustomerCareAssignment::STATUS_ACTIVE);
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_today&page=1')
+            ->assertOk()
+            ->assertJsonPath('data.customers.0.id', $care->id)
+            ->assertJsonPath('data.customers.0.current_assignment', null)
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', true);
+    }
+
+    public function test_mixed_cared_and_uncared_active_assignments_are_still_ambiguous(): void
+    {
+        $shop = $this->createShop();
+        $admin = $this->createUser('admin', 'Admin');
+        $assigneeA = $this->createUser('staff-cskh', 'Assignee A');
+        $assigneeB = $this->createUser('staff-cskh', 'Assignee B');
+        $order = $this->createOrder($shop);
+        $care = $this->createCustomerCare($order, $assigneeA, date('Y-m-d'));
+        $caredAssignment = $this->createAssignment(
+            $order,
+            $care,
+            $assigneeA,
+            CustomerCareAssignment::STATUS_ACTIVE
+        );
+        $caredAssignment->update(['cared_at' => date('Y-m-d H:i:s')]);
+        $this->createAssignment($order, $care, $assigneeB, CustomerCareAssignment::STATUS_ACTIVE);
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_today&page=1')
+            ->assertOk()
+            ->assertJsonPath('data.customers.0.id', $care->id)
+            ->assertJsonPath('data.customers.0.current_assignment', null)
+            ->assertJsonPath('data.customers.0.current_assignment_ambiguous', true);
     }
 
     public function test_legacy_edit_requests_remain_visible_but_are_hidden_from_actionable_task_lists(): void

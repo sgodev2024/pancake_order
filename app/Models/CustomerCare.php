@@ -53,6 +53,20 @@ class CustomerCare extends Model
     }
 
     /**
+     * Every assignment candidate that can represent current, uncared ownership.
+     *
+     * This is intentionally a has-many relation. Corrupt data can contain more
+     * than one matching row, and list serialization must fail closed instead
+     * of allowing a has-one relation to choose an arbitrary employee.
+     */
+    public function currentAssignments()
+    {
+        return $this->hasMany(CustomerCareAssignment::class)
+            ->where('status', CustomerCareAssignment::STATUS_ACTIVE)
+            ->whereNull('cared_at');
+    }
+
+    /**
      * Keep imported/manual and non-opportunity order care semantics unchanged.
      * A status-3 order without an active assignment is managed by Opportunity;
      * whenever an order has an active assignment, only its referenced care is
