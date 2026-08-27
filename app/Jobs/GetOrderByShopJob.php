@@ -2,12 +2,13 @@
 
 namespace App\Jobs;
 
+use App\Models\Customer;
 use App\Models\Order;
-use App\Models\Shop;
+use App\Services\OrderCreatedEventWriter;
 use App\Services\OrderService;
-use Carbon\Carbon;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class GetOrderByShopJob implements ShouldQueue
@@ -30,8 +31,7 @@ class GetOrderByShopJob implements ShouldQueue
     public function __construct(
         $datas,
         $shop_id
-    )
-    {
+    ) {
         $this->datas = $datas;
         $this->shop_id = $shop_id;
     }
@@ -39,26 +39,99 @@ class GetOrderByShopJob implements ShouldQueue
     /**
      * Execute the job.
      */
-    public function handle(): void
+    public function handle(OrderCreatedEventWriter $eventWriter): void
     {
         try {
-            $insertData = [];
-            $orderService = new OrderService();
-            foreach ($this->datas as $data_item) {
-                if (!empty($data_item["partner"]["order_number_vtp"])) {
-                    $order = Order::where("pancake_order_id", $data_item["id"])
-                                  ->where("shop_id", $this->shop_id)
-                                  ->first();
-                    if (!$order) {
-                        $insertData[] = $orderService->getOrderItem($data_item, $this->shop_id);
+            DB::transaction(function () use ($eventWriter): void {
+                $shopId = (int) $this->shop_id;
+                $insertData = [];
+                $storedOrderIds = [];
+                $orderService = new OrderService;
+
+                foreach ($this->datas as $dataItem) {
+                    // Preserve the existing bulk business filter: only VTP
+                    // partner orders enter the local orders table.
+                    if (empty($dataItem['partner']['order_number_vtp'])) {
+                        continue;
                     }
+
+                    $orderData = $orderService->getOrderItem($dataItem, $shopId);
+                    $storedOrderId = (string) $orderData['pancake_order_id'];
+
+                    // The persisted identity is external Pancake ID + local
+                    // shop ID. Do not compare only the raw external ID.
+                    if (isset($storedOrderIds[$storedOrderId])
+                        || Order::withTrashed()
+                            ->where('shop_id', $shopId)
+                            ->where('pancake_order_id', $storedOrderId)
+                            ->exists()) {
+                        continue;
+                    }
+
+                    $storedOrderIds[$storedOrderId] = true;
+                    $insertData[] = $orderData;
                 }
-            }
-            Order::insert($insertData);
+
+                if ($insertData === []) {
+                    return;
+                }
+
+                Order::insert($insertData);
+
+                $insertedOrders = Order::query()
+                    ->where('shop_id', $shopId)
+                    ->whereIn('pancake_order_id', array_keys($storedOrderIds))
+                    ->get();
+
+                if ($insertedOrders->count() !== count($storedOrderIds)) {
+                    throw new \RuntimeException(
+                        'Could not resolve every newly inserted order for journey logging.'
+                    );
+                }
+
+                $ordersByPancakeId = $insertedOrders->keyBy(
+                    fn (Order $order): string => (string) $order->pancake_order_id
+                );
+                $customerIds = $insertedOrders
+                    ->pluck('pancake_customer_id')
+                    ->filter(fn ($id): bool => $id !== null && trim((string) $id) !== '')
+                    ->map(fn ($id): string => (string) $id)
+                    ->unique()
+                    ->values();
+                $customersByPancakeId = $customerIds->isEmpty()
+                    ? collect()
+                    : Customer::query()
+                        ->where('shop_id', $shopId)
+                        ->whereIn('pancake_customer_id', $customerIds)
+                        ->get(['id', 'shop_id', 'pancake_customer_id'])
+                        ->keyBy(fn (Customer $customer): string => (string) $customer->pancake_customer_id);
+
+                foreach (array_keys($storedOrderIds) as $storedOrderId) {
+                    $order = $ordersByPancakeId->get($storedOrderId);
+
+                    if (! $order instanceof Order) {
+                        throw new \RuntimeException(
+                            'Could not resolve a newly inserted order for journey logging.'
+                        );
+                    }
+
+                    $customer = $customersByPancakeId->get((string) $order->pancake_customer_id);
+                    $eventWriter->write(
+                        $order,
+                        'pancake_bulk_sync',
+                        $order->created_at,
+                        $customer instanceof Customer ? $customer : null
+                    );
+                }
+            });
 
             return;
         } catch (\Throwable $th) {
             Log::info($th->getMessage());
+
+            // A failed event must fail the job so the transaction is retried;
+            // swallowing this error would leave an untracked new order.
+            throw $th;
         }
     }
 }

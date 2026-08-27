@@ -66,11 +66,17 @@ context may be added without changing the table:
 | `customer_care.reassigned` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | previous/new assignee IDs, `ingestion_path`, optional `acquisition_channel` |
 | `customer_care.reclaimed` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | `reason`, `ingestion_path`, optional `acquisition_channel` |
 | `customer_care.completed` | `customer_care_id`, `assignment_id`, `assignee_user_id`, `shop_id`, `source_id`, `care_sequence_number` | `pancake_customer_id`, `pancake_order_id` | completion context, sequence scope/basis, optional `customer_id`/`order_id` |
-| `order.created` | `order_id`, optional `customer_id` | `pancake_order_id`, `pancake_customer_id` | `ingestion_path`, optional `acquisition_channel` |
+| `order.created` | `order_id`, `shop_id`, optional `customer_id` (`null` when unresolved) | `pancake_order_id`, `pancake_customer_id` | `amount` (`cod`-based), `cash_amount`, `quantity`, bounded `items`, `ingestion_path`, optional `acquisition_channel` |
 
 `source` is not overloaded with `acquisition_channel`. Full raw Pancake
 payloads are not part of this contract and are removed when payload-shaped
 keys are passed to the service.
+
+For `order.created`, `amount` follows the existing order display and report
+semantics, which use `orders.cod`; `amount_source` is `cod`. `cash_amount` is
+kept separately for audit context. The current application has no reliable
+paid/delivered/completed signal, so this phase does not write
+`purchase.completed`.
 
 ## Completed-care sequence
 

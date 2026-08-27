@@ -60,6 +60,10 @@ class ActivityLogContractTest extends TestCase
             ['pancake_order_id', 'pancake_customer_id'],
             ActivityLogMetadataContract::for(ActivityLogAction::ORDER_CREATED)['external_ids']
         );
+        $this->assertSame(
+            ['order_id', 'shop_id'],
+            ActivityLogMetadataContract::for(ActivityLogAction::ORDER_CREATED)['required_local_ids']
+        );
     }
 
     public function test_legacy_assignment_and_reclaim_logging_remains_compatible(): void
@@ -184,6 +188,7 @@ class ActivityLogContractTest extends TestCase
             idempotencyKey: 'order-created-42',
             metadata: [
                 'order_id' => 42,
+                'shop_id' => 7,
                 'customer_id' => 9,
                 'pancake_order_id' => 'PANCAKE-ORDER-42',
                 'pancake_customer_id' => 'PANCAKE-CUSTOMER-9',

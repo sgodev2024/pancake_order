@@ -205,9 +205,11 @@ class ActivityLogService
         }
 
         foreach ($contract['optional_local_ids'] as $key) {
-            if (array_key_exists($key, $metadata) && ! $this->isPositiveLocalId($metadata[$key])) {
+            if (array_key_exists($key, $metadata)
+                && $metadata[$key] !== null
+                && ! $this->isPositiveLocalId($metadata[$key])) {
                 throw new InvalidArgumentException(
-                    'Optional Customer Journey metadata IDs must be positive local IDs.'
+                    'Optional Customer Journey metadata IDs must be positive local IDs or null.'
                 );
             }
         }

@@ -55,7 +55,9 @@ class CustomerEnteredSystemEventTest extends TestCase
         $this->runBulk($shop, [$this->bulkCustomer('PAN-CUSTOMER-1', insertedAt: $insertedAt)]);
 
         $customer = Customer::query()->sole();
-        $event = ActivityLog::query()->sole();
+        $event = ActivityLog::query()
+            ->where('action', 'customer.entered_system')
+            ->sole();
 
         $this->assertSame(1, Customer::query()->count());
         $this->assertSame(ActivityLogAction::CUSTOMER_ENTERED_SYSTEM->value, $event->action);
@@ -165,10 +167,12 @@ class CustomerEnteredSystemEventTest extends TestCase
         $this->runWebhook($data);
 
         $customer = Customer::query()->sole();
-        $event = ActivityLog::query()->sole();
+        $event = ActivityLog::query()
+            ->where('action', 'customer.entered_system')
+            ->sole();
 
         $this->assertSame(1, Customer::query()->count());
-        $this->assertSame(1, ActivityLog::query()->count());
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer.entered_system')->count());
         $this->assertSame((string) $customer->id, $event->subject_id);
         $this->assertSame($shop->id, $event->shop_id);
         $this->assertSame($customer->created_at->format('Y-m-d H:i:s'), $event->occurred_at->format('Y-m-d H:i:s'));
@@ -192,7 +196,7 @@ class CustomerEnteredSystemEventTest extends TestCase
 
         $this->assertSame(1, Customer::query()->count());
         $this->assertSame('Updated customer', Customer::query()->sole()->name);
-        $this->assertSame(1, ActivityLog::query()->count());
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer.entered_system')->count());
     }
 
     public function test_same_webhook_retry_is_idempotent_for_customer_and_event(): void
@@ -204,7 +208,7 @@ class CustomerEnteredSystemEventTest extends TestCase
         $this->runWebhook($data);
 
         $this->assertSame(1, Customer::query()->count());
-        $this->assertSame(1, ActivityLog::query()->count());
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer.entered_system')->count());
     }
 
     public function test_same_external_customer_id_is_isolated_by_local_shop(): void
@@ -216,7 +220,10 @@ class CustomerEnteredSystemEventTest extends TestCase
         $this->runWebhook($this->webhookData($secondShop, 'PAN-WEBHOOK-ORDER-2', 'PAN-SHARED-CUSTOMER'));
 
         $customers = Customer::query()->orderBy('shop_id')->get();
-        $events = ActivityLog::query()->orderBy('shop_id')->get();
+        $events = ActivityLog::query()
+            ->where('action', 'customer.entered_system')
+            ->orderBy('shop_id')
+            ->get();
 
         $this->assertSame(2, $customers->count());
         $this->assertSame([$firstShop->id, $secondShop->id], $customers->pluck('shop_id')->all());

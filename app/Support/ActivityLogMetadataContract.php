@@ -78,10 +78,18 @@ final class ActivityLogMetadataContract
                 ],
             ],
             ActivityLogAction::ORDER_CREATED->value => [
-                'required_local_ids' => ['order_id'],
+                'required_local_ids' => ['order_id', 'shop_id'],
                 'optional_local_ids' => ['customer_id'],
                 'external_ids' => ['pancake_order_id', 'pancake_customer_id'],
-                'context' => [self::INGESTION_PATH, self::ACQUISITION_CHANNEL],
+                'context' => [
+                    self::INGESTION_PATH,
+                    self::ACQUISITION_CHANNEL,
+                    'amount',
+                    'amount_source',
+                    'cash_amount',
+                    'quantity',
+                    'items',
+                ],
             ],
             default => null,
         };
