@@ -7,6 +7,7 @@ use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\Customer;
 use App\Models\Order;
 use App\Models\User;
+use App\Services\CustomerReadAccessService;
 use App\Services\ShopAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
@@ -14,7 +15,7 @@ use Illuminate\Routing\Controllers\Middleware;
 
 class CustomerController extends Controller implements HasMiddleware
 {
-    public function __construct(private readonly ShopAccessService $shopAccessService)
+    public function __construct(private readonly ShopAccessService $shopAccessService, private readonly CustomerReadAccessService $customerReadAccessService)
     {
     }
 
@@ -98,10 +99,7 @@ class CustomerController extends Controller implements HasMiddleware
                 $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
             }
             if (! $this->shopAccessService->isGlobal($user)) {
-                if (!$user->isManagerSale() && !$user->isManagerCskh()) {
-                    $user_id = $user->pancake_user_id ?? $user->id;
-                    $query->where("assigned_user_id", $user_id);
-                }
+                $this->customerReadAccessService->applyRecordScope($query, $user, 'assigned_user_id');
             }
             $pageNumber = $inputs["page"];
             $page_size  = $inputs["page_size"] ?? 30;

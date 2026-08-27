@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\CustomerCareController;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\CustomerJourneyController;
 use App\Http\Controllers\Api\ImportedOpportunityController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\PermissionGroupController;
@@ -99,6 +100,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('imported-opportunities',          [ImportedOpportunityController::class, "index"])
         ->middleware(PermissionCheckMiddleware::class . ':view-chance,strict');
 
+    Route::get('customers/{customer}/journey', [CustomerJourneyController::class, 'show'])
+        ->middleware(PermissionCheckMiddleware::class . ':list-customer,strict');
     Route::apiResource("customers",                      CustomerController::class);
     Route::get("customers/{pancake_customer_id}/orders", [CustomerController::class, "getOrder"]);
 

@@ -5,13 +5,14 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Shop;
 use App\Models\User;
+use App\Services\CustomerReadAccessService;
 use App\Services\ShopAccessService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 
 class ShopCustomerController extends Controller
 {
-    public function __construct(private readonly ShopAccessService $shopAccessService)
+    public function __construct(private readonly ShopAccessService $shopAccessService, private readonly CustomerReadAccessService $customerReadAccessService)
     {
     }
 
@@ -74,10 +75,6 @@ class ShopCustomerController extends Controller
 
     private function applyCustomerRecordScope($query, User $actor): void
     {
-        if ($actor->isAdmin() || $actor->isManagerSale() || $actor->isManagerCskh()) {
-            return;
-        }
-
-        $query->where('customers.assigned_user_id', $actor->pancake_user_id ?? $actor->getKey());
+        $this->customerReadAccessService->applyRecordScope($query, $actor);
     }
 }
