@@ -53,7 +53,7 @@ class ActivityLogContractTest extends TestCase
         ], array_map(fn (ActivityLogAction $action) => $action->value, ActivityLogAction::cases()));
 
         $this->assertSame(
-            ['customer_id'],
+            ['customer_id', 'shop_id'],
             ActivityLogMetadataContract::for(ActivityLogAction::CUSTOMER_ENTERED_SYSTEM)['required_local_ids']
         );
         $this->assertSame(
@@ -245,6 +245,7 @@ class ActivityLogContractTest extends TestCase
             newValues: $overrides['newValues'] ?? null,
             metadata: $overrides['metadata'] ?? [
                 'customer_id' => 1001,
+                'shop_id' => 7,
                 'pancake_customer_id' => 'PANCAKE-CUSTOMER-1001',
                 'ingestion_path' => 'test',
             ],

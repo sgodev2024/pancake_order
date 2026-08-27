@@ -32,7 +32,7 @@ final class ActivityLogMetadataContract
 
         return match ($action) {
             ActivityLogAction::CUSTOMER_ENTERED_SYSTEM->value => [
-                'required_local_ids' => ['customer_id'],
+                'required_local_ids' => ['customer_id', 'shop_id'],
                 'optional_local_ids' => [],
                 'external_ids' => ['pancake_customer_id'],
                 'context' => [self::INGESTION_PATH, self::ACQUISITION_CHANNEL],

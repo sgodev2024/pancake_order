@@ -1,8 +1,8 @@
 # Customer Journey activity-log contract
 
 Customer Journey events continue to use `activity_logs`. This contract adds
-schema and service conventions without rewriting historical rows or adding
-event writers.
+schema, service, and event-writer conventions without rewriting historical
+rows.
 
 ## MVP actions
 
@@ -44,6 +44,15 @@ The service returns the original row for an exact retry and raises an
 idempotency conflict for a different event with the same key; it never updates
 the original row.
 
+For `customer.entered_system`, `occurred_at` provenance depends on the
+ingestion path. `pancake_bulk_sync` uses the trusted Pancake `inserted_at`
+timestamp, normalized to the application timezone and used for the local
+Customer `created_at`. `pancake_order_webhook` uses the reliable local
+Customer `created_at`, because the webhook does not preserve a trusted
+external customer-creation timestamp. These events are written only at real
+new-Customer creation boundaries; existing-customer updates and historical
+Customers are not backfilled.
+
 ## Metadata contracts
 
 Metadata uses local IDs for internal relationships and keeps external IDs
@@ -52,7 +61,7 @@ context may be added without changing the table:
 
 | Action | Required local IDs | External IDs | Context |
 | --- | --- | --- | --- |
-| `customer.entered_system` | `customer_id` | `pancake_customer_id` | `ingestion_path`, optional `acquisition_channel` |
+| `customer.entered_system` | `customer_id`, `shop_id` | `pancake_customer_id` | `ingestion_path`, optional `acquisition_channel` |
 | `customer_care.assigned` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | assignment context, `ingestion_path`, optional `acquisition_channel` |
 | `customer_care.reassigned` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | previous/new assignee IDs, `ingestion_path`, optional `acquisition_channel` |
 | `customer_care.reclaimed` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | `reason`, `ingestion_path`, optional `acquisition_channel` |

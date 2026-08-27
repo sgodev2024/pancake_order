@@ -3,12 +3,12 @@
 namespace App\Jobs;
 
 use App\Models\Customer;
-use Carbon\Carbon;
+use App\Services\CustomerEnteredSystemEventWriter;
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-
-use function Symfony\Component\Clock\now;
 
 class GetCustomerByShopJob implements ShouldQueue
 {
@@ -18,69 +18,152 @@ class GetCustomerByShopJob implements ShouldQueue
 
     protected $shop_id;
 
-    // 🔁 Số lần retry
+    // Retry three times when the customer/event transaction fails.
     public $tries = 3;
 
-    // ⏱️ Thời gian delay giữa các lần retry (giây)
-    public $backoff = [30, 60, 120]; // Retry sau 1, 3, 5 phút
+    public $backoff = [30, 60, 120];
 
-    /**
-     * Create a new job instance.
-     */
     public function __construct(
         $datas,
         $shop_id
-    )
-    {
+    ) {
         $this->datas = $datas;
         $this->shop_id = $shop_id;
     }
 
     /**
-     * Execute the job.
+     * Insert the batch and its entry events in one transaction.
+     *
+     * The post-insert query is deliberately by shop plus external IDs; local
+     * IDs are never inferred from an auto-increment range.
      */
-    public function handle(): void
+    public function handle(CustomerEnteredSystemEventWriter $eventWriter): void
     {
         try {
-            $insertData = [];
-            foreach ($this->datas as $data_item) {
-                $pancake_customer_id = $data_item['customer_id'];
-                $customer = Customer::where("shop_id", $this->shop_id)->where("pancake_customer_id", $pancake_customer_id)->first();
-                if (!$customer && $data_item["order_count"] > 0) {
-                    $time = Carbon::parse($data_item["inserted_at"], 'UTC')->setTimezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s');
+            DB::transaction(function () use ($eventWriter): void {
+                $shopId = (int) $this->shop_id;
+                $insertData = [];
+                $newExternalIds = [];
+                $occurredAtByExternalId = [];
+                $acquisitionChannelByExternalId = [];
+
+                foreach ($this->datas as $dataItem) {
+                    $externalId = (string) $dataItem['customer_id'];
+                    $customer = Customer::query()
+                        ->where('shop_id', $shopId)
+                        ->where('pancake_customer_id', $externalId)
+                        ->first();
+
+                    if ($customer !== null) {
+                        $customer->update([
+                            'order_count' => $dataItem['order_count'] ?? 0,
+                            'purchased_amount' => $dataItem['purchased_amount'] ?? 0,
+                            'pancake_full_data' => $dataItem,
+                            'phone_numbers' => ! empty($dataItem['phone_numbers'])
+                                ? implode(',', $dataItem['phone_numbers'])
+                                : null,
+                        ]);
+
+                        continue;
+                    }
+
+                    // Preserve the existing import rule: customers without a
+                    // positive order count are not created by this sync.
+                    if ((int) ($dataItem['order_count'] ?? 0) <= 0) {
+                        continue;
+                    }
+
+                    // A repeated external ID in one response is one candidate
+                    // customer. Keep the first source row and never create a
+                    // duplicate event for the same inserted local row.
+                    if (isset($occurredAtByExternalId[$externalId])) {
+                        continue;
+                    }
+
+                    $occurredAt = $this->parseInsertedAt($dataItem['inserted_at']);
                     $insertData[] = [
-                        'order_count'         => $data_item["order_count"] ?? 0,
-                        'shop_id'             => $this->shop_id,
-                        'assigned_user_id'    => $data_item["assigned_user_id"],
-                        'pancake_customer_id' => $pancake_customer_id,
-                        'fb_id'               => $data_item['fb_id'] ?? null,
-                        'name'                => $data_item['name'] ?? null,
-                        'purchased_amount'    => $data_item["purchased_amount"] ?? 0,
-                        'loyalty_tier_id'     => get_loyalty_tier($data_item["purchased_amount"] ?? 0),
-                        'phone_numbers'       => !empty($data_item["phone_numbers"]) ? implode(",", $data_item["phone_numbers"]) : NULL,
-                        'pancake_full_data'   => json_encode($data_item),
-                        'created_at'          => $time,
-                        'updated_at'          => $time,
+                        'order_count' => $dataItem['order_count'] ?? 0,
+                        'shop_id' => $shopId,
+                        'assigned_user_id' => $dataItem['assigned_user_id'] ?? null,
+                        'pancake_customer_id' => $externalId,
+                        'fb_id' => $dataItem['fb_id'] ?? null,
+                        'name' => $dataItem['name'] ?? null,
+                        'purchased_amount' => $dataItem['purchased_amount'] ?? 0,
+                        'loyalty_tier_id' => get_loyalty_tier($dataItem['purchased_amount'] ?? 0),
+                        'phone_numbers' => ! empty($dataItem['phone_numbers'])
+                            ? implode(',', $dataItem['phone_numbers'])
+                            : null,
+                        'pancake_full_data' => json_encode($dataItem),
+                        'created_at' => $occurredAt->format('Y-m-d H:i:s'),
+                        'updated_at' => $occurredAt->format('Y-m-d H:i:s'),
                     ];
-                } else {
-                    $customer->update([
-                        'order_count'         => $data_item["order_count"],
-                        'purchased_amount'    => $data_item["purchased_amount"],
-                        'pancake_full_data'   => $data_item,
-                        'phone_numbers'       => !empty($data_item["phone_numbers"]) ? implode(",", $data_item["phone_numbers"]) : NULL,
-
-                    ]);
+                    $newExternalIds[] = $externalId;
+                    $occurredAtByExternalId[$externalId] = $occurredAt;
+                    $acquisitionChannelByExternalId[$externalId] = $this->acquisitionChannel($dataItem);
                 }
-            }
-            if (count($insertData)> 0) {
-                Customer::insert($insertData);
-                
-                return;
-            }
 
-            return;
-        } catch (\Throwable $th) {
-            Log::info($th->getMessage());
+                if ($insertData === []) {
+                    return;
+                }
+
+                Customer::insert($insertData);
+
+                $insertedCustomers = Customer::query()
+                    ->where('shop_id', $shopId)
+                    ->whereIn('pancake_customer_id', $newExternalIds)
+                    ->get(['id', 'shop_id', 'pancake_customer_id', 'created_at']);
+                $customersByExternalId = $insertedCustomers->keyBy(
+                    fn (Customer $customer): string => (string) $customer->pancake_customer_id
+                );
+
+                if ($customersByExternalId->count() !== count($newExternalIds)) {
+                    throw new \RuntimeException(
+                        'Could not resolve every newly inserted customer for journey logging.'
+                    );
+                }
+
+                foreach ($newExternalIds as $externalId) {
+                    $customer = $customersByExternalId->get($externalId);
+
+                    if (! $customer instanceof Customer) {
+                        throw new \RuntimeException(
+                            'Could not resolve a newly inserted customer for journey logging.'
+                        );
+                    }
+
+                    $eventWriter->write(
+                        $customer,
+                        'pancake_bulk_sync',
+                        $occurredAtByExternalId[$externalId],
+                        $acquisitionChannelByExternalId[$externalId]
+                    );
+                }
+            });
+        } catch (\Throwable $throwable) {
+            Log::info($throwable->getMessage());
+
+            // A failed event must fail the job so the transaction is retried;
+            // swallowing this error would leave an untracked new customer.
+            throw $throwable;
         }
+    }
+
+    private function parseInsertedAt(mixed $insertedAt): CarbonImmutable
+    {
+        return CarbonImmutable::parse((string) $insertedAt, 'UTC')
+            ->setTimezone(config('app.timezone'));
+    }
+
+    private function acquisitionChannel(array $dataItem): ?string
+    {
+        $channel = $dataItem['acquisition_channel'] ?? null;
+
+        if (! is_string($channel)) {
+            return null;
+        }
+
+        $channel = trim($channel);
+
+        return $channel === '' ? null : $channel;
     }
 }
