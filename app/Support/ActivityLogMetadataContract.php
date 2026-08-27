@@ -43,8 +43,14 @@ final class ActivityLogMetadataContract
             ActivityLogAction::CUSTOMER_CARE_COMPLETED->value => [
                 'required_local_ids' => ['customer_care_id', 'assignment_id'],
                 'optional_local_ids' => [
+                    'shop_id',
+                    'source_id',
+                    'assignee_user_id',
                     'previous_assignee_user_id',
                     'new_assignee_user_id',
+                    'previous_assignment_id',
+                    'new_assignment_id',
+                    'previous_customer_care_id',
                 ],
                 'external_ids' => ['pancake_customer_id', 'pancake_order_id'],
                 'context' => [

@@ -212,12 +212,16 @@ class ActivityLogController extends Controller
                 . " do quá 3 ngày chưa chăm sóc";
         }
 
-        if ($log->action === "customer_care.assigned") {
+        if ($log->action === "customer_care.assigned"
+            || $log->action === "customer_care.reassigned") {
             $actorName ??= "Người dùng không xác định";
             $targetUserName ??= "Người dùng không xác định";
             $orderLabel = $log->pancake_order_id ?? $log->subject_id ?? "không xác định";
+            $assignmentLabel = $log->action === "customer_care.reassigned"
+                ? "phân công lại đơn"
+                : "phân công đơn";
 
-            return $actorName . " phân công đơn " . $orderLabel . " cho " . $targetUserName;
+            return $actorName . " " . $assignmentLabel . " " . $orderLabel . " cho " . $targetUserName;
         }
 
         return null;

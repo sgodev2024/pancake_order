@@ -15,11 +15,13 @@ use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
-use Symfony\Component\HttpKernel\Exception\HttpException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class CustomerCareController extends Controller implements HasMiddleware
 {
@@ -28,8 +30,7 @@ class CustomerCareController extends Controller implements HasMiddleware
         private readonly ActivityLogService $activityLogService,
         private readonly ShopAccessService $shopAccessService,
         private readonly CustomerCareWriteAccessService $customerCareWriteAccessService
-    ) {
-    }
+    ) {}
 
     public static function middleware(): array
     {
@@ -48,57 +49,57 @@ class CustomerCareController extends Controller implements HasMiddleware
 
         try {
             $inputs = $request->only(
-                "type",
-                "page",
-                "shop_id",
-                "status",
-                "user_id",
-                "is_accept",
-                "is_confirm_care",
-                "search"
+                'type',
+                'page',
+                'shop_id',
+                'status',
+                'user_id',
+                'is_accept',
+                'is_confirm_care',
+                'search'
             );
             $inputs['shop_id'] = $requestedShopId;
-            $result = $this->buildQuery($inputs["type"], $user, $inputs)
+            $result = $this->buildQuery($inputs['type'], $user, $inputs)
+                ->with([
+                    'activeAssignment.assignee:id,name',
+                    'activeAssignment.sourceOrder:id,status',
+                    'currentAssignments.assignee:id,name',
+                    'currentAssignments.sourceOrder:id,status',
+                    'shop' => function ($q) {
+                        $q->select('shops.id', 'shops.name')
                             ->with([
-                                "activeAssignment.assignee:id,name",
-                                "activeAssignment.sourceOrder:id,status",
-                                "currentAssignments.assignee:id,name",
-                                "currentAssignments.sourceOrder:id,status",
-                                "shop" => function ($q) {
-                                    $q->select("shops.id", "shops.name")
-                                      ->with([
-                                        "managers" => function ($query) {
-                                            $query->select("users.id", "users.name");
-                                        }
-                                      ]);
+                                'managers' => function ($query) {
+                                    $query->select('users.id', 'users.name');
                                 },
-                                "order" => function ($q) {
-                                    $q->select("id", "pancake_order_id", "status");
-                                },
-                                "user_creator",
-                                "user_care",
-                                "user_assigning"
-                            ])
-                           ->paginate(30, ['*'], 'page', $inputs["page"]);
+                            ]);
+                    },
+                    'order' => function ($q) {
+                        $q->select('id', 'pancake_order_id', 'status');
+                    },
+                    'user_creator',
+                    'user_care',
+                    'user_assigning',
+                ])
+                ->paginate(30, ['*'], 'page', $inputs['page']);
 
             $this->attachCurrentAssignments($result->getCollection());
             $this->attachLegacyV1DisplayCompatibility($result->getCollection());
             $this->attachAssignableOrderIds($result->getCollection());
 
             return response()->json([
-                "success" => true,
-                "data"    => [
-                    "customers"    => $result->items(),
+                'success' => true,
+                'data' => [
+                    'customers' => $result->items(),
                     'current_page' => $result->currentPage(),
-                    'per_page'     => $result->perPage(),
-                    'total_items'  => $result->total(),
-                    'total_pages'  => $result->lastPage(),
+                    'per_page' => $result->perPage(),
+                    'total_items' => $result->total(),
+                    'total_pages' => $result->lastPage(),
                 ],
             ]);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => false,
-                "message" => "Vui lòng thử lại" . $th->getMessage()
+                'success' => false,
+                'message' => 'Vui lòng thử lại'.$th->getMessage(),
             ]);
         }
     }
@@ -114,74 +115,76 @@ class CustomerCareController extends Controller implements HasMiddleware
         ], true)) {
             $query->actionable();
         }
-        if (isset($inputs["is_accept"])) {
-            $query->where("is_accept", $inputs["is_accept"]);
+        if (isset($inputs['is_accept'])) {
+            $query->where('is_accept', $inputs['is_accept']);
         }
-        if (isset($inputs["shop_id"])) {
-            $query->where("shop_id", $inputs["shop_id"]);
+        if (isset($inputs['shop_id'])) {
+            $query->where('shop_id', $inputs['shop_id']);
         }
-        if (isset($inputs["is_confirm_care"])) {
-            $query->where("is_confirm_care", $inputs["is_confirm_care"]);
+        if (isset($inputs['is_confirm_care'])) {
+            $query->where('is_confirm_care', $inputs['is_confirm_care']);
         }
-        if (isset($inputs["user_id"])) {
+        if (isset($inputs['user_id'])) {
             $query->where(function ($q) use ($inputs) {
-                    $q->where("user_creator_id", $inputs["user_id"]);
-                    //   ->orWhere("user_care_id", $inputs["user_id"])
-                    //   ->orWhere("user_assigning_seller_id", $inputs["user_id"]);
-                });
+                $q->where('user_creator_id', $inputs['user_id']);
+                //   ->orWhere("user_care_id", $inputs["user_id"])
+                //   ->orWhere("user_assigning_seller_id", $inputs["user_id"]);
+            });
         }
-        $today = date("Y-m-d");
-        if (isset($inputs["status"])) {
-            $query->where("status", $inputs["status"]);
+        $today = date('Y-m-d');
+        if (isset($inputs['status'])) {
+            $query->where('status', $inputs['status']);
         }
-        if (!empty($inputs["search"])) {
-            $search = $inputs["search"];
+        if (! empty($inputs['search'])) {
+            $search = $inputs['search'];
             $query->where(function ($q) use ($search) {
-                $q->where("customer_cares.customer_name", "like", "{$search}%")
-                  ->orWhere("customer_cares.customer_phones", "like", "{$search}%")
-                  ->orWhere("customer_cares.pancake_order_id", "like", "{$search}%");
+                $q->where('customer_cares.customer_name', 'like', "{$search}%")
+                    ->orWhere('customer_cares.customer_phones', 'like', "{$search}%")
+                    ->orWhere('customer_cares.pancake_order_id', 'like', "{$search}%");
             });
         }
         switch ($type) {
             case 'customer_care_today':
-                $query->where("date_care", $today);
+                $query->where('date_care', $today);
                 break;
             case 'customer_care_pending':
-                $query->where("date_care", '>', $today)->oldest("date_care");
+                $query->where('date_care', '>', $today)->oldest('date_care');
                 break;
             case 'customer_care_in_week':
-                $query->whereBetween("date_care", [
-                    Carbon::now()->startOfWeek()->format("Y-m-d"),
-                    Carbon::now()->endOfWeek()->format("Y-m-d"),
-                ])->oldest("date_care");
+                $query->whereBetween('date_care', [
+                    Carbon::now()->startOfWeek()->format('Y-m-d'),
+                    Carbon::now()->endOfWeek()->format('Y-m-d'),
+                ])->oldest('date_care');
                 break;
             case 'customer_care_expire':
-                $query->where("date_care", "<", $today)
-                        ->where(function ($q) {
-                            $q->where("status", 0)
-                                ->orWhereDate('time_care', '>', DB::raw('date_care'));
-                        })
-                        ->oldest("date_care");
+                $query->where('date_care', '<', $today)
+                    ->where(function ($q) {
+                        $q->where('status', 0)
+                            ->orWhereDate('time_care', '>', DB::raw('date_care'));
+                    })
+                    ->oldest('date_care');
                 break;
             case 'customer_care_edit':
-                $query->where("total_edit", ">", 1)->where("is_accept", 1);
+                $query->where('total_edit', '>', 1)->where('is_accept', 1);
                 break;
-            case 'chance': // trang cơ hội: lấy những thằng chưa chăm sóc + chưa phân công 
-                $query->where("status", 0);
+            case 'chance': // trang cơ hội: lấy những thằng chưa chăm sóc + chưa phân công
+                $query->where('status', 0);
                 break;
         }
 
-        return $query->where(fn($q) => $this->applyAccessFilter($q, $user, $type));
+        return $query->where(fn ($q) => $this->applyAccessFilter($q, $user, $type));
     }
 
-    private function applyAccessFilter($q, $user, $type = NULL): void
+    private function applyAccessFilter($q, $user, $type = null): void
     {
-        if ($type == "chance") {
-            $q->orWhereDoesntHave("users");
+        if ($type == 'chance') {
+            $q->orWhereDoesntHave('users');
         }
-        if ($user->isAdmin()) return;
+        if ($user->isAdmin()) {
+            return;
+        }
         $shopIds = $user->shops()->pluck('shops.id');
-        $q->whereIn("shop_id", $shopIds);
+        $q->whereIn('shop_id', $shopIds);
 
         if ($user->isManagerSale() || $user->isManagerCskh()) {
             return;
@@ -230,19 +233,19 @@ class CustomerCareController extends Controller implements HasMiddleware
     public function update(Request $request, CustomerCare $customer_care)
     {
         try {
-            if (!$customer_care) {
+            if (! $customer_care) {
                 return response()->json([
-                    "success" => false,
-                    "message" => "Không tồn tại"
+                    'success' => false,
+                    'message' => 'Không tồn tại',
                 ]);
             }
             $actor = $request->user() ?? auth()->user();
             if ($actor === null) {
                 throw new AuthorizationException('Unauthenticated.');
             }
-            $note = $request->note ?? NULL;
-            $time_care = $request->date ?? NULL;
-            $is_admin   = $actor->isAdmin() || $actor->isManagerCskh();
+            $note = $request->note ?? null;
+            $time_care = $request->date ?? null;
+            $is_admin = $actor->isAdmin() || $actor->isManagerCskh();
             $is_care_completion = (int) $request->input('status') === 1;
             $customer_care = DB::transaction(function () use (
                 $customer_care,
@@ -280,11 +283,11 @@ class CustomerCareController extends Controller implements HasMiddleware
                         : $time_care);
 
                 $lockedCustomerCare->update([
-                    "status"     => $request->status,
-                    "note"       => $note,
-                    "time_care"  => $persistedCareTime,
-                    "is_accept"  => ($lockedCustomerCare->total_edit == 0 || $is_admin) ? 1 : 0,
-                    "total_edit" => $lockedCustomerCare->total_edit + 1
+                    'status' => $request->status,
+                    'note' => $note,
+                    'time_care' => $persistedCareTime,
+                    'is_accept' => ($lockedCustomerCare->total_edit == 0 || $is_admin) ? 1 : 0,
+                    'total_edit' => $lockedCustomerCare->total_edit + 1,
                 ]);
 
                 $lockedCustomerCare->refresh();
@@ -292,16 +295,16 @@ class CustomerCareController extends Controller implements HasMiddleware
                     $this->customerCareAssignmentService->markAsCared($lockedCustomerCare);
                 }
 
-                if (!empty($request->next_date_care)) {
+                if (! empty($request->next_date_care)) {
                     CustomerCare::create([
-                        "shop_id"                   => $lockedCustomerCare->shop_id,
-                        "pancake_customer_id"       => $lockedCustomerCare->pancake_customer_id,
-                        "pancake_order_id"          => $lockedCustomerCare->pancake_order_id,
-                        "customer_phones"           => $lockedCustomerCare->customer_phones,
-                        "customer_name"             => $lockedCustomerCare->customer_name,
-                        "customer_addresss"         => $lockedCustomerCare->customer_addresss,
-                        "date_care"                 => $request->next_date_care,
-                        "user_creator_id"           => $lockedCustomerCare->user_creator_id
+                        'shop_id' => $lockedCustomerCare->shop_id,
+                        'pancake_customer_id' => $lockedCustomerCare->pancake_customer_id,
+                        'pancake_order_id' => $lockedCustomerCare->pancake_order_id,
+                        'customer_phones' => $lockedCustomerCare->customer_phones,
+                        'customer_name' => $lockedCustomerCare->customer_name,
+                        'customer_addresss' => $lockedCustomerCare->customer_addresss,
+                        'date_care' => $request->next_date_care,
+                        'user_creator_id' => $lockedCustomerCare->user_creator_id,
                         // "user_care_id"              => $lockedCustomerCare->user_care_id,
                         // "user_assigning_seller_id"  => $lockedCustomerCare->user_assigning_seller_id
                     ]);
@@ -311,23 +314,23 @@ class CustomerCareController extends Controller implements HasMiddleware
             });
 
             return response()->json([
-                "success" => true,
-                "message" => ($customer_care->status == 1 && $request->status == 0 && !$is_admin) ? "Đợi duyệt" : "Cập nhật thành công"
+                'success' => true,
+                'message' => ($customer_care->status == 1 && $request->status == 0 && ! $is_admin) ? 'Đợi duyệt' : 'Cập nhật thành công',
             ]);
         } catch (AuthorizationException $exception) {
             return response()->json([
-                "success" => false,
-                "message" => $exception->getMessage(),
+                'success' => false,
+                'message' => $exception->getMessage(),
             ], 403);
         } catch (DomainException $exception) {
             return response()->json([
-                "success" => false,
-                "message" => $exception->getMessage(),
+                'success' => false,
+                'message' => $exception->getMessage(),
             ], 409);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => false,
-                "message" => $th->getMessage()
+                'success' => false,
+                'message' => $th->getMessage(),
             ]);
         }
     }
@@ -348,26 +351,26 @@ class CustomerCareController extends Controller implements HasMiddleware
                 $this->customerCareWriteAccessService->authorize($actor, $customerCare, 'accept');
                 $this->customerCareWriteAccessService->ensureSourceConsistency($customerCare);
                 $customerCare->update([
-                    "is_accept" => $request->boolean('is_accept'),
-                    "reason" => $request->input('reason'),
-                    "user_accept_id" => $actor->getKey(),
+                    'is_accept' => $request->boolean('is_accept'),
+                    'reason' => $request->input('reason'),
+                    'user_accept_id' => $actor->getKey(),
                 ]);
             });
 
             return response()->json([
-                "success" => true,
-                "message" => "Duyệt thành công"
+                'success' => true,
+                'message' => 'Duyệt thành công',
             ]);
         } catch (AuthorizationException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 409);
-        } catch (\Illuminate\Validation\ValidationException $exception) {
+        } catch (ValidationException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => false,
-                "message" => $th->getMessage()
+                'success' => false,
+                'message' => $th->getMessage(),
             ], 500);
         }
     }
@@ -527,7 +530,7 @@ class CustomerCareController extends Controller implements HasMiddleware
         };
 
         $query->where(function ($scope) use ($actor, $actorPancakeUserId, $activeAssignmentExists) {
-            $scope->where(function ($assignedScope) use ($actor, $activeAssignmentExists) {
+            $scope->where(function ($assignedScope) use ($actor) {
                 $assignedScope->whereExists(function ($assignmentQuery) use ($actor) {
                     $assignmentQuery->selectRaw('1')
                         ->from('customer_care_assignments as direct_read_actor_assignment')
@@ -548,9 +551,9 @@ class CustomerCareController extends Controller implements HasMiddleware
                             $actor->getKey()
                         );
                 })->whereRaw(
-                    "(SELECT COUNT(*) FROM customer_care_assignments AS direct_read_assignment_count
+                    '(SELECT COUNT(*) FROM customer_care_assignments AS direct_read_assignment_count
                       WHERE direct_read_assignment_count.customer_care_id = customer_cares.id
-                        AND direct_read_assignment_count.status = ?) = 1",
+                        AND direct_read_assignment_count.status = ?) = 1',
                     [CustomerCareAssignment::STATUS_ACTIVE]
                 );
             })->orWhere(function ($legacyScope) use ($actorPancakeUserId, $activeAssignmentExists) {
@@ -601,7 +604,7 @@ class CustomerCareController extends Controller implements HasMiddleware
         // Trả về response
         return response()->json([
             'success' => true,
-            'message' => 'Đã xóa thành công'
+            'message' => 'Đã xóa thành công',
         ], 200); // Có thể dùng 204 No Content nếu không muốn trả về body
     }
 
@@ -609,15 +612,15 @@ class CustomerCareController extends Controller implements HasMiddleware
     public function overview()
     {
         try {
-            $today = today()->format("Y-m-d");
-            $startOfWeek = Carbon::now()->startOfWeek()->format("Y-m-d");
-            $endOfWeek = Carbon::now()->endOfWeek()->format("Y-m-d");
+            $today = today()->format('Y-m-d');
+            $startOfWeek = Carbon::now()->startOfWeek()->format('Y-m-d');
+            $endOfWeek = Carbon::now()->endOfWeek()->format('Y-m-d');
             $user = auth()->user();
             $shop_ids = $user->shops()->pluck('shops.id');
             $taskBaseQuery = CustomerCare::query();
             $this->applyOverviewAccessScope($taskBaseQuery, $user, $shop_ids, true);
 
-            $taskOverview = (clone $taskBaseQuery)->actionable()->selectRaw("
+            $taskOverview = (clone $taskBaseQuery)->actionable()->selectRaw('
                 SUM(CASE WHEN date_care = ? AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_today,
                 SUM(CASE WHEN date_care = ? AND status = 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_today_done,
 
@@ -641,7 +644,7 @@ class CustomerCareController extends Controller implements HasMiddleware
                     AND is_accept = 1
                     THEN 1 ELSE 0
                 END) as customer_care_expire_done
-            ", [
+            ', [
                 // today
                 $today,
                 $today,
@@ -661,58 +664,58 @@ class CustomerCareController extends Controller implements HasMiddleware
                 $today,
                 $today,
             ])
-            ->first();
+                ->first();
             $editBaseQuery = CustomerCare::query();
             $this->applyOverviewAccessScope($editBaseQuery, $user, $shop_ids, false);
-            $editOverview = $editBaseQuery->selectRaw("
+            $editOverview = $editBaseQuery->selectRaw('
                 SUM(CASE WHEN total_edit > 1 THEN 1 ELSE 0 END) as customer_care_edit,
                 SUM(CASE WHEN total_edit > 1 AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_edit_accepted
-            ")->first();
-            $date_start = date("Y-m-d 00:00:00");
-            $date_end   = date("Y-m-d 23:59:59");
-            $query = Order::whereBetween("created_at", [$date_start, $date_end])
-                            ->where(function ($q) use ($user, $shop_ids) {
-                                if (!$user->isAdmin()) {
-                                    $q->whereIn("shop_id", $shop_ids);
-                                    if (!$user->isManagerSale() && !$user->isManagerCskh()) {
-                                        $q->where(function ($q1) use ($user, $shop_ids) {
-                                            $user_id = $user->pancake_user_id ?? $user->id;
-                                            $q1->where(function ($q2) use ($user_id) {
-                                                $q2->where("user_creator_id", $user_id)
-                                                    ->orWhere("user_care_id", $user_id)
-                                                    ->orWhere("user_assigning_seller_id", $user_id);
-                                            });
-                                        });
-                                    }
-                                }
-                            })
-                            ->selectRaw("
+            ')->first();
+            $date_start = date('Y-m-d 00:00:00');
+            $date_end = date('Y-m-d 23:59:59');
+            $query = Order::whereBetween('created_at', [$date_start, $date_end])
+                ->where(function ($q) use ($user, $shop_ids) {
+                    if (! $user->isAdmin()) {
+                        $q->whereIn('shop_id', $shop_ids);
+                        if (! $user->isManagerSale() && ! $user->isManagerCskh()) {
+                            $q->where(function ($q1) use ($user) {
+                                $user_id = $user->pancake_user_id ?? $user->id;
+                                $q1->where(function ($q2) use ($user_id) {
+                                    $q2->where('user_creator_id', $user_id)
+                                        ->orWhere('user_care_id', $user_id)
+                                        ->orWhere('user_assigning_seller_id', $user_id);
+                                });
+                            });
+                        }
+                    }
+                })
+                ->selectRaw('
                                 COUNT(*) as total_order_today,
                                 COALESCE(SUM(cod), 0) as total_revenue
-                            ")
-                            ->first();
+                            ')
+                ->first();
 
             return response()->json([
-                "success" => true,
-                "data" => [
-                    "customer_care_today"         => (int) $taskOverview->customer_care_today,
-                    "customer_care_today_done"    => (int) $taskOverview->customer_care_today_done,
-                    "customer_care_pending"       => (int) $taskOverview->customer_care_pending,
-                    "customer_care_pending_done"  => (int) $taskOverview->customer_care_pending_done,
-                    "customer_care_in_week"       => (int) $taskOverview->customer_care_in_week,
-                    "customer_care_in_week_done"  => (int) $taskOverview->customer_care_in_week_done,
-                    "customer_care_expire"        => (int) $taskOverview->customer_care_expire,
-                    "customer_care_expire_done"   => (int) $taskOverview->customer_care_expire_done,
-                    "customer_care_edit"          => (int) $editOverview->customer_care_edit,
-                    "customer_care_edit_accepted" => (int) $editOverview->customer_care_edit_accepted,
-                    "total_order_today"           => $query->total_order_today,
-                    "total_revenue"               => $query->total_revenue
-                ]
+                'success' => true,
+                'data' => [
+                    'customer_care_today' => (int) $taskOverview->customer_care_today,
+                    'customer_care_today_done' => (int) $taskOverview->customer_care_today_done,
+                    'customer_care_pending' => (int) $taskOverview->customer_care_pending,
+                    'customer_care_pending_done' => (int) $taskOverview->customer_care_pending_done,
+                    'customer_care_in_week' => (int) $taskOverview->customer_care_in_week,
+                    'customer_care_in_week_done' => (int) $taskOverview->customer_care_in_week_done,
+                    'customer_care_expire' => (int) $taskOverview->customer_care_expire,
+                    'customer_care_expire_done' => (int) $taskOverview->customer_care_expire_done,
+                    'customer_care_edit' => (int) $editOverview->customer_care_edit,
+                    'customer_care_edit_accepted' => (int) $editOverview->customer_care_edit_accepted,
+                    'total_order_today' => $query->total_order_today,
+                    'total_revenue' => $query->total_revenue,
+                ],
             ]);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => false,
-                "message" => "Vui lòng thử lại"
+                'success' => false,
+                'message' => 'Vui lòng thử lại',
             ]);
         }
     }
@@ -721,9 +724,9 @@ class CustomerCareController extends Controller implements HasMiddleware
     {
         try {
             $inputs = $request->only(
-                "pancake_user_ids",
-                "is_multiple",
-                "order_ids"
+                'pancake_user_ids',
+                'is_multiple',
+                'order_ids'
             );
 
             $is_multiple = filter_var($inputs['is_multiple'] ?? false, FILTER_VALIDATE_BOOLEAN);
@@ -736,28 +739,28 @@ class CustomerCareController extends Controller implements HasMiddleware
                 ->filter(fn ($id) => is_int($id) || is_string($id))
                 ->unique()
                 ->values();
-            $pancake_user_id = $inputs["pancake_user_ids"][0] ?? null; // chỉ lấy 1 item thôi, vì bên FE là radio
+            $pancake_user_id = $inputs['pancake_user_ids'][0] ?? null; // chỉ lấy 1 item thôi, vì bên FE là radio
 
             if ($order_ids->isEmpty() || ! $pancake_user_id) {
                 return response()->json([
-                    "success" => false,
-                    "message" => "Thiếu dữ liệu phân công",
+                    'success' => false,
+                    'message' => 'Thiếu dữ liệu phân công',
                 ]);
             }
 
-            $user = User::where("pancake_user_id", $pancake_user_id)->first();
+            $user = User::where('pancake_user_id', $pancake_user_id)->first();
 
             if (! $user) {
                 return response()->json([
-                    "success" => false,
-                    "message" => "Không tìm thấy người được phân công",
+                    'success' => false,
+                    'message' => 'Không tìm thấy người được phân công',
                 ]);
             }
 
             if (! $user->canReceiveCustomerCareAssignments()) {
                 return response()->json([
-                    "success" => false,
-                    "message" => "Người được phân công phải thuộc bộ phận CSKH.",
+                    'success' => false,
+                    'message' => 'Người được phân công phải thuộc bộ phận CSKH.',
                 ], 422);
             }
 
@@ -831,9 +834,9 @@ class CustomerCareController extends Controller implements HasMiddleware
 
                 foreach ($sourceShopIds as $sourceShopId) {
                     if (! $this->shopAccessService->canAccessShop($user, (int) $sourceShopId)) {
-                    throw new DomainException(
-                        "Các khách hàng bạn phân công không thuộc cửa hàng mà {$user->name} nằm trong"
-                    );
+                        throw new DomainException(
+                            "Các khách hàng bạn phân công không thuộc cửa hàng mà {$user->name} nằm trong"
+                        );
                     }
                 }
 
@@ -847,69 +850,45 @@ class CustomerCareController extends Controller implements HasMiddleware
                         $order_item->shop->normalizedCareCycleDays()
                     );
                     $customerCare = CustomerCare::create([
-                        "shop_id" => $order_item->shop_id,
-                        "pancake_customer_id" => $order_item->pancake_customer_id,
-                        "customer_phones" => $order_item->customer_phone,
-                        "customer_name" => $order_item->customer_name,
-                        "customer_addresss" => $order_item->customer_address,
-                        "pancake_order_id" => $order_item->pancake_order_id,
-                        "date_care" => $scheduledOn->toDateString(),
-                        "user_creator_id" => $actor->pancake_user_id,
+                        'shop_id' => $order_item->shop_id,
+                        'pancake_customer_id' => $order_item->pancake_customer_id,
+                        'customer_phones' => $order_item->customer_phone,
+                        'customer_name' => $order_item->customer_name,
+                        'customer_addresss' => $order_item->customer_address,
+                        'pancake_order_id' => $order_item->pancake_order_id,
+                        'date_care' => $scheduledOn->toDateString(),
+                        'user_creator_id' => $actor->pancake_user_id,
                     ]);
 
-                    $assignment = $this->customerCareAssignmentService->create(
+                    $assignment = $this->customerCareAssignmentService->createWithJourneyEvent(
                         $customerCare,
                         (int) $order_item->shop_id,
                         CustomerCareAssignment::SOURCE_ORDER,
                         (int) $order_item->id,
                         $user,
                         $assignedAt,
-                        $scheduledOn
-                    );
-
-                    $this->activityLogService->log(
-                        "customer_care.assigned",
-                        "user",
-                        $actor->id,
-                        $actor->name,
-                        $user->id,
-                        $user->name,
-                        $order_item->shop_id,
-                        $order_item->shop?->name,
-                        "order",
-                        $order_item->id,
-                        $order_item->pancake_order_id,
-                        $order_item->pancake_customer_id,
-                        null,
-                        ["assigned_user_id" => $user->id],
-                        [
-                            "customer_care_id" => $customerCare->id,
-                            "assignment_id" => $assignment->id,
-                            "source_type" => $assignment->source_type,
-                            "source_id" => $assignment->source_id,
-                            "assigned_at" => $assignment->assigned_at->toISOString(),
-                            "assignee_user_id" => $assignment->assignee_user_id,
-                            "assignee_pancake_user_id" => $assignment->assignee_pancake_user_id,
-                        ]
+                        $scheduledOn,
+                        $actor,
+                        $order_item->shop?->name
                     );
                 }
 
                 return $lockedOrders->count();
             }, 3);
             $total_order_id = $order_ids->count();
-            
+
             return response()->json([
-                "success" => true,
-                "message" => $total_orders == $total_order_id ? 
-                            "Phân công thành công" : 
-                            "Phân công thành công " . $total_orders . " khách hàng. Còn lại " . ($total_order_id - $total_orders) . " khách hàng không thuộc cửa hạng mà " . $user->name . " nằm trong"
+                'success' => true,
+                'message' => $total_orders == $total_order_id ?
+                            'Phân công thành công' :
+                            'Phân công thành công '.$total_orders.' khách hàng. Còn lại '.($total_order_id - $total_orders).' khách hàng không thuộc cửa hạng mà '.$user->name.' nằm trong',
             ]);
         } catch (AuthorizationException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => false,
-                "message" => $th->getMessage()
+                'success' => false,
+                'message' => $th->getMessage(),
             ]);
         }
     }
@@ -978,11 +957,13 @@ class CustomerCareController extends Controller implements HasMiddleware
 
             if ($activeSources->count() === 1) {
                 $customerCare->setAttribute('assignable_order_id', (int) $activeSources->first()->source_id);
+
                 continue;
             }
 
             if ($activeSources->isNotEmpty()) {
                 $customerCare->setAttribute('assignable_order_id', null);
+
                 continue;
             }
 
@@ -1171,7 +1152,7 @@ class CustomerCareController extends Controller implements HasMiddleware
         });
     }
 
-    /** 
+    /**
      * Xác nhận cskh khi được phân công
      */
     public function confirmCare($customer_care_id, ?Request $request = null)
@@ -1187,21 +1168,21 @@ class CustomerCareController extends Controller implements HasMiddleware
                 $this->customerCareWriteAccessService->ensureSourceConsistency($customerCare);
                 $customerCare->update(['is_confirm_care' => true]);
             });
-            
+
             return response()->json([
-                "success" => true,
-                "message" => "Nhận thành công"
+                'success' => true,
+                'message' => 'Nhận thành công',
             ]);
         } catch (AuthorizationException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 409);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        } catch (ModelNotFoundException) {
             return response()->json(['success' => false, 'message' => 'Lịch chăm sóc này không tồn tại'], 404);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => false,
-                "message" => $th->getMessage()
+                'success' => false,
+                'message' => $th->getMessage(),
             ]);
         }
     }
@@ -1221,53 +1202,53 @@ class CustomerCareController extends Controller implements HasMiddleware
 
         try {
             $inputs = $request->only(
-                "status",
-                "user_id",
-                "shop_id",
-                "page"
+                'status',
+                'user_id',
+                'shop_id',
+                'page'
             );
             $query = CustomerCare::query();
             if ($effectiveShopIds !== null) {
-                $query->whereIn("shop_id", $effectiveShopIds);
+                $query->whereIn('shop_id', $effectiveShopIds);
             }
-            if (isset($inputs["status"])) {
-                $query->where("status", $inputs["status"]);
+            if (isset($inputs['status'])) {
+                $query->where('status', $inputs['status']);
             }
-            $query->with(["users" => function ($q) {
-                $q->select("users.pancake_user_id", "users.id", "users.name");
+            $query->with(['users' => function ($q) {
+                $q->select('users.pancake_user_id', 'users.id', 'users.name');
             }]);
-            $query->whereHas("users", function ($q) use ($inputs) {
-                if (isset($inputs["user_id"])) {
-                    $q->where("users.pancake_user_id", $inputs["user_id"]);
+            $query->whereHas('users', function ($q) use ($inputs) {
+                if (isset($inputs['user_id'])) {
+                    $q->where('users.pancake_user_id', $inputs['user_id']);
                 }
             });
             // $query->select('customer_cares.*');
             $query->addSelect([
                 'latest_care_time' => CustomerCare::query()
-                                ->from('customer_cares as c2')
-                                ->select('c2.time_care')
-                                ->whereColumn('c2.pancake_customer_id', 'customer_cares.pancake_customer_id')
-                                ->where('c2.status', 1)
-                                ->whereNotNull('c2.time_care')
-                                ->orderByDesc('c2.time_care')
-                                ->limit(1),
+                    ->from('customer_cares as c2')
+                    ->select('c2.time_care')
+                    ->whereColumn('c2.pancake_customer_id', 'customer_cares.pancake_customer_id')
+                    ->where('c2.status', 1)
+                    ->whereNotNull('c2.time_care')
+                    ->orderByDesc('c2.time_care')
+                    ->limit(1),
             ]);
-            $result = $query->paginate(30, ['customer_cares.*'], 'page', $inputs["page"] ?? 1);
+            $result = $query->paginate(30, ['customer_cares.*'], 'page', $inputs['page'] ?? 1);
 
             return response()->json([
-                "success" => true,
-                "data"    => [
-                    "customers"    => $result->items(),
+                'success' => true,
+                'data' => [
+                    'customers' => $result->items(),
                     'current_page' => $result->currentPage(),
-                    'per_page'     => $result->perPage(),
-                    'total_items'  => $result->total(),
-                    'total_pages'  => $result->lastPage(),
+                    'per_page' => $result->perPage(),
+                    'total_items' => $result->total(),
+                    'total_pages' => $result->lastPage(),
                 ],
             ]);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => false,
-                "message" => $th->getMessage()
+                'success' => false,
+                'message' => $th->getMessage(),
             ], 500);
         }
     }
@@ -1287,13 +1268,13 @@ class CustomerCareController extends Controller implements HasMiddleware
 
         try {
             $inputs = $request->only(
-                "page",
-                "user_id",
-                "shop_id"
+                'page',
+                'user_id',
+                'shop_id'
             );
             $today = now()->toDateString();
 
-            $query = User::query()->where("id", "!=", $user->id)->whereColumn('id', 'pancake_user_id');
+            $query = User::query()->where('id', '!=', $user->id)->whereColumn('id', 'pancake_user_id');
 
             if ($effectiveShopIds !== null) {
                 $query->whereHas('shops', function ($q) use ($effectiveShopIds) {
@@ -1301,62 +1282,56 @@ class CustomerCareController extends Controller implements HasMiddleware
                 });
             }
 
-            if (isset($inputs["user_id"])) {
-                $query->where("id", $inputs["user_id"]);
+            if (isset($inputs['user_id'])) {
+                $query->where('id', $inputs['user_id']);
             }
 
             $applyShop = fn ($q) => $q->actionable()
                 ->when($effectiveShopIds !== null, function ($shopQuery) use ($effectiveShopIds) {
                     $shopQuery->whereIn('customer_cares.shop_id', $effectiveShopIds);
                 })
-                ->where("is_accept", 1);
+                ->where('is_accept', 1);
 
             $query->withCount([
-                'customerCareAssign as today_total' => fn ($q) =>
-                    $applyShop($q->where('date_care', $today)),
+                'customerCareAssign as today_total' => fn ($q) => $applyShop($q->where('date_care', $today)),
 
-                'customerCareAssign as today_done' => fn ($q) =>
-                    $applyShop($q->where('date_care', $today)->where('status', 1)),
+                'customerCareAssign as today_done' => fn ($q) => $applyShop($q->where('date_care', $today)->where('status', 1)),
 
-                'customerCareAssign as upcoming_total' => fn ($q) =>
-                    $applyShop($q->where('date_care', '>', $today)),
+                'customerCareAssign as upcoming_total' => fn ($q) => $applyShop($q->where('date_care', '>', $today)),
 
-                'customerCareAssign as upcoming_done' => fn ($q) =>
-                    $applyShop($q->where('date_care', '>', $today)->where('status', 1)),
+                'customerCareAssign as upcoming_done' => fn ($q) => $applyShop($q->where('date_care', '>', $today)->where('status', 1)),
 
-                'customerCareAssign as expired_total' => fn ($q) =>
-                    $applyShop(
-                        $q->where('date_care', '<', $today)
+                'customerCareAssign as expired_total' => fn ($q) => $applyShop(
+                    $q->where('date_care', '<', $today)
                         ->where(function ($q) {
                             $q->where('status', 0)
                                 ->orWhereDate('time_care', '>', DB::raw('date_care'));
                         })
-                    ),
+                ),
 
-                'customerCareAssign as expired_done' => fn ($q) =>
-                    $applyShop(
-                        $q->where('date_care', '<', $today)
+                'customerCareAssign as expired_done' => fn ($q) => $applyShop(
+                    $q->where('date_care', '<', $today)
                         ->where('status', 1)
                         ->whereDate('time_care', '>', DB::raw('date_care'))
-                    ),
+                ),
             ]);
 
-            $result = $query->paginate(30, ['*'], 'page', $inputs["page"] ?? 1);
+            $result = $query->paginate(30, ['*'], 'page', $inputs['page'] ?? 1);
 
             return response()->json([
-                "success" => true,
-                "data"    => [
-                    "customers"    => $result->items(),
+                'success' => true,
+                'data' => [
+                    'customers' => $result->items(),
                     'current_page' => $result->currentPage(),
-                    'per_page'     => $result->perPage(),
-                    'total_items'  => $result->total(),
-                    'total_pages'  => $result->lastPage(),
+                    'per_page' => $result->perPage(),
+                    'total_items' => $result->total(),
+                    'total_pages' => $result->lastPage(),
                 ],
             ]);
         } catch (\Throwable $th) {
             return response()->json([
-                "success" => false,
-                "message" => $th->getMessage()
+                'success' => false,
+                'message' => $th->getMessage(),
             ], 500);
         }
     }

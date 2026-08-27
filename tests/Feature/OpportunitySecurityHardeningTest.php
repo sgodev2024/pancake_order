@@ -15,6 +15,7 @@ use App\Models\Shop;
 use App\Models\User;
 use App\Services\CustomerCareReclaimService;
 use Carbon\Carbon;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -180,7 +181,13 @@ class OpportunitySecurityHardeningTest extends TestCase
         $this->assertSame('customer_care.assigned', $log->action);
         $this->assertSame($actor->id, $log->actor_user_id);
         $this->assertSame($assignee->id, $log->target_user_id);
-        $this->assertSame($order->id, (int) $log->subject_id);
+        $this->assertSame($assignment->id, (int) $log->subject_id);
+        $this->assertSame('customer_care_assignment', $log->subject_type);
+        $this->assertSame('2026-08-24 23:50:00', $log->occurred_at->format('Y-m-d H:i:s'));
+        $this->assertSame(
+            'customer_care.assigned:assignment:'.$assignment->id,
+            $log->idempotency_key
+        );
         $this->assertSame($assignment->customer_care_id, $log->metadata['customer_care_id']);
         $this->assertSame($assignment->id, $log->metadata['assignment_id']);
         $this->assertSame('order', $log->metadata['source_type']);
@@ -1122,6 +1129,52 @@ class OpportunitySecurityHardeningTest extends TestCase
         $this->assertSame($assignee->id, $log->target_user_id);
     }
 
+    public function test_imported_opportunity_reassignment_reuses_local_source_history_without_fake_customer_event(): void
+    {
+        Carbon::setTestNow('2026-08-24 12:00:00');
+        $shop = $this->createShop('Imported Shop', 0);
+        $actor = $this->createUser('manager-cskh', 'Actor');
+        $assignee = $this->createUser('staff-cskh', 'Assignee');
+        $this->attachShop($actor, $shop);
+        $this->attachShop($assignee, $shop);
+        $this->grantPermission($actor, 'asign-cskh');
+        $opportunity = $this->createImportedOpportunity($shop);
+
+        $this->actingAs($actor, 'api')->postJson('/api/v1/imported-opportunities/assign', [
+            'ids' => [$opportunity->id],
+            'pancake_user_ids' => [$assignee->pancake_user_id],
+        ])->assertOk()->assertJsonPath('success', true);
+
+        $first = CustomerCareAssignment::query()->sole();
+        Carbon::setTestNow('2026-08-27 12:00:00');
+        $this->app->make(CustomerCareReclaimService::class)->executeOne(
+            $first->id,
+            CarbonImmutable::parse('2026-08-27 12:00:00', config('app.timezone'))
+        );
+
+        $this->assertSame(0, (int) $opportunity->fresh()->status);
+
+        $this->actingAs($actor, 'api')->postJson('/api/v1/imported-opportunities/assign', [
+            'ids' => [$opportunity->id],
+            'pancake_user_ids' => [$assignee->pancake_user_id],
+        ])->assertOk()->assertJsonPath('success', true);
+
+        $second = CustomerCareAssignment::query()->latest('id')->firstOrFail();
+        $this->assertNotSame($first->id, $second->id);
+        $this->assertSame(CustomerCareAssignment::STATUS_RECLAIMED, $first->fresh()->status);
+        $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $second->status);
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer_care.assigned')->count());
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer_care.reassigned')->count());
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer_care.reclaimed')->count());
+        $reassigned = ActivityLog::query()->where('action', 'customer_care.reassigned')->sole();
+        $this->assertSame((string) $second->id, $reassigned->subject_id);
+        $this->assertSame(CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY, $reassigned->metadata['source_type']);
+        $this->assertSame($opportunity->id, $reassigned->metadata['source_id']);
+        $this->assertSame($shop->id, $reassigned->metadata['shop_id']);
+        $this->assertArrayNotHasKey('customer_id', $reassigned->metadata);
+        $this->assertSame(0, ActivityLog::query()->where('action', 'customer.entered_system')->count());
+    }
+
     public function test_import_authorizes_feature_and_shop_before_processing_the_file(): void
     {
         $ownShop = $this->createShop('Own Shop');
@@ -1672,6 +1725,8 @@ class OpportunitySecurityHardeningTest extends TestCase
             $table->string('subject_id')->nullable();
             $table->string('pancake_order_id')->nullable();
             $table->string('pancake_customer_id')->nullable();
+            $table->timestamp('occurred_at')->nullable()->index();
+            $table->string('idempotency_key', 191)->nullable()->unique();
             $table->json('old_values')->nullable();
             $table->json('new_values')->nullable();
             $table->json('metadata')->nullable();

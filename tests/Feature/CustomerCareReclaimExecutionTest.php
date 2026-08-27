@@ -87,8 +87,20 @@ class CustomerCareReclaimExecutionTest extends TestCase
         $this->assertSame('Hệ thống', $log->actor_name);
         $this->assertSame(2, $log->target_user_id);
         $this->assertSame('Care Staff', $log->target_user_name);
+        $this->assertSame('customer_care_assignment', $log->subject_type);
+        $this->assertSame((string) $assignment->id, $log->subject_id);
+        $this->assertSame('2026-08-24 12:34:56', $log->occurred_at->format('Y-m-d H:i:s'));
+        $this->assertSame(
+            'customer_care.reclaimed:assignment:'.$assignment->id,
+            $log->idempotency_key
+        );
         $this->assertSame($assignment->id, $log->metadata['assignment_id']);
         $this->assertSame($customerCare->id, $log->metadata['customer_care_id']);
+        $this->assertSame($assignment->assignee_user_id, $log->metadata['assignee_user_id']);
+        $this->assertSame($assignment->shop_id, $log->metadata['shop_id']);
+        $this->assertSame($assignment->source_type, $log->metadata['source_type']);
+        $this->assertSame($assignment->source_id, $log->metadata['source_id']);
+        $this->assertSame($assignment->reclaimed_at->toISOString(), $log->metadata['reclaimed_at']);
         $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $log->old_values['status']);
         $this->assertSame(2, $log->old_values['assignee_user_id']);
         $this->assertSame('PANCAKE-2', $log->old_values['assignee_pancake_user_id']);
@@ -231,7 +243,7 @@ class CustomerCareReclaimExecutionTest extends TestCase
         $opportunity = $this->createImportedOpportunity();
         $assignment = $this->createAssignment($this->createCustomerCare(), $opportunity);
         $activityLog = Mockery::mock(ActivityLogService::class);
-        $activityLog->shouldReceive('log')->once()->andThrow(new RuntimeException('log failed'));
+        $activityLog->shouldReceive('write')->once()->andThrow(new RuntimeException('log failed'));
         $service = new CustomerCareReclaimService($activityLog);
 
         try {
@@ -290,6 +302,103 @@ class CustomerCareReclaimExecutionTest extends TestCase
         $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $second->status);
         $this->assertSame(2, CustomerCareAssignment::query()->where('source_id', $order->id)->count());
         $this->assertSame([$newCare->id], CustomerCare::query()->actionable()->pluck('id')->all());
+    }
+
+    public function test_assignment_history_emits_assigned_then_reassigned_with_local_cca_metadata(): void
+    {
+        $order = $this->createOrder();
+        $assignmentService = new CustomerCareAssignmentService($this->app->make(ActivityLogService::class));
+        $assignedAt = CarbonImmutable::parse('2026-08-21 12:00:00', config('app.timezone'));
+
+        $firstCare = $this->createCustomerCare(order: $order);
+        $firstCare->update(['date_care' => '2026-08-21']);
+        $first = DB::transaction(fn () => $assignmentService->createWithJourneyEvent(
+            $firstCare,
+            (int) $order->shop_id,
+            CustomerCareAssignment::SOURCE_ORDER,
+            (int) $order->id,
+            User::findOrFail(2),
+            $assignedAt,
+            CarbonImmutable::parse($firstCare->date_care, config('app.timezone')),
+            User::findOrFail(1),
+            'Shop One'
+        ));
+
+        $this->service->executeOne($first->id, $this->referenceTime());
+
+        $secondCare = $this->createCustomerCare(order: $order);
+        $second = DB::transaction(fn () => $assignmentService->createWithJourneyEvent(
+            $secondCare,
+            (int) $order->shop_id,
+            CustomerCareAssignment::SOURCE_ORDER,
+            (int) $order->id,
+            User::findOrFail(2),
+            CarbonImmutable::parse('2026-08-24 13:00:00', config('app.timezone')),
+            CarbonImmutable::parse($secondCare->date_care, config('app.timezone')),
+            User::findOrFail(1),
+            'Shop One'
+        ));
+
+        $assignedLogs = ActivityLog::query()->where('action', 'customer_care.assigned')->get();
+        $reassignedLogs = ActivityLog::query()->where('action', 'customer_care.reassigned')->get();
+
+        $this->assertCount(1, $assignedLogs);
+        $this->assertCount(1, $reassignedLogs);
+        $this->assertSame((string) $first->id, $assignedLogs->sole()->subject_id);
+        $this->assertSame('customer_care_assignment', $assignedLogs->sole()->subject_type);
+        $this->assertSame($assignedAt->format('Y-m-d H:i:s'), $assignedLogs->sole()->occurred_at->format('Y-m-d H:i:s'));
+        $this->assertSame(
+            'customer_care.assigned:assignment:'.$first->id,
+            $assignedLogs->sole()->idempotency_key
+        );
+
+        $reassigned = $reassignedLogs->sole();
+        $this->assertSame((string) $second->id, $reassigned->subject_id);
+        $this->assertSame($first->id, $reassigned->metadata['previous_assignment_id']);
+        $this->assertSame($second->id, $reassigned->metadata['new_assignment_id']);
+        $this->assertSame($first->assignee_user_id, $reassigned->metadata['previous_assignee_user_id']);
+        $this->assertSame($second->assignee_user_id, $reassigned->metadata['new_assignee_user_id']);
+        $this->assertSame($first->customer_care_id, $reassigned->metadata['previous_customer_care_id']);
+        $this->assertSame($second->customer_care_id, $reassigned->metadata['customer_care_id']);
+        $this->assertSame($second->shop_id, $reassigned->metadata['shop_id']);
+        $this->assertSame($second->source_type, $reassigned->metadata['source_type']);
+        $this->assertSame($second->source_id, $reassigned->metadata['source_id']);
+        $this->assertSame(1, $reassigned->actor_user_id);
+        $this->assertSame(2, $reassigned->target_user_id);
+        $this->assertSame('customer_care.reassigned:assignment:'.$second->id, $reassigned->idempotency_key);
+    }
+
+    public function test_assignment_event_failure_rolls_back_customer_care_and_assignment_together(): void
+    {
+        $order = $this->createOrder();
+        $customerCare = null;
+        $activityLog = Mockery::mock(ActivityLogService::class);
+        $activityLog->shouldReceive('write')->once()->andThrow(new RuntimeException('log failed'));
+        $assignmentService = new CustomerCareAssignmentService($activityLog);
+
+        try {
+            DB::transaction(function () use (&$customerCare, $assignmentService, $order) {
+                $customerCare = $this->createCustomerCare(order: $order);
+                $assignmentService->createWithJourneyEvent(
+                    $customerCare,
+                    (int) $order->shop_id,
+                    CustomerCareAssignment::SOURCE_ORDER,
+                    (int) $order->id,
+                    User::findOrFail(2),
+                    CarbonImmutable::parse('2026-08-24 12:00:00', config('app.timezone')),
+                    CarbonImmutable::parse('2026-08-24', config('app.timezone')),
+                    User::findOrFail(1),
+                    'Shop One'
+                );
+            });
+            $this->fail('Expected activity-log failure.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('log failed', $exception->getMessage());
+        }
+
+        $this->assertFalse(CustomerCareAssignment::query()->exists());
+        $this->assertFalse(CustomerCare::query()->whereKey($customerCare?->id)->exists());
+        $this->assertSame(0, ActivityLog::query()->count());
     }
 
     public function test_source_missing_and_unexpected_import_state_are_reported_without_mutation(): void
@@ -654,6 +763,8 @@ class CustomerCareReclaimExecutionTest extends TestCase
             $table->string('subject_id')->nullable();
             $table->string('pancake_order_id')->nullable();
             $table->string('pancake_customer_id')->nullable();
+            $table->timestamp('occurred_at')->nullable()->index();
+            $table->string('idempotency_key', 191)->nullable()->unique();
             $table->json('old_values')->nullable();
             $table->json('new_values')->nullable();
             $table->json('metadata')->nullable();

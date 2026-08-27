@@ -17,6 +17,7 @@ use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Maatwebsite\Excel\Facades\Excel;
 
 class ImportedOpportunityController extends Controller
@@ -26,8 +27,7 @@ class ImportedOpportunityController extends Controller
         private readonly ActivityLogService $activityLogService,
         private readonly ShopAccessService $shopAccessService,
         private readonly CustomerCareWriteAccessService $customerCareWriteAccessService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request)
     {
@@ -38,29 +38,29 @@ class ImportedOpportunityController extends Controller
         );
 
         try {
-            $inputs = $request->only("page", "date_from", "date_to");
+            $inputs = $request->only('page', 'date_from', 'date_to');
             $queries = ImportedOpportunity::query();
-            $queries->where("status", 0);
-            $queries->with(["shop" => fn($q) => $q->select("id", "name")]);
+            $queries->where('status', 0);
+            $queries->with(['shop' => fn ($q) => $q->select('id', 'name')]);
 
-            if (isset($inputs["date_from"])) {
-                $queries->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+            if (isset($inputs['date_from'])) {
+                $queries->where('created_at', '>=', $inputs['date_from'].' 00:00:00');
             }
-            if (isset($inputs["date_to"])) {
-                $queries->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+            if (isset($inputs['date_to'])) {
+                $queries->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
             }
             if ($requestedShopId !== null) {
-                $queries->where("shop_id", $requestedShopId);
+                $queries->where('shop_id', $requestedShopId);
             } elseif (! $this->shopAccessService->isGlobal($user)) {
-                $queries->whereIn("shop_id", $this->shopAccessService->ids($user));
+                $queries->whereIn('shop_id', $this->shopAccessService->ids($user));
             }
 
-            $queries->latest("created_at");
-            $opportunities = $queries->paginate(30, ['*'], 'page', $inputs["page"] ?? 1);
+            $queries->latest('created_at');
+            $opportunities = $queries->paginate(30, ['*'], 'page', $inputs['page'] ?? 1);
 
             return response()->json([
-                "success" => true,
-                "data" => [
+                'success' => true,
+                'data' => [
                     'orders' => $opportunities->items(),
                     'current_page' => $opportunities->currentPage(),
                     'per_page' => $opportunities->perPage(),
@@ -69,7 +69,7 @@ class ImportedOpportunityController extends Controller
                 ],
             ]);
         } catch (\Throwable $th) {
-            return response()->json(['success' => false, 'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Đã có lỗi xảy ra: '.$th->getMessage()], 500);
         }
     }
 
@@ -82,7 +82,7 @@ class ImportedOpportunityController extends Controller
     {
         try {
             $request->validate([
-                "shop_id" => "required|exists:shops,id",
+                'shop_id' => 'required|exists:shops,id',
             ]);
             $actor = $request->user();
             if ($actor === null) {
@@ -95,30 +95,30 @@ class ImportedOpportunityController extends Controller
             }
             $this->shopAccessService->authorizeRequestedShopId($actor, (int) $request->input('shop_id'));
             $request->validate([
-                "file" => "required|file|mimes:xlsx,xls,csv",
+                'file' => 'required|file|mimes:xlsx,xls,csv',
             ]);
 
             $import = new OpportunityImport((int) $request->shop_id, $actor->getKey());
             Excel::import($import, $request->file('file'));
 
             return response()->json([
-                "success" => true,
-                "message" => "Đã import thành công {$import->importedCount} khách hàng",
-                "data" => ["imported_count" => $import->importedCount],
+                'success' => true,
+                'message' => "Đã import thành công {$import->importedCount} khách hàng",
+                'data' => ['imported_count' => $import->importedCount],
             ]);
         } catch (AuthorizationException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         } catch (\Throwable $th) {
-            return response()->json(['success' => false, 'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Đã có lỗi xảy ra: '.$th->getMessage()], 500);
         }
     }
 
     public function assign(Request $request)
     {
         try {
-            $inputs = $request->only("pancake_user_ids", "ids");
+            $inputs = $request->only('pancake_user_ids', 'ids');
             $ids = collect($inputs['ids'] ?? [])
                 ->filter(fn ($id) => is_int($id) || is_string($id))
                 ->unique()
@@ -129,16 +129,16 @@ class ImportedOpportunityController extends Controller
                 return response()->json(['success' => false, 'message' => 'Thiếu dữ liệu phân công']);
             }
 
-            $user = User::where("pancake_user_id", $pancake_user_id)->first();
+            $user = User::where('pancake_user_id', $pancake_user_id)->first();
 
             if (! $user) {
-                return response()->json(["success" => false, "message" => "Không tìm thấy người được phân công"]);
+                return response()->json(['success' => false, 'message' => 'Không tìm thấy người được phân công']);
             }
 
             if (! $user->canReceiveCustomerCareAssignments()) {
                 return response()->json([
-                    "success" => false,
-                    "message" => "Người được phân công phải thuộc bộ phận CSKH.",
+                    'success' => false,
+                    'message' => 'Người được phân công phải thuộc bộ phận CSKH.',
                 ], 422);
             }
 
@@ -171,9 +171,9 @@ class ImportedOpportunityController extends Controller
 
                 foreach ($sourceShopIds as $sourceShopId) {
                     if (! $this->shopAccessService->canAccessShop($user, (int) $sourceShopId)) {
-                    throw new DomainException(
-                        "Các khách hàng bạn phân công không thuộc cửa hàng mà {$user->name} nằm trong"
-                    );
+                        throw new DomainException(
+                            "Các khách hàng bạn phân công không thuộc cửa hàng mà {$user->name} nằm trong"
+                        );
                     }
                 }
 
@@ -186,72 +186,48 @@ class ImportedOpportunityController extends Controller
                         $assignedAt,
                         $opportunity->shop->normalizedCareCycleDays()
                     );
-                    $pancakeCustomerId = "IMPORT-" . $opportunity->id;
+                    $pancakeCustomerId = 'IMPORT-'.$opportunity->id;
                     $customerCare = CustomerCare::create([
-                        "shop_id" => $opportunity->shop_id,
-                        "pancake_customer_id" => $pancakeCustomerId,
-                        "customer_phones" => $opportunity->phone,
-                        "customer_name" => $opportunity->name,
-                        "customer_addresss" => $opportunity->address,
-                        "pancake_order_id" => null,
-                        "date_care" => $scheduledOn->toDateString(),
-                        "user_creator_id" => $actor->pancake_user_id,
+                        'shop_id' => $opportunity->shop_id,
+                        'pancake_customer_id' => $pancakeCustomerId,
+                        'customer_phones' => $opportunity->phone,
+                        'customer_name' => $opportunity->name,
+                        'customer_addresss' => $opportunity->address,
+                        'pancake_order_id' => null,
+                        'date_care' => $scheduledOn->toDateString(),
+                        'user_creator_id' => $actor->pancake_user_id,
                     ]);
 
-                    $assignment = $this->customerCareAssignmentService->create(
+                    $assignment = $this->customerCareAssignmentService->createWithJourneyEvent(
                         $customerCare,
                         (int) $opportunity->shop_id,
                         CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
                         (int) $opportunity->id,
                         $user,
                         $assignedAt,
-                        $scheduledOn
-                    );
-
-                    $this->activityLogService->log(
-                        "customer_care.assigned",
-                        "user",
-                        $actor->id,
-                        $actor->name,
-                        $user->id,
-                        $user->name,
-                        $opportunity->shop_id,
-                        $opportunity->shop?->name,
-                        CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
-                        $opportunity->id,
-                        null,
-                        $pancakeCustomerId,
-                        null,
-                        ["assigned_user_id" => $user->id],
-                        [
-                            "customer_care_id" => $customerCare->id,
-                            "assignment_id" => $assignment->id,
-                            "source_type" => CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
-                            "source_id" => $opportunity->id,
-                            "assigned_at" => $assignment->assigned_at->toISOString(),
-                            "assignee_user_id" => $assignment->assignee_user_id,
-                            "assignee_pancake_user_id" => $assignment->assignee_pancake_user_id,
-                        ]
+                        $scheduledOn,
+                        $actor,
+                        $opportunity->shop?->name
                     );
                 }
 
                 ImportedOpportunity::whereIn('id', $lockedOpportunities->pluck('id'))
-                    ->update(["status" => 1]);
+                    ->update(['status' => 1]);
 
                 return $lockedOpportunities->count();
             });
 
             $total_ids = $ids->count();
 
-            return response()->json(["success" => true,
-                "message" => $total_opportunities == $total_ids
-                    ? "Phân công thành công"
-                    : "Phân công thành công " . $total_opportunities . " khách hàng. Còn lại " . ($total_ids - $total_opportunities) . " khách hàng không thuộc cửa hàng mà " . $user->name . " nằm trong",
+            return response()->json(['success' => true,
+                'message' => $total_opportunities == $total_ids
+                    ? 'Phân công thành công'
+                    : 'Phân công thành công '.$total_opportunities.' khách hàng. Còn lại '.($total_ids - $total_opportunities).' khách hàng không thuộc cửa hàng mà '.$user->name.' nằm trong',
             ]);
         } catch (AuthorizationException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
         } catch (\Throwable $th) {
-            return response()->json(["success" => false, "message" => $th->getMessage()]);
+            return response()->json(['success' => false, 'message' => $th->getMessage()]);
         }
     }
 }

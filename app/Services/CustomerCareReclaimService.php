@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Data\ActivityLogEvent;
+use App\Enums\ActivityLogAction;
+use App\Enums\ActivityLogSubjectType;
 use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\ImportedOpportunity;
@@ -349,39 +352,47 @@ class CustomerCareReclaimService
                 $sourceResult->update(['status' => 0]);
             }
 
-            $this->activityLogService->log(
-                'customer_care.reclaimed',
-                'system',
-                null,
-                'Hệ thống',
-                $assignment->assignee_user_id,
-                $assignment->assignee?->name,
-                $assignment->shop_id,
-                $shop?->name,
-                $assignment->source_type,
-                $assignment->source_id,
-                $customerCare->pancake_order_id,
-                $customerCare->pancake_customer_id,
-                [
+            $this->activityLogService->write(new ActivityLogEvent(
+                action: ActivityLogAction::CUSTOMER_CARE_RECLAIMED,
+                source: 'system',
+                subjectType: ActivityLogSubjectType::CUSTOMER_CARE_ASSIGNMENT,
+                subjectId: (string) $assignment->id,
+                shopId: (int) $assignment->shop_id,
+                shopName: $shop?->name,
+                actorUserId: null,
+                actorName: 'Hệ thống',
+                targetUserId: (int) $assignment->assignee_user_id,
+                targetUserName: $assignment->assignee?->name,
+                pancakeOrderId: $customerCare->pancake_order_id,
+                pancakeCustomerId: $customerCare->pancake_customer_id,
+                occurredAt: $reclaimedAt,
+                idempotencyKey: ActivityLogAction::CUSTOMER_CARE_RECLAIMED->value.':assignment:'.$assignment->id,
+                oldValues: [
                     'status' => CustomerCareAssignment::STATUS_ACTIVE,
                     'assignee_user_id' => $assignment->assignee_user_id,
                     'assignee_pancake_user_id' => $assignment->assignee_pancake_user_id,
                     'assigned_at' => $assignment->assigned_at->format('Y-m-d H:i:s'),
                     'reclaim_eligible_on' => $assignment->reclaim_eligible_on->toDateString(),
                 ],
-                [
+                newValues: [
                     'status' => CustomerCareAssignment::STATUS_RECLAIMED,
                     'reclaimed_at' => $reclaimedAt->format('Y-m-d H:i:s'),
                     'reclaim_reason' => self::RECLAIM_REASON,
                 ],
-                [
-                    'assignment_id' => $assignment->id,
-                    'customer_care_id' => $customerCare->id,
+                metadata: [
+                    'assignment_id' => (int) $assignment->id,
+                    'customer_care_id' => (int) $customerCare->id,
+                    'assignee_user_id' => (int) $assignment->assignee_user_id,
+                    'previous_assignee_user_id' => (int) $assignment->assignee_user_id,
+                    'shop_id' => (int) $assignment->shop_id,
                     'source_type' => $assignment->source_type,
-                    'source_id' => $assignment->source_id,
+                    'source_id' => (int) $assignment->source_id,
                     'reason' => self::RECLAIM_REASON,
-                ]
-            );
+                    'reclaim_reason' => self::RECLAIM_REASON,
+                    'assigned_at' => $assignment->assigned_at->toISOString(),
+                    'reclaimed_at' => $reclaimedAt->toISOString(),
+                ],
+            ));
 
             return $this->row(
                 $assignment->refresh(),
