@@ -39,8 +39,7 @@ final class ActivityLogMetadataContract
             ],
             ActivityLogAction::CUSTOMER_CARE_ASSIGNED->value,
             ActivityLogAction::CUSTOMER_CARE_REASSIGNED->value,
-            ActivityLogAction::CUSTOMER_CARE_RECLAIMED->value,
-            ActivityLogAction::CUSTOMER_CARE_COMPLETED->value => [
+            ActivityLogAction::CUSTOMER_CARE_RECLAIMED->value => [
                 'required_local_ids' => ['customer_care_id', 'assignment_id'],
                 'optional_local_ids' => [
                     'shop_id',
@@ -57,6 +56,25 @@ final class ActivityLogMetadataContract
                     self::INGESTION_PATH,
                     self::ACQUISITION_CHANNEL,
                     'reason',
+                ],
+            ],
+            ActivityLogAction::CUSTOMER_CARE_COMPLETED->value => [
+                'required_local_ids' => [
+                    'customer_care_id',
+                    'assignment_id',
+                    'assignee_user_id',
+                    'shop_id',
+                    'source_id',
+                    'care_sequence_number',
+                ],
+                'optional_local_ids' => ['customer_id', 'order_id'],
+                'external_ids' => ['pancake_customer_id', 'pancake_order_id'],
+                'context' => [
+                    self::INGESTION_PATH,
+                    self::ACQUISITION_CHANNEL,
+                    'sequence_scope',
+                    'sequence_basis',
+                    'result',
                 ],
             ],
             ActivityLogAction::ORDER_CREATED->value => [

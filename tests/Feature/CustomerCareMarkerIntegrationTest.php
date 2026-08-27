@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Http\Controllers\Api\CustomerCareController;
+use App\Models\ActivityLog;
+use App\Models\Customer;
 use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
@@ -12,11 +14,13 @@ use App\Services\CustomerCareAssignmentService;
 use App\Services\CustomerCareWriteAccessService;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Mockery;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -82,6 +86,15 @@ class CustomerCareMarkerIntegrationTest extends TestCase
             '2026-08-21 15:10:00',
             $assignment->fresh()->cared_at->format('Y-m-d H:i:s')
         );
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer_care.completed')->count());
+        $this->assertSame(
+            1,
+            ActivityLog::query()
+                ->where('action', 'customer_care.completed')
+                ->sole()
+                ->metadata['care_sequence_number']
+        );
+        $this->assertSame(1, DB::table('customer_care_journey_sequences')->value('last_sequence'));
         $this->assertSame(3, (int) $order->fresh()->status);
     }
 
@@ -185,7 +198,7 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         try {
             $this->controller->destroy($request, $customerCare);
             $this->fail('A sale manager must not delete CustomerCare.');
-        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+        } catch (AuthorizationException) {
             $this->assertDatabaseHas('customer_cares', ['id' => $customerCare->id]);
         }
 
@@ -234,6 +247,34 @@ class CustomerCareMarkerIntegrationTest extends TestCase
             '2026-08-21 15:10:00',
             $assignment->fresh()->cared_at->format('Y-m-d H:i:s')
         );
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer_care.completed')->count());
+        $this->assertSame(
+            1,
+            ActivityLog::query()
+                ->where('action', 'customer_care.completed')
+                ->sole()
+                ->metadata['care_sequence_number']
+        );
+        $this->assertSame(1, DB::table('customer_care_journey_sequences')->value('last_sequence'));
+    }
+
+    public function test_status_already_completed_without_cca_marker_is_not_logged_again(): void
+    {
+        $customerCare = $this->createCustomerCare([
+            'status' => 1,
+            'time_care' => '2026-08-21 15:10:00',
+        ]);
+        $assignment = $this->createAssignment($customerCare);
+
+        $response = $this->updateCare($customerCare, 1, null);
+
+        $this->assertSame(409, $response->getStatusCode());
+        $this->assertFalse($response->getData(true)['success']);
+        $this->assertSame(1, (int) $customerCare->fresh()->status);
+        $this->assertSame('2026-08-21 15:10:00', $customerCare->fresh()->time_care);
+        $this->assertNull($assignment->fresh()->cared_at);
+        $this->assertSame(0, ActivityLog::query()->count());
+        $this->assertSame(0, DB::table('customer_care_journey_sequences')->count());
     }
 
     public function test_later_non_care_edit_does_not_clear_first_marker(): void
@@ -586,6 +627,195 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         $this->assertNull($assignment->fresh()->cared_at);
     }
 
+    public function test_completion_writes_one_contract_event_with_local_identity_and_business_time(): void
+    {
+        $customer = $this->createLocalCustomer('CUSTOMER-EVENT-1');
+        $order = $this->createOrder('ORDER-EVENT-1', 7, $customer->pancake_customer_id);
+        $customerCare = $this->createCustomerCare([
+            'pancake_customer_id' => $customer->pancake_customer_id,
+            'pancake_order_id' => $order->pancake_order_id,
+        ]);
+        $assignment = $this->createAssignment(
+            $customerCare,
+            CustomerCareAssignment::STATUS_ACTIVE,
+            $order->id
+        );
+        Carbon::setTestNow('2026-08-27 15:10:00');
+
+        $response = $this->updateCare($customerCare, 1, '2000-01-01 00:00:00');
+        $event = ActivityLog::query()->where('action', 'customer_care.completed')->sole();
+
+        $this->assertTrue($response->getData(true)['success']);
+        $this->assertSame(1, (int) $customerCare->fresh()->status);
+        $this->assertSame('2026-08-27 15:10:00', $customerCare->fresh()->time_care);
+        $this->assertSame('2026-08-27 15:10:00', $assignment->fresh()->cared_at->format('Y-m-d H:i:s'));
+        $this->assertSame('customer_care', $event->subject_type);
+        $this->assertSame((string) $customerCare->id, $event->subject_id);
+        $this->assertSame($assignment->id, $event->metadata['assignment_id']);
+        $this->assertSame($assignment->assignee_user_id, $event->metadata['assignee_user_id']);
+        $this->assertSame(7, $event->shop_id);
+        $this->assertSame($assignment->source_type, $event->metadata['source_type']);
+        $this->assertSame($assignment->source_id, $event->metadata['source_id']);
+        $this->assertSame($customer->id, $event->metadata['customer_id']);
+        $this->assertSame($order->id, $event->metadata['order_id']);
+        $this->assertSame(1, $event->metadata['care_sequence_number']);
+        $this->assertSame('customer_shop', $event->metadata['sequence_scope']);
+        $this->assertSame('journey_completed_events', $event->metadata['sequence_basis']);
+        $this->assertNull($event->metadata['result']);
+        $this->assertSame('user', $event->source);
+        $this->assertSame(31, $event->actor_user_id);
+        $this->assertSame(31, $event->target_user_id);
+        $this->assertSame('2026-08-27 15:10:00', $event->occurred_at->format('Y-m-d H:i:s'));
+        $this->assertSame(
+            'customer_care.completed:care:'.$customerCare->id,
+            $event->idempotency_key
+        );
+    }
+
+    public function test_same_customer_gets_ordered_sequence_across_three_real_completions(): void
+    {
+        $customer = $this->createLocalCustomer('CUSTOMER-SEQUENCE-1');
+        $staffB = $this->createUser(32, 'staff-cskh', 'Second Care Staff', [7]);
+
+        foreach ([1, 2, 3] as $number) {
+            $order = $this->createOrder("ORDER-SEQUENCE-{$number}", 7, $customer->pancake_customer_id);
+            $care = $this->createCustomerCare([
+                'pancake_customer_id' => $customer->pancake_customer_id,
+                'pancake_order_id' => $order->pancake_order_id,
+            ]);
+            $this->createAssignment(
+                $care,
+                CustomerCareAssignment::STATUS_ACTIVE,
+                $order->id,
+                CustomerCareAssignment::SOURCE_ORDER,
+                $number === 2 ? $staffB->id : 31
+            );
+            $this->authenticateAs($number === 2 ? $staffB : User::findOrFail(31));
+            Carbon::setTestNow("2026-08-27 15:{$number}0:00");
+
+            $response = $this->updateCare($care, 1, null);
+
+            $this->assertTrue($response->getData(true)['success']);
+        }
+
+        $sequences = ActivityLog::query()
+            ->where('action', 'customer_care.completed')
+            ->orderBy('id')
+            ->get()
+            ->pluck('metadata.care_sequence_number')
+            ->all();
+
+        $this->assertSame([1, 2, 3], $sequences);
+    }
+
+    public function test_different_customer_starts_at_one_and_same_external_id_isolated_by_shop(): void
+    {
+        $firstCustomer = $this->createLocalCustomer('CUSTOMER-SHARED');
+        $otherCustomer = $this->createLocalCustomer('CUSTOMER-OTHER');
+        $firstOrder = $this->createOrder('ORDER-SHARED-1', 7, $firstCustomer->pancake_customer_id);
+        $otherOrder = $this->createOrder('ORDER-OTHER-1', 7, $otherCustomer->pancake_customer_id);
+
+        $this->completeCareForOrder($firstOrder, $firstCustomer->pancake_customer_id);
+        $this->completeCareForOrder($otherOrder, $otherCustomer->pancake_customer_id);
+
+        $secondShop = 8;
+        $this->createShop($secondShop);
+        $secondCustomer = $this->createLocalCustomer('CUSTOMER-SHARED', $secondShop);
+        $secondOrder = $this->createOrder('ORDER-SHARED-2', $secondShop, $secondCustomer->pancake_customer_id);
+        $secondCare = $this->createCustomerCare([
+            'shop_id' => $secondShop,
+            'pancake_customer_id' => $secondCustomer->pancake_customer_id,
+            'pancake_order_id' => $secondOrder->pancake_order_id,
+        ]);
+        $secondAssignment = $this->createAssignment($secondCare, CustomerCareAssignment::STATUS_ACTIVE, $secondOrder->id);
+        $manager = $this->createUser(40, 'manager-cskh', 'Shop 8 Manager', [$secondShop]);
+        $this->authenticateAs($manager);
+
+        $this->assertTrue($this->updateCare($secondCare, 1, null)->getData(true)['success']);
+
+        $events = ActivityLog::query()->where('action', 'customer_care.completed')->orderBy('id')->get();
+        $this->assertSame(1, $events[0]->metadata['care_sequence_number']);
+        $this->assertSame(1, $events[1]->metadata['care_sequence_number']);
+        $this->assertSame(1, $events[2]->metadata['care_sequence_number']);
+        $this->assertSame(7, $events[0]->shop_id);
+        $this->assertSame(7, $events[1]->shop_id);
+        $this->assertSame(8, $events[2]->shop_id);
+        $this->assertSame($secondAssignment->assignee_user_id, $events[2]->target_user_id);
+    }
+
+    public function test_reclaimed_uncared_assignment_does_not_consume_a_sequence_number(): void
+    {
+        $customer = $this->createLocalCustomer('CUSTOMER-RECLAIMED-1');
+        $reclaimedOrder = $this->createOrder('ORDER-RECLAIMED-1', 7, $customer->pancake_customer_id);
+        $reclaimedCare = $this->createCustomerCare([
+            'pancake_customer_id' => $customer->pancake_customer_id,
+            'pancake_order_id' => $reclaimedOrder->pancake_order_id,
+        ]);
+        $this->createAssignment(
+            $reclaimedCare,
+            CustomerCareAssignment::STATUS_RECLAIMED,
+            $reclaimedOrder->id
+        );
+
+        $validOrder = $this->createOrder('ORDER-RECLAIMED-2', 7, $customer->pancake_customer_id);
+        $validCare = $this->createCustomerCare([
+            'pancake_customer_id' => $customer->pancake_customer_id,
+            'pancake_order_id' => $validOrder->pancake_order_id,
+        ]);
+        $this->createAssignment($validCare, CustomerCareAssignment::STATUS_ACTIVE, $validOrder->id);
+
+        $this->assertTrue($this->updateCare($validCare, 1, null)->getData(true)['success']);
+        $event = ActivityLog::query()->where('action', 'customer_care.completed')->sole();
+
+        $this->assertSame(1, $event->metadata['care_sequence_number']);
+        $this->assertSame(1, ActivityLog::query()->where('action', 'customer_care.completed')->count());
+    }
+
+    public function test_imported_opportunity_sequence_is_scoped_to_shop_and_source(): void
+    {
+        $first = $this->createCustomerCare(['pancake_customer_id' => 'IMPORT-1']);
+        $second = $this->createCustomerCare(['pancake_customer_id' => 'IMPORT-1']);
+        $third = $this->createCustomerCare(['pancake_customer_id' => 'IMPORT-1']);
+        $this->createAssignment($first, CustomerCareAssignment::STATUS_ACTIVE, 7001, CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY);
+        $this->createAssignment($second, CustomerCareAssignment::STATUS_ACTIVE, 7001, CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY);
+        $this->createAssignment($third, CustomerCareAssignment::STATUS_ACTIVE, 7002, CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY);
+
+        $this->assertTrue($this->updateCare($first, 1, null)->getData(true)['success']);
+        $this->assertTrue($this->updateCare($second, 1, null)->getData(true)['success']);
+        $this->assertTrue($this->updateCare($third, 1, null)->getData(true)['success']);
+
+        $events = ActivityLog::query()->where('action', 'customer_care.completed')->orderBy('id')->get();
+        $this->assertSame([1, 2, 1], $events->pluck('metadata.care_sequence_number')->all());
+        $this->assertSame([
+            'imported_opportunity_source',
+            'imported_opportunity_source',
+            'imported_opportunity_source',
+        ], $events->pluck('metadata.sequence_scope')->all());
+    }
+
+    public function test_completion_and_event_roll_back_together_when_activity_logging_fails(): void
+    {
+        $customerCare = $this->createCustomerCare();
+        $assignment = $this->createAssignment($customerCare);
+        $activityLog = Mockery::mock(ActivityLogService::class);
+        $activityLog->shouldReceive('write')->once()->andThrow(new RuntimeException('activity log failed'));
+        $controller = new CustomerCareController(
+            new CustomerCareAssignmentService,
+            $activityLog,
+            new ShopAccessService,
+            new CustomerCareWriteAccessService(new ShopAccessService)
+        );
+
+        $response = $this->updateCareWithController($controller, $customerCare, 1, null);
+
+        $this->assertFalse($response->getData(true)['success']);
+        $this->assertSame(0, (int) $customerCare->fresh()->status);
+        $this->assertNull($customerCare->fresh()->time_care);
+        $this->assertNull($assignment->fresh()->cared_at);
+        $this->assertSame(0, ActivityLog::query()->count());
+        $this->assertSame(0, DB::table('customer_care_journey_sequences')->count());
+    }
+
     public function test_current_task_visibility_uses_exact_assignment_for_staff_and_shop_scope_for_manager(): void
     {
         $staffB = $this->createUser(32, 'staff-cskh', 'Staff B', [7]);
@@ -624,6 +854,15 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         int $status,
         ?string $timeCare
     ) {
+        return $this->updateCareWithController($this->controller, $customerCare, $status, $timeCare);
+    }
+
+    private function updateCareWithController(
+        CustomerCareController $controller,
+        CustomerCare $customerCare,
+        int $status,
+        ?string $timeCare
+    ) {
         $request = Request::create(
             "/api/v1/customer-cares/{$customerCare->id}",
             'PUT',
@@ -634,7 +873,7 @@ class CustomerCareMarkerIntegrationTest extends TestCase
             ]
         );
 
-        return $this->controller->update($request, $customerCare);
+        return $controller->update($request, $customerCare);
     }
 
     private function indexCustomerCareIds(string $type): array
@@ -668,6 +907,44 @@ class CustomerCareMarkerIntegrationTest extends TestCase
             'is_accept' => 1,
             'is_confirm_care' => false,
         ], $overrides));
+    }
+
+    private function createLocalCustomer(string $pancakeCustomerId, int $shopId = 7): Customer
+    {
+        return Customer::create([
+            'shop_id' => $shopId,
+            'pancake_customer_id' => $pancakeCustomerId,
+        ]);
+    }
+
+    private function createOrder(
+        string $pancakeOrderId,
+        int $shopId,
+        string $pancakeCustomerId
+    ): Order {
+        return Order::create([
+            'shop_id' => $shopId,
+            'pancake_order_id' => $pancakeOrderId,
+            'pancake_customer_id' => $pancakeCustomerId,
+            'status' => 3,
+        ]);
+    }
+
+    private function completeCareForOrder(
+        Order $order,
+        string $pancakeCustomerId,
+        ?int $assigneeUserId = null
+    ): CustomerCare {
+        $care = $this->createCustomerCare([
+            'shop_id' => $order->shop_id,
+            'pancake_customer_id' => $pancakeCustomerId,
+            'pancake_order_id' => $order->pancake_order_id,
+        ]);
+        $this->createAssignment($care, CustomerCareAssignment::STATUS_ACTIVE, $order->id, CustomerCareAssignment::SOURCE_ORDER, $assigneeUserId);
+        Carbon::setTestNow('2026-08-27 15:00:00');
+        $this->assertTrue($this->updateCare($care, 1, null)->getData(true)['success']);
+
+        return $care;
     }
 
     private function createUser(int $id, string $roleSlug, string $name, array $shopIds): User
@@ -733,6 +1010,7 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         ?int $assigneeUserId = null
     ): CustomerCareAssignment {
         $assignee = $assigneeUserId === null ? User::findOrFail(Auth::id()) : User::findOrFail($assigneeUserId);
+
         return CustomerCareAssignment::create([
             'shop_id' => $customerCare->shop_id,
             'customer_care_id' => $customerCare->id,
@@ -846,6 +1124,7 @@ class CustomerCareMarkerIntegrationTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('shop_id');
             $table->string('pancake_order_id');
+            $table->string('pancake_customer_id')->nullable();
             $table->integer('status')->default(3);
             $table->softDeletes();
             $table->timestamps();
@@ -882,6 +1161,45 @@ class CustomerCareMarkerIntegrationTest extends TestCase
             $table->integer('status')->default(0);
             $table->unsignedBigInteger('imported_by')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('customers', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->string('pancake_customer_id');
+            $table->timestamps();
+        });
+
+        Schema::create('activity_logs', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('actor_user_id')->nullable();
+            $table->string('actor_name')->nullable();
+            $table->unsignedBigInteger('target_user_id')->nullable();
+            $table->string('target_user_name')->nullable();
+            $table->string('source', 50);
+            $table->string('action', 100);
+            $table->unsignedBigInteger('shop_id')->nullable();
+            $table->string('shop_name')->nullable();
+            $table->string('subject_type', 50);
+            $table->string('subject_id')->nullable();
+            $table->string('pancake_order_id')->nullable();
+            $table->string('pancake_customer_id')->nullable();
+            $table->timestamp('occurred_at')->nullable();
+            $table->string('idempotency_key', 191)->nullable()->unique();
+            $table->json('old_values')->nullable();
+            $table->json('new_values')->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamp('created_at')->useCurrent();
+        });
+
+        Schema::create('customer_care_journey_sequences', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->string('sequence_scope', 50);
+            $table->string('scope_key', 191);
+            $table->unsignedInteger('last_sequence')->default(0);
+            $table->timestamps();
+            $table->unique(['shop_id', 'sequence_scope', 'scope_key']);
         });
     }
 }

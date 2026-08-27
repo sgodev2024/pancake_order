@@ -65,9 +65,32 @@ context may be added without changing the table:
 | `customer_care.assigned` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | assignment context, `ingestion_path`, optional `acquisition_channel` |
 | `customer_care.reassigned` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | previous/new assignee IDs, `ingestion_path`, optional `acquisition_channel` |
 | `customer_care.reclaimed` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | `reason`, `ingestion_path`, optional `acquisition_channel` |
-| `customer_care.completed` | `customer_care_id`, `assignment_id` | `pancake_customer_id`, `pancake_order_id` | completion context, `ingestion_path`, optional `acquisition_channel` |
+| `customer_care.completed` | `customer_care_id`, `assignment_id`, `assignee_user_id`, `shop_id`, `source_id`, `care_sequence_number` | `pancake_customer_id`, `pancake_order_id` | completion context, sequence scope/basis, optional `customer_id`/`order_id` |
 | `order.created` | `order_id`, optional `customer_id` | `pancake_order_id`, `pancake_customer_id` | `ingestion_path`, optional `acquisition_channel` |
 
 `source` is not overloaded with `acquisition_channel`. Full raw Pancake
 payloads are not part of this contract and are removed when payload-shaped
 keys are passed to the service.
+
+## Completed-care sequence
+
+One occurrence is one successful `CustomerCare.status` transition from a
+non-completed value to `1` through the authorized completion workflow. The
+completion event, `CustomerCare.time_care`, and the active CCA's `cared_at`
+use the same server-controlled business timestamp. Replays of an already
+completed care do not allocate another sequence number or write another
+event.
+
+For order-backed care, the preferred scope is `shop_id + local Customer.id`
+when a local Customer exists for the care's shop and Pancake customer ID. If
+that local identity is unavailable, the safe fallback is
+`shop_id + local order source ID`. Imported opportunities have no local
+Customer, so they use `shop_id + imported opportunity source ID`.
+
+Sequence numbers are allocated from a locked per-scope counter inside the
+completion transaction. The counter starts at deployment; this phase does
+not backfill or claim to reconstruct older unstandardized care history.
+
+The completed-care metadata includes `care_sequence_number`,
+`sequence_scope`, and `sequence_basis: journey_completed_events`. No
+normalized care-result taxonomy currently exists, so `result` is `null`.

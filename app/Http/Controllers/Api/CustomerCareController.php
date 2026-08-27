@@ -10,6 +10,7 @@ use App\Models\Order;
 use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
+use App\Services\CustomerCareCompletionEventWriter;
 use App\Services\CustomerCareWriteAccessService;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
@@ -29,7 +30,8 @@ class CustomerCareController extends Controller implements HasMiddleware
         private readonly CustomerCareAssignmentService $customerCareAssignmentService,
         private readonly ActivityLogService $activityLogService,
         private readonly ShopAccessService $shopAccessService,
-        private readonly CustomerCareWriteAccessService $customerCareWriteAccessService
+        private readonly CustomerCareWriteAccessService $customerCareWriteAccessService,
+        private readonly ?CustomerCareCompletionEventWriter $customerCareCompletionEventWriter = null
     ) {}
 
     public static function middleware(): array
@@ -272,7 +274,9 @@ class CustomerCareController extends Controller implements HasMiddleware
                     ? $this->guardCurrentCareMutation($lockedCustomerCare, $actor)
                     : null;
 
-                if ($is_care_completion && $activeAssignment?->cared_at !== null) {
+                if ($is_care_completion
+                    && ((int) $lockedCustomerCare->status === 1
+                        || $activeAssignment?->cared_at !== null)) {
                     throw new DomainException('CustomerCare này đã được hoàn tất.');
                 }
 
@@ -292,7 +296,23 @@ class CustomerCareController extends Controller implements HasMiddleware
 
                 $lockedCustomerCare->refresh();
                 if ($is_care_completion) {
-                    $this->customerCareAssignmentService->markAsCared($lockedCustomerCare);
+                    $completedAssignment = $this->customerCareAssignmentService->markAsCared(
+                        $lockedCustomerCare,
+                        $persistedCareTime
+                    );
+
+                    if ($completedAssignment === null) {
+                        throw new DomainException(
+                            'CustomerCare không có phân công đang hoạt động để ghi nhận hoàn tất.'
+                        );
+                    }
+
+                    $this->completionEventWriter()->write(
+                        $lockedCustomerCare,
+                        $completedAssignment,
+                        $actor,
+                        $persistedCareTime
+                    );
                 }
 
                 if (! empty($request->next_date_care)) {
@@ -916,6 +936,12 @@ class CustomerCareController extends Controller implements HasMiddleware
         }
 
         return $assignment;
+    }
+
+    private function completionEventWriter(): CustomerCareCompletionEventWriter
+    {
+        return $this->customerCareCompletionEventWriter
+            ?? new CustomerCareCompletionEventWriter($this->activityLogService);
     }
 
     private function attachAssignableOrderIds($customerCares): void

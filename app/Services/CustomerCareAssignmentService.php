@@ -18,8 +18,10 @@ class CustomerCareAssignmentService
         private readonly ?ActivityLogService $activityLogService = null
     ) {}
 
-    public function markAsCared(CustomerCare $customerCare): ?CustomerCareAssignment
-    {
+    public function markAsCared(
+        CustomerCare $customerCare,
+        ?CarbonInterface $caredAt = null
+    ): ?CustomerCareAssignment {
         if ((int) $customerCare->status !== 1 || $customerCare->time_care === null) {
             return null;
         }
@@ -41,7 +43,7 @@ class CustomerCareAssignmentService
         }
 
         $assignment->update([
-            'cared_at' => now(),
+            'cared_at' => $caredAt ?? now(),
         ]);
 
         return $assignment;
