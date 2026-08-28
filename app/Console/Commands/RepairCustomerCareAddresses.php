@@ -13,15 +13,15 @@ use Illuminate\Support\Facades\DB;
 
 class RepairCustomerCareAddresses extends Command
 {
-    private const DEFAULT_LIMIT = 500;
+    private const DEFAULT_DISPLAY_LIMIT = 50;
 
     private const CHUNK_SIZE = 100;
 
     protected $signature = 'customer-care:repair-addresses
-                            {--execute : Apply only the displayed eligible address repairs}
-                            {--ids= : Comma-separated CustomerCare IDs; ignores --limit}
+                            {--execute : Apply only deterministic eligible address repairs}
+                            {--ids= : Comma-separated CustomerCare IDs to consider}
                             {--shop-id= : Restrict the scan to one shop ID}
-                            {--limit=500 : Maximum CustomerCare rows to scan when --ids is absent}';
+                            {--limit=50 : Maximum targeted candidates to display; the full candidate set is scanned}';
 
     protected $description = 'Preview or repair blank historical CustomerCare addresses from deterministic local Order sources';
 
@@ -35,13 +35,13 @@ class RepairCustomerCareAddresses extends Command
     {
         $ids = $this->parseIds($this->option('ids'));
         $shopId = $this->parsePositiveIntegerOption('shop-id');
-        $limit = $this->parsePositiveIntegerOption('limit', self::DEFAULT_LIMIT);
+        $displayLimit = $this->parsePositiveIntegerOption('limit', self::DEFAULT_DISPLAY_LIMIT);
 
-        if ($ids === false || $shopId === false || $limit === false) {
+        if ($ids === false || $shopId === false || $displayLimit === false) {
             return self::INVALID;
         }
 
-        $analysis = $this->analyze($ids, $shopId, $limit);
+        $analysis = $this->analyze($ids, $shopId, $displayLimit);
 
         $this->components->info(
             $this->option('execute')
@@ -49,17 +49,23 @@ class RepairCustomerCareAddresses extends Command
                 : 'PREVIEW ONLY — no database rows will be modified.'
         );
 
-        $this->table(
-            [
-                'CustomerCare ID',
-                'Order ID',
-                'Shop ID',
-                'Current Address State',
-                'Order Address State',
-                'Action',
-            ],
-            $analysis['rows']
-        );
+        if ($analysis['rows'] !== []) {
+            $this->table(
+                [
+                    'CustomerCare ID',
+                    'Order ID',
+                    'Shop ID',
+                    'Current Address State',
+                    'Order Address State',
+                    'Action',
+                ],
+                $analysis['rows']
+            );
+        }
+
+        if ($analysis['display_truncated']) {
+            $this->line("Displayed: {$displayLimit} of {$analysis['summary']['scanned']} targeted candidates.");
+        }
 
         $repaired = 0;
 
@@ -72,10 +78,11 @@ class RepairCustomerCareAddresses extends Command
         $this->line("Scanned: {$summary['scanned']}");
         $this->line("Eligible: {$summary['eligible']}");
         $this->line("Would repair: {$summary['eligible']}");
-        $this->line("Skipped no source: {$summary['skipped_no_source']}");
-        $this->line("Skipped ambiguous: {$summary['skipped_ambiguous']}");
-        $this->line("Skipped order address blank: {$summary['skipped_order_address_blank']}");
-        $this->line("Already populated: {$summary['already_populated']}");
+        $this->line("NO_SOURCE: {$summary['no_source']}");
+        $this->line("AMBIGUOUS: {$summary['ambiguous']}");
+        $this->line("ORDER_ADDRESS_BLANK: {$summary['order_address_blank']}");
+        $this->line("SHOP_MISMATCH: {$summary['shop_mismatch']}");
+        $this->line("Already populated (not candidates): {$summary['already_populated']}");
 
         if ($analysis['unknown_ids'] !== []) {
             $this->line('Unknown requested IDs: '.implode(',', $analysis['unknown_ids']));
@@ -161,22 +168,35 @@ class RepairCustomerCareAddresses extends Command
      *     rows: list<array<int, int|string>>,
      *     candidates: list<array{customer_care_id: int, order_id: int, link_strategy: string}>,
      *     summary: array<string, int>,
-     *     unknown_ids: list<int>
+     *     unknown_ids: list<int>,
+     *     display_truncated: bool
      * }
      */
-    private function analyze(?array $ids, ?int $shopId, int $limit): array
+    private function analyze(?array $ids, ?int $shopId, int $displayLimit): array
     {
         $rows = [];
         $candidates = [];
-        $foundIds = [];
         $summary = [
             'scanned' => 0,
             'eligible' => 0,
-            'skipped_no_source' => 0,
-            'skipped_ambiguous' => 0,
-            'skipped_order_address_blank' => 0,
+            'no_source' => 0,
+            'ambiguous' => 0,
+            'order_address_blank' => 0,
+            'shop_mismatch' => 0,
             'already_populated' => 0,
         ];
+
+        $requestedCustomerCares = $ids === null
+            ? collect()
+            : CustomerCare::query()
+                ->select(['id', 'shop_id', 'customer_addresss'])
+                ->whereIn('id', $ids)
+                ->when($shopId !== null, fn ($builder) => $builder->where('shop_id', $shopId))
+                ->get();
+        $foundIds = $requestedCustomerCares->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $summary['already_populated'] = $requestedCustomerCares
+            ->filter(fn (CustomerCare $customerCare) => ! $this->isBlank($customerCare->customer_addresss))
+            ->count();
 
         $query = CustomerCare::query()
             ->select([
@@ -188,43 +208,36 @@ class RepairCustomerCareAddresses extends Command
             ])
             ->when($ids !== null, fn ($builder) => $builder->whereIn('id', $ids))
             ->when($shopId !== null, fn ($builder) => $builder->where('shop_id', $shopId))
+            ->where(function ($builder) {
+                $builder->whereNull('customer_addresss')
+                    ->orWhereRaw("TRIM(customer_addresss) = ''");
+            })
             ->orderBy('id');
-
-        $remaining = $ids === null ? $limit : PHP_INT_MAX;
 
         $query->chunkById(self::CHUNK_SIZE, function (EloquentCollection $customerCares) use (
             &$rows,
             &$candidates,
-            &$foundIds,
             &$summary,
-            &$remaining
-        ): bool {
-            $batch = $customerCares->take($remaining);
+            $displayLimit
+        ): void {
+            $evaluations = $this->evaluate($customerCares);
 
-            if ($batch->isEmpty()) {
-                return false;
-            }
-
-            $evaluations = $this->evaluate($batch);
-
-            foreach ($batch as $customerCare) {
-                $foundIds[] = (int) $customerCare->getKey();
+            foreach ($customerCares as $customerCare) {
                 $evaluation = $evaluations[$customerCare->getKey()];
                 $summary['scanned']++;
-                $rows[] = $this->tableRow($customerCare, $evaluation);
+
+                if (count($rows) < $displayLimit) {
+                    $rows[] = $this->tableRow($customerCare, $evaluation);
+                }
 
                 match ($evaluation['action']) {
                     'WOULD_REPAIR' => $this->addCandidate($candidates, $summary, $customerCare, $evaluation),
-                    'ALREADY_POPULATED' => $summary['already_populated']++,
-                    'SOURCE_ADDRESS_BLANK' => $summary['skipped_order_address_blank']++,
-                    'AMBIGUOUS_SOURCE' => $summary['skipped_ambiguous']++,
-                    default => $summary['skipped_no_source']++,
+                    'ORDER_ADDRESS_BLANK' => $summary['order_address_blank']++,
+                    'AMBIGUOUS' => $summary['ambiguous']++,
+                    'SHOP_MISMATCH' => $summary['shop_mismatch']++,
+                    default => $summary['no_source']++,
                 };
             }
-
-            $remaining -= $batch->count();
-
-            return $remaining > 0;
         }, 'id');
 
         $unknownIds = $ids === null
@@ -236,6 +249,7 @@ class RepairCustomerCareAddresses extends Command
             'candidates' => $candidates,
             'summary' => $summary,
             'unknown_ids' => $unknownIds,
+            'display_truncated' => $summary['scanned'] > count($rows),
         ];
     }
 
@@ -266,25 +280,9 @@ class RepairCustomerCareAddresses extends Command
             ->values();
 
         $sourceOrders = $this->loadOrdersByIds($sourceOrderIds, $lock);
-        $legacyCares = $customerCares->filter(function (CustomerCare $customerCare) use ($assignmentsByCare): bool {
-            return ! $assignmentsByCare->has($customerCare->getKey())
-                && ! $this->isBlank($customerCare->pancake_order_id);
-        });
-        $legacyOrdersByKey = $this->loadLegacyOrders($legacyCares, $lock);
-
         $evaluations = [];
 
         foreach ($customerCares as $customerCare) {
-            if (! $this->isBlank($customerCare->customer_addresss)) {
-                $evaluations[$customerCare->getKey()] = [
-                    'action' => 'ALREADY_POPULATED',
-                    'order' => null,
-                    'link_strategy' => null,
-                ];
-
-                continue;
-            }
-
             $assignments = $assignmentsByCare->get($customerCare->getKey(), collect());
 
             if ($assignments->isNotEmpty()) {
@@ -297,10 +295,7 @@ class RepairCustomerCareAddresses extends Command
                 continue;
             }
 
-            $evaluations[$customerCare->getKey()] = $this->evaluateLegacySource(
-                $customerCare,
-                $legacyOrdersByKey
-            );
+            $evaluations[$customerCare->getKey()] = $this->skipped('NO_SOURCE');
         }
 
         return $evaluations;
@@ -325,54 +320,26 @@ class RepairCustomerCareAddresses extends Command
             ->values();
 
         if ($sourceIds->count() > 1) {
-            return $this->skipped('AMBIGUOUS_SOURCE');
+            return $this->skipped('AMBIGUOUS');
         }
 
         if ($sourceIds->count() !== 1) {
-            return $this->skipped('SOURCE_ORDER_NOT_FOUND');
+            return $this->skipped('NO_SOURCE');
         }
 
         $order = $sourceOrders->get((int) $sourceIds->first());
 
-        if ($order === null
-            || $orderAssignments->contains(
-                fn (CustomerCareAssignment $assignment) => (int) $assignment->shop_id !== (int) $customerCare->shop_id
-            )
-            || (int) $order->shop_id !== (int) $customerCare->shop_id) {
-            return $this->skipped('SOURCE_ORDER_NOT_FOUND');
+        if ($order === null) {
+            return $this->skipped('NO_SOURCE');
+        }
+
+        if ($orderAssignments->contains(
+            fn (CustomerCareAssignment $assignment) => (int) $assignment->shop_id !== (int) $customerCare->shop_id
+        ) || (int) $order->shop_id !== (int) $customerCare->shop_id) {
+            return $this->skipped('SHOP_MISMATCH', $order, 'CCA_EXACT_ORDER_ID');
         }
 
         return $this->fromOrder($order, 'CCA_EXACT_ORDER_ID');
-    }
-
-    /**
-     * @param  Collection<string, Collection<int, Order>>  $legacyOrdersByKey
-     * @return array{action: string, order: ?Order, link_strategy: ?string}
-     */
-    private function evaluateLegacySource(CustomerCare $customerCare, Collection $legacyOrdersByKey): array
-    {
-        if ($this->isBlank($customerCare->pancake_order_id)) {
-            return $this->skipped('SOURCE_ORDER_NOT_FOUND');
-        }
-
-        $orders = $legacyOrdersByKey->get($this->legacyKey($customerCare), collect());
-
-        if ($orders->count() > 1) {
-            return $this->skipped('AMBIGUOUS_SOURCE');
-        }
-
-        if ($orders->count() !== 1) {
-            return $this->skipped('SOURCE_ORDER_NOT_FOUND');
-        }
-
-        $order = $orders->first();
-
-        if (! $this->isBlank($customerCare->pancake_customer_id)
-            && (string) $order->pancake_customer_id !== (string) $customerCare->pancake_customer_id) {
-            return $this->skipped('SOURCE_ORDER_NOT_FOUND');
-        }
-
-        return $this->fromOrder($order, 'LEGACY_UNIQUE_SHOP_ORDER_KEY');
     }
 
     /**
@@ -397,42 +364,13 @@ class RepairCustomerCareAddresses extends Command
     }
 
     /**
-     * @param  EloquentCollection<int, CustomerCare>  $customerCares
-     * @return Collection<string, Collection<int, Order>>
-     */
-    private function loadLegacyOrders(EloquentCollection $customerCares, bool $lock): Collection
-    {
-        if ($customerCares->isEmpty()) {
-            return collect();
-        }
-
-        $shopIds = $customerCares->pluck('shop_id')->unique()->values();
-        $pancakeOrderIds = $customerCares->pluck('pancake_order_id')->filter(fn ($id) => ! $this->isBlank($id))->unique()->values();
-
-        if ($shopIds->isEmpty() || $pancakeOrderIds->isEmpty()) {
-            return collect();
-        }
-
-        $query = Order::query()
-            ->whereIn('shop_id', $shopIds)
-            ->whereIn('pancake_order_id', $pancakeOrderIds)
-            ->select(['id', 'shop_id', 'pancake_order_id', 'pancake_customer_id', 'customer_address']);
-
-        if ($lock) {
-            $query->lockForUpdate();
-        }
-
-        return $query->get()->groupBy(fn (Order $order) => $this->legacyKey($order));
-    }
-
-    /**
      * @return array{action: string, order: ?Order, link_strategy: ?string}
      */
     private function fromOrder(Order $order, string $linkStrategy): array
     {
         if ($this->isBlank($order->customer_address)) {
             return [
-                'action' => 'SOURCE_ADDRESS_BLANK',
+                'action' => 'ORDER_ADDRESS_BLANK',
                 'order' => $order,
                 'link_strategy' => $linkStrategy,
             ];
@@ -446,14 +384,14 @@ class RepairCustomerCareAddresses extends Command
     }
 
     /**
-     * @return array{action: string, order: null, link_strategy: null}
+     * @return array{action: string, order: ?Order, link_strategy: ?string}
      */
-    private function skipped(string $action): array
+    private function skipped(string $action, ?Order $order = null, ?string $linkStrategy = null): array
     {
         return [
             'action' => $action,
-            'order' => null,
-            'link_strategy' => null,
+            'order' => $order,
+            'link_strategy' => $linkStrategy,
         ];
     }
 
@@ -583,8 +521,4 @@ class RepairCustomerCareAddresses extends Command
         return $value === null || (is_string($value) && trim($value) === '');
     }
 
-    private function legacyKey(CustomerCare|Order $model): string
-    {
-        return (string) $model->shop_id.'|'.(string) $model->pancake_order_id;
-    }
 }

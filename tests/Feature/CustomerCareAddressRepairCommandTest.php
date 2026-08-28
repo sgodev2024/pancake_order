@@ -50,6 +50,49 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->assertSame(0, ActivityLog::query()->count());
     }
 
+    public function test_empty_string_address_is_a_repair_candidate(): void
+    {
+        $order = $this->createOrder(customerAddress: 'Source address');
+        $care = $this->createCare($order, '');
+        $this->createOrderAssignment($care, $order);
+
+        $this->artisan('customer-care:repair-addresses', ['--ids' => (string) $care->id])
+            ->expectsOutputToContain('Scanned: 1')
+            ->expectsOutputToContain('WOULD_REPAIR')
+            ->expectsOutputToContain('Repaired: 0')
+            ->assertSuccessful();
+
+        $this->assertSame('', $care->fresh()->customer_addresss);
+    }
+
+    public function test_full_missing_address_candidate_set_is_scanned_after_more_than_500_populated_rows(): void
+    {
+        foreach (range(1, 501) as $index) {
+            $this->createPopulatedCare($index);
+        }
+
+        $firstOrder = $this->createOrder(customerAddress: 'First source');
+        $firstCare = $this->createCare($firstOrder, null);
+        $this->createOrderAssignment($firstCare, $firstOrder);
+
+        $secondOrder = $this->createOrder(customerAddress: 'Second source');
+        $secondCare = $this->createCare($secondOrder, '   ');
+        $this->createOrderAssignment($secondCare, $secondOrder);
+
+        $this->artisan('customer-care:repair-addresses', [
+            '--shop-id' => '1',
+            '--limit' => '1',
+        ])->expectsOutputToContain('Scanned: 2')
+            ->expectsOutputToContain('Eligible: 2')
+            ->expectsOutputToContain('Displayed: 1 of 2 targeted candidates.')
+            ->expectsOutputToContain('Already populated (not candidates): 0')
+            ->expectsOutputToContain('Repaired: 0')
+            ->assertSuccessful();
+
+        $this->assertNull($firstCare->fresh()->customer_addresss);
+        $this->assertSame('   ', $secondCare->fresh()->customer_addresss);
+    }
+
     public function test_execute_repairs_whitespace_only_address_and_logs_identifiers_not_address_text(): void
     {
         $order = $this->createOrder(customerAddress: 'Source address');
@@ -93,8 +136,8 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->artisan('customer-care:repair-addresses', [
             '--ids' => (string) $care->id,
             '--execute' => true,
-        ])->expectsOutputToContain('ALREADY_POPULATED')
-            ->expectsOutputToContain('Already populated: 1')
+        ])->expectsOutputToContain('Scanned: 0')
+            ->expectsOutputToContain('Already populated (not candidates): 1')
             ->expectsOutputToContain('Repaired: 0')
             ->assertSuccessful();
 
@@ -112,8 +155,7 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->artisan('customer-care:repair-addresses', [
             '--ids' => (string) $care->id,
             '--execute' => true,
-        ])->expectsOutputToContain('SOURCE_ADDRESS_BLANK')
-            ->expectsOutputToContain('Skipped order address blank: 1')
+        ])->expectsOutputToContain('ORDER_ADDRESS_BLANK')
             ->expectsOutputToContain('Repaired: 0')
             ->assertSuccessful();
 
@@ -128,8 +170,7 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->artisan('customer-care:repair-addresses', [
             '--ids' => (string) $care->id,
             '--execute' => true,
-        ])->expectsOutputToContain('SOURCE_ORDER_NOT_FOUND')
-            ->expectsOutputToContain('Skipped no source: 1')
+        ])->expectsOutputToContain('NO_SOURCE')
             ->expectsOutputToContain('Repaired: 0')
             ->assertSuccessful();
 
@@ -147,7 +188,7 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->artisan('customer-care:repair-addresses', [
             '--ids' => (string) $care->id,
             '--execute' => true,
-        ])->expectsOutputToContain('SOURCE_ORDER_NOT_FOUND')
+        ])->expectsOutputToContain('SHOP_MISMATCH')
             ->expectsOutputToContain('Repaired: 0')
             ->assertSuccessful();
 
@@ -155,7 +196,7 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->assertSame(0, ActivityLog::query()->count());
     }
 
-    public function test_duplicate_external_order_ids_without_exact_assignment_are_ambiguous(): void
+    public function test_duplicate_external_order_ids_without_exact_assignment_are_not_used_as_a_source(): void
     {
         $first = $this->createOrder(pancakeOrderId: 'DUPLICATE-ORDER', customerAddress: 'First source');
         $this->createOrder(pancakeOrderId: 'DUPLICATE-ORDER', customerAddress: 'Second source');
@@ -164,8 +205,7 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->artisan('customer-care:repair-addresses', [
             '--ids' => (string) $care->id,
             '--execute' => true,
-        ])->expectsOutputToContain('AMBIGUOUS_SOURCE')
-            ->expectsOutputToContain('Skipped ambiguous: 1')
+        ])->expectsOutputToContain('NO_SOURCE')
             ->expectsOutputToContain('Repaired: 0')
             ->assertSuccessful();
 
@@ -173,7 +213,7 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->assertSame(0, ActivityLog::query()->count());
     }
 
-    public function test_legacy_row_with_one_same_shop_order_key_uses_the_deterministic_fallback(): void
+    public function test_row_without_an_exact_assignment_is_skipped_even_when_a_same_shop_order_key_exists(): void
     {
         $order = $this->createOrder(customerAddress: 'Legacy source');
         $care = $this->createCare($order, null);
@@ -181,11 +221,12 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->artisan('customer-care:repair-addresses', [
             '--ids' => (string) $care->id,
             '--execute' => true,
-        ])->expectsOutputToContain('Repaired: 1')
+        ])->expectsOutputToContain('NO_SOURCE')
+            ->expectsOutputToContain('Repaired: 0')
             ->assertSuccessful();
 
-        $this->assertSame('Legacy source', $care->fresh()->customer_addresss);
-        $this->assertSame('LEGACY_UNIQUE_SHOP_ORDER_KEY', ActivityLog::query()->sole()->metadata['link_strategy']);
+        $this->assertNull($care->fresh()->customer_addresss);
+        $this->assertSame(0, ActivityLog::query()->count());
     }
 
     public function test_multiple_exact_order_assignment_sources_are_ambiguous(): void
@@ -199,7 +240,7 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->artisan('customer-care:repair-addresses', [
             '--ids' => (string) $care->id,
             '--execute' => true,
-        ])->expectsOutputToContain('AMBIGUOUS_SOURCE')
+        ])->expectsOutputToContain('AMBIGUOUS')
             ->expectsOutputToContain('Repaired: 0')
             ->assertSuccessful();
 
@@ -235,8 +276,9 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         ])->expectsOutputToContain('Repaired: 1')->assertSuccessful();
 
         $this->artisan('customer-care:repair-addresses', ['--ids' => (string) $care->id])
+            ->expectsOutputToContain('Scanned: 0')
             ->expectsOutputToContain('Eligible: 0')
-            ->expectsOutputToContain('Already populated: 1')
+            ->expectsOutputToContain('Already populated (not candidates): 1')
             ->expectsOutputToContain('Repaired: 0')
             ->assertSuccessful();
 
@@ -277,6 +319,19 @@ class CustomerCareAddressRepairCommandTest extends TestCase
             'pancake_customer_id' => 'CUSTOMER-'.uniqid(),
             'customer_address' => $customerAddress,
             'status' => 3,
+        ]);
+    }
+
+    private function createPopulatedCare(int $index): CustomerCare
+    {
+        return CustomerCare::create([
+            'shop_id' => 1,
+            'pancake_customer_id' => "POPULATED-CUSTOMER-{$index}",
+            'pancake_order_id' => "POPULATED-ORDER-{$index}",
+            'customer_addresss' => 'Existing address',
+            'date_care' => '2026-08-24',
+            'note' => 'Historical note',
+            'status' => 1,
         ]);
     }
 
