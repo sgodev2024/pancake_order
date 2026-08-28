@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Controllers\Api\ActivityLogController;
+use App\Http\Controllers\Api\CustomerCareController;
 use App\Http\Controllers\Api\OrderController;
 use App\Models\ActivityLog;
 use App\Models\CustomerCare;
@@ -14,6 +15,7 @@ use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
 use App\Services\CustomerCareReclaimService;
 use Carbon\CarbonImmutable;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -112,6 +114,220 @@ class CustomerCareReclaimExecutionTest extends TestCase
         $this->assertSame(CustomerCareReclaimService::RECLAIM_REASON, $log->metadata['reason']);
     }
 
+    public function test_admin_can_manually_reclaim_an_active_assignment_before_automatic_due_date(): void
+    {
+        $order = $this->createOrder();
+        $customerCare = $this->createCustomerCare(order: $order);
+        $assignment = $this->createAssignment($customerCare, $order, eligibleOn: '2026-08-30');
+
+        $result = $this->service->reclaimManually($customerCare->id, User::findOrFail(1));
+
+        $this->assertSame(CustomerCareReclaimService::RESULT_RECLAIMED, $result['result']);
+        $this->assertSame(CustomerCareAssignment::STATUS_RECLAIMED, $assignment->fresh()->status);
+        $this->assertSame(CustomerCareReclaimService::MANUAL_RECLAIM_REASON, $assignment->fresh()->reclaim_reason);
+        $this->assertNotNull($assignment->fresh()->reclaimed_at);
+        $this->assertSame(3, (int) $order->fresh()->status);
+
+        $log = ActivityLog::query()->sole();
+        $this->assertSame('customer_care.reclaimed', $log->action);
+        $this->assertSame('user', $log->source);
+        $this->assertSame(1, $log->actor_user_id);
+        $this->assertSame('manual', $log->metadata['reclaim_source']);
+        $this->assertSame('manual_reclaim', $log->metadata['reclaim_reason']);
+        $this->assertSame(1, $log->metadata['actor_user_id']);
+        $this->assertArrayNotHasKey('manual_reason', $log->metadata);
+        $this->assertSame(
+            'Admin thu hồi CSKH đơn '.$order->pancake_order_id.' từ Care Staff.',
+            $this->activityLogDescription($log)
+        );
+    }
+
+    public function test_manual_reclaim_stores_a_separate_business_reason_and_uses_manual_wording(): void
+    {
+        $order = $this->createOrder();
+        $care = $this->createCustomerCare(order: $order);
+        $this->createAssignment($care, $order, eligibleOn: '2026-08-30');
+
+        $result = $this->service->reclaimManually($care->id, User::findOrFail(1), 'Phân công nhầm nhân viên');
+
+        $this->assertSame(CustomerCareReclaimService::RESULT_RECLAIMED, $result['result']);
+        $log = ActivityLog::query()->sole();
+        $this->assertSame('manual_reclaim', $log->metadata['reclaim_reason']);
+        $this->assertSame('manual', $log->metadata['reclaim_source']);
+        $this->assertSame('Phân công nhầm nhân viên', $log->metadata['manual_reason']);
+        $this->assertSame(
+            'Admin thu hồi CSKH đơn '.$order->pancake_order_id.' từ Care Staff. Lý do: Phân công nhầm nhân viên.',
+            $this->activityLogDescription($log)
+        );
+        $this->assertStringNotContainsString('quá 3 ngày', $this->activityLogDescription($log));
+    }
+
+    public function test_manual_reclaim_request_trims_blank_reasons_and_rejects_oversized_reasons(): void
+    {
+        $controller = $this->customerCareController();
+        $order = $this->createOrder();
+        $care = $this->createCustomerCare(order: $order);
+        $this->createAssignment($care, $order, eligibleOn: '2026-08-30');
+        $blankRequest = Request::create('/api/v1/customer-cares/'.$care->id.'/reclaim', 'POST', ['reason' => " \t "]);
+        $blankRequest->setUserResolver(fn () => User::findOrFail(1));
+
+        $this->assertSame(200, $controller->reclaim($blankRequest, $care->id)->getStatusCode());
+        $this->assertArrayNotHasKey('manual_reason', ActivityLog::query()->sole()->metadata);
+
+        $anotherOrder = $this->createOrder();
+        $anotherCare = $this->createCustomerCare(order: $anotherOrder);
+        $this->createAssignment($anotherCare, $anotherOrder, eligibleOn: '2026-08-30');
+        $oversizedRequest = Request::create(
+            '/api/v1/customer-cares/'.$anotherCare->id.'/reclaim',
+            'POST',
+            ['reason' => str_repeat('x', 501)]
+        );
+        $oversizedRequest->setUserResolver(fn () => User::findOrFail(1));
+
+        $this->assertSame(422, $controller->reclaim($oversizedRequest, $anotherCare->id)->getStatusCode());
+        $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $anotherCare->activeAssignment()->first()->status);
+    }
+
+    public function test_automatic_reclaim_description_and_metadata_are_unchanged(): void
+    {
+        $order = $this->createOrder();
+        $care = $this->createCustomerCare(order: $order);
+        $assignment = $this->createAssignment($care, $order);
+
+        $this->service->executeOne($assignment->id, $this->referenceTime());
+
+        $log = ActivityLog::query()->sole();
+        $this->assertSame(CustomerCareReclaimService::RECLAIM_REASON, $log->metadata['reclaim_reason']);
+        $this->assertArrayNotHasKey('reclaim_source', $log->metadata);
+        $this->assertSame(
+            'Hệ thống thu hồi CSKH đơn '.$order->pancake_order_id.' từ Care Staff do quá 3 ngày chưa chăm sóc',
+            $this->activityLogDescription($log)
+        );
+    }
+
+    public function test_manual_reclaim_rejects_completed_care_and_second_attempt(): void
+    {
+        $completedOrder = $this->createOrder();
+        $completedCare = $this->createCustomerCare(
+            status: 1,
+            timeCare: '2026-08-24 10:00:00',
+            order: $completedOrder
+        );
+        $completedAssignment = $this->createAssignment($completedCare, $completedOrder);
+
+        $completed = $this->service->reclaimManually($completedCare->id, User::findOrFail(1));
+        $this->assertSame(CustomerCareReclaimService::RESULT_ALREADY_CARED, $completed['result']);
+        $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $completedAssignment->fresh()->status);
+
+        $order = $this->createOrder();
+        $care = $this->createCustomerCare(order: $order);
+        $assignment = $this->createAssignment($care, $order);
+        $this->service->reclaimManually($care->id, User::findOrFail(1));
+        $second = $this->service->reclaimManually($care->id, User::findOrFail(1));
+
+        $this->assertSame(CustomerCareReclaimService::RESULT_SKIPPED, $second['result']);
+        $this->assertSame(CustomerCareAssignment::STATUS_RECLAIMED, $assignment->fresh()->status);
+        $this->assertSame(1, ActivityLog::query()->where('subject_id', (string) $assignment->id)->count());
+    }
+
+    public function test_staff_cannot_manually_reclaim_even_their_own_assignment(): void
+    {
+        $order = $this->createOrder();
+        $care = $this->createCustomerCare(order: $order);
+        $assignment = $this->createAssignment($care, $order);
+
+        $this->expectException(AuthorizationException::class);
+        try {
+            $this->service->reclaimManually($care->id, User::findOrFail(2));
+        } finally {
+            $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $assignment->fresh()->status);
+            $this->assertSame(0, ActivityLog::query()->count());
+        }
+    }
+
+    public function test_unauthorized_staff_is_forbidden_even_when_no_active_assignment_exists(): void
+    {
+        $care = $this->createCustomerCare();
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->reclaimManually($care->id, User::findOrFail(2));
+    }
+
+    public function test_manager_cskh_requires_membership_in_the_assignment_shop(): void
+    {
+        $localOrder = $this->createOrder();
+        $localCare = $this->createCustomerCare(order: $localOrder);
+        $this->createAssignment($localCare, $localOrder, eligibleOn: '2026-08-30');
+        $manager = User::findOrFail(3);
+
+        $local = $this->service->reclaimManually($localCare->id, $manager);
+        $this->assertSame(CustomerCareReclaimService::RESULT_RECLAIMED, $local['result']);
+
+        DB::table('shops')->insert(['id' => 2, 'name' => 'Shop Two']);
+        $otherOrder = Order::create([
+            'shop_id' => 2,
+            'pancake_order_id' => 'ORDER-OTHER',
+            'pancake_customer_id' => 'CUSTOMER-OTHER',
+            'status' => 3,
+        ]);
+        $otherCare = CustomerCare::create([
+            'shop_id' => 2,
+            'pancake_customer_id' => 'CUSTOMER-OTHER',
+            'pancake_order_id' => 'ORDER-OTHER',
+            'date_care' => '2026-08-24',
+            'status' => 0,
+        ]);
+        CustomerCareAssignment::create([
+            'shop_id' => 2,
+            'customer_care_id' => $otherCare->id,
+            'source_type' => CustomerCareAssignment::SOURCE_ORDER,
+            'source_id' => $otherOrder->id,
+            'assignee_user_id' => 2,
+            'assignee_pancake_user_id' => 'PANCAKE-2',
+            'assigned_at' => '2026-08-21 23:59:00',
+            'reclaim_eligible_on' => '2026-08-30',
+            'status' => CustomerCareAssignment::STATUS_ACTIVE,
+        ]);
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->reclaimManually($otherCare->id, $manager);
+    }
+
+    public function test_manual_reclaim_rolls_back_when_journey_logging_fails(): void
+    {
+        $opportunity = $this->createImportedOpportunity();
+        $care = $this->createCustomerCare();
+        $assignment = $this->createAssignment($care, $opportunity);
+        $activityLog = Mockery::mock(ActivityLogService::class);
+        $activityLog->shouldReceive('write')->once()->andThrow(new RuntimeException('log failed'));
+        $service = new CustomerCareReclaimService($activityLog);
+
+        try {
+            $service->reclaimManually($care->id, User::findOrFail(1));
+            $this->fail('Expected activity-log failure.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('log failed', $exception->getMessage());
+        }
+
+        $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $assignment->fresh()->status);
+        $this->assertSame(1, (int) $opportunity->fresh()->status);
+    }
+
+    public function test_manual_reclaim_endpoint_maps_missing_and_state_conflicts_safely(): void
+    {
+        $controller = $this->customerCareController();
+        $request = Request::create('/api/v1/customer-cares/999999/reclaim', 'POST');
+        $request->setUserResolver(fn () => User::findOrFail(1));
+
+        $this->assertSame(404, $controller->reclaim($request, 999999)->getStatusCode());
+
+        $care = $this->createCustomerCare();
+        $this->assertSame(409, $controller->reclaim($request, $care->id)->getStatusCode());
+
+        $request->setUserResolver(fn () => User::findOrFail(2));
+        $this->assertSame(403, $controller->reclaim($request, $care->id)->getStatusCode());
+    }
+
     public function test_order_returns_to_chance_pool_because_only_active_assignments_block_it(): void
     {
         $order = $this->createOrder();
@@ -141,6 +357,48 @@ class CustomerCareReclaimExecutionTest extends TestCase
         $this->assertSame(CustomerCareReclaimService::RESULT_RECLAIMED, $result['result']);
         $this->assertSame(0, (int) $opportunity->fresh()->status);
         $this->assertSame(CustomerCareAssignment::STATUS_RECLAIMED, $assignment->fresh()->status);
+    }
+
+    public function test_manual_reclaim_returns_imported_opportunity_to_its_pool(): void
+    {
+        $opportunity = $this->createImportedOpportunity();
+        $care = $this->createCustomerCare();
+        $assignment = $this->createAssignment($care, $opportunity, eligibleOn: '2026-08-30');
+
+        $result = $this->service->reclaimManually($care->id, User::findOrFail(1));
+
+        $this->assertSame(CustomerCareReclaimService::RESULT_RECLAIMED, $result['result']);
+        $this->assertSame(CustomerCareAssignment::STATUS_RECLAIMED, $assignment->fresh()->status);
+        $this->assertSame(0, (int) $opportunity->fresh()->status);
+        $this->assertSame('manual_reclaim', $assignment->fresh()->reclaim_reason);
+    }
+
+    public function test_manual_reclaim_preserves_reassignment_event_semantics(): void
+    {
+        $order = $this->createOrder();
+        $care = $this->createCustomerCare(order: $order);
+        $first = $this->createAssignment($care, $order);
+        $this->service->reclaimManually($care->id, User::findOrFail(1));
+
+        $secondCare = $this->createCustomerCare(order: $order);
+        $assignmentService = new CustomerCareAssignmentService($this->app->make(ActivityLogService::class));
+        DB::transaction(fn () => $assignmentService->createWithJourneyEvent(
+            $secondCare,
+            1,
+            CustomerCareAssignment::SOURCE_ORDER,
+            $order->id,
+            User::findOrFail(2),
+            CarbonImmutable::parse('2026-08-24 13:00:00', config('app.timezone')),
+            CarbonImmutable::parse($secondCare->date_care, config('app.timezone')),
+            User::findOrFail(1),
+            'Shop One'
+        ));
+
+        $this->assertSame(CustomerCareAssignment::STATUS_RECLAIMED, $first->fresh()->status);
+        $this->assertSame(
+            ['customer_care.reclaimed', 'customer_care.reassigned'],
+            ActivityLog::query()->orderBy('id')->pluck('action')->all()
+        );
     }
 
     public function test_locked_recheck_skips_assignment_and_persisted_completed_care(): void
@@ -562,6 +820,31 @@ class CustomerCareReclaimExecutionTest extends TestCase
         return CarbonImmutable::parse($date, config('app.timezone'));
     }
 
+    private function customerCareController(): CustomerCareController
+    {
+        $shopAccess = new \App\Services\ShopAccessService;
+
+        return new CustomerCareController(
+            new CustomerCareAssignmentService,
+            $this->app->make(ActivityLogService::class),
+            $shopAccess,
+            new \App\Services\CustomerCareWriteAccessService($shopAccess)
+        );
+    }
+
+    private function activityLogDescription(ActivityLog $log): ?string
+    {
+        $controller = new ActivityLogController;
+        $method = new \ReflectionMethod($controller, 'formatDescription');
+
+        return $method->invoke(
+            $controller,
+            $log,
+            $log->actor_name,
+            $log->target_user_name
+        );
+    }
+
     private function createOrder(int $status = 3): Order
     {
         return Order::create([
@@ -649,6 +932,7 @@ class CustomerCareReclaimExecutionTest extends TestCase
         DB::table('roles')->insert([
             ['id' => 1, 'name' => 'Admin', 'slug' => 'admin'],
             ['id' => 2, 'name' => 'Care', 'slug' => 'staff-cskh'],
+            ['id' => 3, 'name' => 'Care Manager', 'slug' => 'manager-cskh'],
         ]);
         DB::table('shops')->insert(['id' => 1, 'name' => 'Shop One']);
         DB::table('users')->insert([
@@ -668,7 +952,16 @@ class CustomerCareReclaimExecutionTest extends TestCase
                 'password' => 'unused',
                 'pancake_user_id' => 'PANCAKE-2',
             ],
+            [
+                'id' => 3,
+                'role_id' => 3,
+                'name' => 'Care Manager',
+                'email' => 'manager@example.test',
+                'password' => 'unused',
+                'pancake_user_id' => 'PANCAKE-3',
+            ],
         ]);
+        DB::table('shop_users')->insert(['shop_id' => 1, 'user_id' => 3]);
 
         Auth::shouldUse('web');
         Auth::guard('web')->setUser(User::findOrFail(1));
@@ -697,6 +990,10 @@ class CustomerCareReclaimExecutionTest extends TestCase
             $table->string('name');
             $table->softDeletes();
             $table->timestamps();
+        });
+        Schema::create('shop_users', function (Blueprint $table) {
+            $table->unsignedBigInteger('shop_id');
+            $table->unsignedBigInteger('user_id');
         });
         Schema::create('orders', function (Blueprint $table) {
             $table->id();

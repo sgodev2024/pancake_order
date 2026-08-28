@@ -117,6 +117,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post('customer-cares/{id}/assign', [CustomerCareController::class, "assign"])
         ->middleware(PermissionCheckMiddleware::class . ':asign-cskh,strict');
     Route::post('customer-cares/{id}/accept',   [CustomerCareController::class, "accept"]);
+    Route::post('customer-cares/{id}/reclaim',  [CustomerCareController::class, "reclaim"]);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, "getHistory"]);
     Route::get('customer-cares/{id}/orders',    [CustomerCareController::class, "getOrder"]);
     Route::apiResource('customer-cares',        CustomerCareController::class);

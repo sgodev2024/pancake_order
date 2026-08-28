@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\ActivityLogService;
 use App\Services\CustomerCareAssignmentService;
 use App\Services\CustomerCareCompletionEventWriter;
+use App\Services\CustomerCareReclaimService;
 use App\Services\CustomerCareWriteAccessService;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
@@ -1210,6 +1211,71 @@ class CustomerCareController extends Controller implements HasMiddleware
                 'success' => false,
                 'message' => $th->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Manually return one active CustomerCare assignment to its opportunity pool.
+     */
+    public function reclaim(Request $request, int $id)
+    {
+        try {
+            $reason = $request->input('reason');
+            if (is_string($reason)) {
+                $reason = trim($reason);
+                $request->merge(['reason' => $reason === '' ? null : $reason]);
+            }
+
+            $validated = $request->validate([
+                'reason' => ['nullable', 'string', 'max:500'],
+            ]);
+
+            $actor = $request->user();
+            if ($actor === null) {
+                throw new AuthorizationException('Unauthenticated.');
+            }
+
+            $result = app(CustomerCareReclaimService::class)->reclaimManually(
+                $id,
+                $actor,
+                $validated['reason'] ?? null
+            );
+
+            if (($result['result'] ?? null) === CustomerCareReclaimService::RESULT_NOT_FOUND) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Lịch chăm sóc này không tồn tại',
+                ], 404);
+            }
+
+            if (($result['result'] ?? null) !== CustomerCareReclaimService::RESULT_RECLAIMED) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Khách hàng không còn ở trạng thái có thể thu hồi.',
+                ], 409);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Đã thu hồi khách hàng.',
+                'data' => $result,
+            ]);
+        } catch (ValidationException $exception) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Dữ liệu không hợp lệ',
+                'errors' => $exception->errors(),
+            ], 422);
+        } catch (AuthorizationException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bạn không có quyền thu hồi khách hàng này.',
+            ], 403);
+        } catch (\Throwable) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không thể thu hồi khách hàng. Vui lòng thử lại.',
+            ], 500);
         }
     }
 

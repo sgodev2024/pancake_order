@@ -10,6 +10,7 @@ use App\Models\CustomerCareAssignment;
 use App\Models\ImportedOpportunity;
 use App\Models\Order;
 use App\Models\Shop;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -19,6 +20,8 @@ use Throwable;
 class CustomerCareReclaimService
 {
     public const RECLAIM_REASON = 'Quá 3 ngày chưa chăm sóc';
+
+    public const MANUAL_RECLAIM_REASON = 'manual_reclaim';
 
     public const RESULT_ELIGIBLE = 'eligible';
 
@@ -36,9 +39,100 @@ class CustomerCareReclaimService
 
     public const RESULT_SKIPPED = 'skipped';
 
+    public const RESULT_NOT_FOUND = 'not_found';
+
     public function __construct(
-        private readonly ActivityLogService $activityLogService
+        private readonly ActivityLogService $activityLogService,
+        private readonly ?ShopAccessService $shopAccessService = null
     ) {}
+
+    /**
+     * Reclaim the sole current assignment for a CustomerCare record on behalf
+     * of an authorized manager/admin. Unlike automatic reclaim, this does not
+     * apply the due-date gate; all other care/source safety checks remain.
+     *
+     * @return array<string, mixed>
+     */
+    public function reclaimManually(int $customerCareId, User $actor, ?string $manualReason = null): array
+    {
+        $manualReason = $manualReason === null ? null : trim($manualReason);
+        $manualReason = $manualReason === '' ? null : $manualReason;
+
+        return DB::transaction(function () use ($customerCareId, $actor, $manualReason) {
+            // Keep the established lock order: CustomerCare -> CCA -> Shop -> source.
+            $customerCare = CustomerCare::query()->whereKey($customerCareId)->lockForUpdate()->first();
+
+            if ($customerCare === null) {
+                return ['result' => self::RESULT_NOT_FOUND];
+            }
+
+            // Authorize the resolved local CustomerCare before revealing whether
+            // it has an active assignment. This keeps staff and cross-shop
+            // callers at 403 even for stale/already-reclaimed records.
+            if (! $actor->isAdmin()
+                && (! $actor->isManagerCskh()
+                    || ! $this->shopAccess()->canAccessShop($actor, (int) $customerCare->shop_id))) {
+                throw new \Illuminate\Auth\Access\AuthorizationException(
+                    'Bạn không có quyền thu hồi khách hàng này.'
+                );
+            }
+
+            $assignments = CustomerCareAssignment::query()
+                ->where('customer_care_id', $customerCare->getKey())
+                ->where('status', CustomerCareAssignment::STATUS_ACTIVE)
+                ->lockForUpdate()
+                ->get();
+
+            if ($assignments->count() !== 1) {
+                return $this->rowForCustomerCareConflict(
+                    $customerCare,
+                    'CustomerCare does not have exactly one active assignment.'
+                );
+            }
+
+            $assignment = $assignments->first();
+            $shop = Shop::withTrashed()->whereKey($assignment->shop_id)->lockForUpdate()->first();
+            $assignment->setRelation('customerCare', $customerCare);
+            $assignment->setRelation('shop', $shop);
+            $assignment->setRelation('assignee', $assignment->assignee()->first());
+
+            if (! $actor->isAdmin()
+                && ! $this->shopAccess()->canAccessShop($actor, (int) $assignment->shop_id)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException(
+                    'Bạn không có quyền thu hồi khách hàng này.'
+                );
+            }
+
+            $eligibility = $this->evaluateLocked(
+                $assignment,
+                $customerCare,
+                $shop,
+                CarbonImmutable::now(config('app.timezone'))->startOfDay(),
+                false
+            );
+
+            if ($eligibility !== null) {
+                return $eligibility;
+            }
+
+            $sourceResult = $this->lockAndValidateSource($assignment);
+            if (is_array($sourceResult)) {
+                return $sourceResult;
+            }
+
+            return $this->reclaimLocked(
+                $assignment,
+                $customerCare,
+                $shop,
+                $sourceResult,
+                CarbonImmutable::now(config('app.timezone')),
+                self::MANUAL_RECLAIM_REASON,
+                'user',
+                $actor,
+                $manualReason
+            );
+        });
+    }
 
     /**
      * Build a read-only preview from active assignment records.
@@ -341,63 +435,14 @@ class CustomerCareReclaimService
                 return $sourceResult;
             }
 
-            $reclaimedAt = CarbonImmutable::now(config('app.timezone'));
-            $assignment->update([
-                'status' => CustomerCareAssignment::STATUS_RECLAIMED,
-                'reclaimed_at' => $reclaimedAt,
-                'reclaim_reason' => self::RECLAIM_REASON,
-            ]);
-
-            if ($sourceResult instanceof ImportedOpportunity) {
-                $sourceResult->update(['status' => 0]);
-            }
-
-            $this->activityLogService->write(new ActivityLogEvent(
-                action: ActivityLogAction::CUSTOMER_CARE_RECLAIMED,
-                source: 'system',
-                subjectType: ActivityLogSubjectType::CUSTOMER_CARE_ASSIGNMENT,
-                subjectId: (string) $assignment->id,
-                shopId: (int) $assignment->shop_id,
-                shopName: $shop?->name,
-                actorUserId: null,
-                actorName: 'Hệ thống',
-                targetUserId: (int) $assignment->assignee_user_id,
-                targetUserName: $assignment->assignee?->name,
-                pancakeOrderId: $customerCare->pancake_order_id,
-                pancakeCustomerId: $customerCare->pancake_customer_id,
-                occurredAt: $reclaimedAt,
-                idempotencyKey: ActivityLogAction::CUSTOMER_CARE_RECLAIMED->value.':assignment:'.$assignment->id,
-                oldValues: [
-                    'status' => CustomerCareAssignment::STATUS_ACTIVE,
-                    'assignee_user_id' => $assignment->assignee_user_id,
-                    'assignee_pancake_user_id' => $assignment->assignee_pancake_user_id,
-                    'assigned_at' => $assignment->assigned_at->format('Y-m-d H:i:s'),
-                    'reclaim_eligible_on' => $assignment->reclaim_eligible_on->toDateString(),
-                ],
-                newValues: [
-                    'status' => CustomerCareAssignment::STATUS_RECLAIMED,
-                    'reclaimed_at' => $reclaimedAt->format('Y-m-d H:i:s'),
-                    'reclaim_reason' => self::RECLAIM_REASON,
-                ],
-                metadata: [
-                    'assignment_id' => (int) $assignment->id,
-                    'customer_care_id' => (int) $customerCare->id,
-                    'assignee_user_id' => (int) $assignment->assignee_user_id,
-                    'previous_assignee_user_id' => (int) $assignment->assignee_user_id,
-                    'shop_id' => (int) $assignment->shop_id,
-                    'source_type' => $assignment->source_type,
-                    'source_id' => (int) $assignment->source_id,
-                    'reason' => self::RECLAIM_REASON,
-                    'reclaim_reason' => self::RECLAIM_REASON,
-                    'assigned_at' => $assignment->assigned_at->toISOString(),
-                    'reclaimed_at' => $reclaimedAt->toISOString(),
-                ],
-            ));
-
-            return $this->row(
-                $assignment->refresh(),
-                self::RESULT_RECLAIMED,
-                self::RECLAIM_REASON
+            return $this->reclaimLocked(
+                $assignment,
+                $customerCare,
+                $shop,
+                $sourceResult,
+                CarbonImmutable::now(config('app.timezone')),
+                self::RECLAIM_REASON,
+                'system'
             );
         });
     }
@@ -439,7 +484,8 @@ class CustomerCareReclaimService
         CustomerCareAssignment $assignment,
         CustomerCare $customerCare,
         ?Shop $shop,
-        CarbonInterface $referenceDate
+        CarbonInterface $referenceDate,
+        bool $requireDueDate = true
     ): ?array {
         if ($assignment->status !== CustomerCareAssignment::STATUS_ACTIVE) {
             return $this->row($assignment, self::RESULT_SKIPPED, 'Assignment is not active.');
@@ -498,7 +544,7 @@ class CustomerCareReclaimService
             );
         }
 
-        if ($assignment->reclaim_eligible_on->isAfter($referenceDate)) {
+        if ($requireDueDate && $assignment->reclaim_eligible_on->isAfter($referenceDate)) {
             return $this->row(
                 $assignment,
                 self::RESULT_NOT_YET_DUE,
@@ -587,6 +633,110 @@ class CustomerCareReclaimService
             self::RESULT_ANOMALY,
             'Assignment source type is unsupported.'
         );
+    }
+
+    /**
+     * Persist the common reclaim transition and its mandatory Journey event.
+     * This is intentionally called inside the enclosing transaction so a log
+     * failure rolls the assignment and source changes back together.
+     */
+    private function reclaimLocked(
+        CustomerCareAssignment $assignment,
+        CustomerCare $customerCare,
+        ?Shop $shop,
+        Order|ImportedOpportunity $source,
+        CarbonImmutable $reclaimedAt,
+        string $reason,
+        string $eventSource,
+        ?User $actor = null,
+        ?string $manualReason = null
+    ): array {
+        $assignment->update([
+            'status' => CustomerCareAssignment::STATUS_RECLAIMED,
+            'reclaimed_at' => $reclaimedAt,
+            'reclaim_reason' => $reason,
+        ]);
+
+        if ($source instanceof ImportedOpportunity) {
+            $source->update(['status' => 0]);
+        }
+
+        $metadata = [
+            'assignment_id' => (int) $assignment->id,
+            'customer_care_id' => (int) $customerCare->id,
+            'assignee_user_id' => (int) $assignment->assignee_user_id,
+            'previous_assignee_user_id' => (int) $assignment->assignee_user_id,
+            'shop_id' => (int) $assignment->shop_id,
+            'source_type' => $assignment->source_type,
+            'source_id' => (int) $assignment->source_id,
+            'reason' => $reason,
+            'reclaim_reason' => $reason,
+            'assigned_at' => $assignment->assigned_at->toISOString(),
+            'reclaimed_at' => $reclaimedAt->toISOString(),
+        ];
+
+        if ($eventSource === 'user' && $actor !== null) {
+            $metadata['reclaim_source'] = 'manual';
+            $metadata['actor_user_id'] = (int) $actor->getKey();
+            if ($manualReason !== null && $manualReason !== '') {
+                $metadata['manual_reason'] = $manualReason;
+            }
+        }
+
+        $this->activityLogService->write(new ActivityLogEvent(
+            action: ActivityLogAction::CUSTOMER_CARE_RECLAIMED,
+            source: $eventSource,
+            subjectType: ActivityLogSubjectType::CUSTOMER_CARE_ASSIGNMENT,
+            subjectId: (string) $assignment->id,
+            shopId: (int) $assignment->shop_id,
+            shopName: $shop?->name,
+            actorUserId: $actor?->getKey(),
+            actorName: $actor?->name ?? 'Hệ thống',
+            targetUserId: (int) $assignment->assignee_user_id,
+            targetUserName: $assignment->assignee?->name,
+            pancakeOrderId: $customerCare->pancake_order_id,
+            pancakeCustomerId: $customerCare->pancake_customer_id,
+            occurredAt: $reclaimedAt,
+            idempotencyKey: ActivityLogAction::CUSTOMER_CARE_RECLAIMED->value.':assignment:'.$assignment->id,
+            oldValues: [
+                'status' => CustomerCareAssignment::STATUS_ACTIVE,
+                'assignee_user_id' => $assignment->assignee_user_id,
+                'assignee_pancake_user_id' => $assignment->assignee_pancake_user_id,
+                'assigned_at' => $assignment->assigned_at->format('Y-m-d H:i:s'),
+                'reclaim_eligible_on' => $assignment->reclaim_eligible_on->toDateString(),
+            ],
+            newValues: [
+                'status' => CustomerCareAssignment::STATUS_RECLAIMED,
+                'reclaimed_at' => $reclaimedAt->format('Y-m-d H:i:s'),
+                'reclaim_reason' => $reason,
+            ],
+            metadata: $metadata,
+        ));
+
+        return $this->row($assignment->refresh(), self::RESULT_RECLAIMED, $reason);
+    }
+
+    /** @return array<string, mixed> */
+    private function rowForCustomerCareConflict(CustomerCare $customerCare, string $reason): array
+    {
+        return [
+            'assignment_id' => null,
+            'source' => null,
+            'source_id' => null,
+            'shop' => (string) $customerCare->shop_id,
+            'customer_care_id' => $customerCare->id,
+            'assignee' => null,
+            'assigned_at' => null,
+            'eligible_on' => null,
+            'care_status' => 'unknown',
+            'result' => self::RESULT_SKIPPED,
+            'reason' => $reason,
+        ];
+    }
+
+    private function shopAccess(): ShopAccessService
+    {
+        return $this->shopAccessService ?? app(ShopAccessService::class);
     }
 
     /**

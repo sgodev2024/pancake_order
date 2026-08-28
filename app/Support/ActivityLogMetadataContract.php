@@ -56,6 +56,8 @@ final class ActivityLogMetadataContract
                     self::INGESTION_PATH,
                     self::ACQUISITION_CHANNEL,
                     'reason',
+                    'reclaim_source',
+                    'manual_reason',
                 ],
             ],
             ActivityLogAction::CUSTOMER_CARE_COMPLETED->value => [

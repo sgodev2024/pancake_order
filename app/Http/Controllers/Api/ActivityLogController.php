@@ -203,6 +203,17 @@ class ActivityLogController extends Controller
             $targetUserName ??= "Người dùng không xác định";
             $order = $log->pancake_order_id;
 
+            if (($log->metadata['reclaim_source'] ?? null) === 'manual') {
+                $description = $order !== null && trim((string) $order) !== ""
+                    ? $actorName . " thu hồi CSKH đơn " . $order . " từ " . $targetUserName . "."
+                    : $actorName . " thu hồi CSKH từ " . $targetUserName . ".";
+                $manualReason = $log->metadata['manual_reason'] ?? null;
+
+                return is_string($manualReason) && trim($manualReason) !== ''
+                    ? $description . " Lý do: " . trim($manualReason) . "."
+                    : $description;
+            }
+
             if ($order !== null && trim((string) $order) !== "") {
                 return $actorName . " thu hồi CSKH đơn " . $order . " từ " . $targetUserName
                     . " do quá 3 ngày chưa chăm sóc";

@@ -29,8 +29,8 @@ class CustomerJourneyTransformer
             'new_assignee_user_id',
         ],
         'customer_care.reclaimed' => [
-            'assignment_id',
             'reclaim_reason',
+            'manual_reason',
         ],
         'customer_care.completed' => [
             'customer_care_id',
@@ -105,6 +105,10 @@ class CustomerJourneyTransformer
                 continue;
             }
 
+            if ($key === 'reclaim_reason' && ($metadata['reclaim_source'] ?? null) === 'manual') {
+                continue;
+            }
+
             if ($key === 'items') {
                 $items = $this->safeItems($metadata[$key]);
                 if ($items !== null) {
@@ -123,6 +127,7 @@ class CustomerJourneyTransformer
         // vocabulary is "reclaim_reason". Map it without exposing arbitrary
         // legacy metadata keys.
         if ($action === 'customer_care.reclaimed'
+            && ($metadata['reclaim_source'] ?? null) !== 'manual'
             && ! array_key_exists('reclaim_reason', $safe)
             && array_key_exists('reason', $metadata)) {
             $safe['reclaim_reason'] = $metadata['reason'];
