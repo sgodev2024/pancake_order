@@ -138,7 +138,11 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $order->created_at,
                         $customerExist?->name ?? $customer['name'] ?? null,
                         $customerExist?->phone_numbers ?? $this->data['bill_phone_number'] ?? null,
-                        $customer['shop_customer_addresses'][0]['full_address'] ?? null,
+                        // CustomerCare must inherit the authoritative address
+                        // persisted on the exact local Order. The customer
+                        // profile address list can be empty or stale even
+                        // when the order shipping address is present.
+                        $order->customer_address,
                         $customerExist?->pancake_customer_id ?? $customerId,
                         $order->user_creator_id,
                         $order->user_care_id,

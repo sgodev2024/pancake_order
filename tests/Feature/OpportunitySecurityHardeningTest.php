@@ -216,6 +216,30 @@ class OpportunitySecurityHardeningTest extends TestCase
         $this->assertSame(['id', 'name'], array_keys($listResponse->json('data.customers.0.user_assigning')));
     }
 
+    public function test_upcoming_care_api_returns_the_legacy_customer_address_field(): void
+    {
+        $shop = $this->createShop();
+        $admin = $this->createUser('admin', 'Admin');
+        $order = $this->createOrder($shop, 2);
+        $care = CustomerCare::create([
+            'shop_id' => $shop->id,
+            'pancake_customer_id' => $order->pancake_customer_id,
+            'pancake_order_id' => $order->pancake_order_id,
+            'customer_addresss' => 'Address returned by the upcoming-care API',
+            'date_care' => date('Y-m-d', strtotime('+1 day')),
+            'status' => 0,
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/customer-cares?type=customer_care_pending&page=1')
+            ->assertOk()
+            ->assertJsonPath('data.customers.0.id', $care->id)
+            ->assertJsonPath(
+                'data.customers.0.customer_addresss',
+                'Address returned by the upcoming-care API'
+            );
+    }
+
     public function test_order_assignment_preserves_null_address(): void
     {
         $shop = $this->createShop();

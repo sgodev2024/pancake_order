@@ -7,6 +7,7 @@ use App\Jobs\GetOrderByShopJob;
 use App\Jobs\GetOrderFromWebhookJob;
 use App\Models\ActivityLog;
 use App\Models\Customer;
+use App\Models\CustomerCare;
 use App\Models\Order;
 use App\Models\Shop;
 use App\Services\OrderCreatedEventWriter;
@@ -196,6 +197,32 @@ class OrderJourneyEventTest extends TestCase
         $this->assertSame((string) $order->id, $event->subject_id);
         $this->assertSame($order->created_at->format('Y-m-d H:i:s'), $event->occurred_at->format('Y-m-d H:i:s'));
         $this->assertSame(1, ActivityLog::query()->where('action', ActivityLogAction::ORDER_CREATED->value)->count());
+    }
+
+    public function test_new_webhook_customer_care_copies_the_exact_order_address(): void
+    {
+        $shop = $this->createShop('Webhook Care Shop');
+        $customer = $this->createCustomer($shop, 'PAN-WEBHOOK-CARE-CUSTOMER');
+        $data = $this->orderData(
+            'PAN-WEBHOOK-CARE-ADDRESS',
+            $customer->pancake_customer_id,
+            status: 2
+        );
+        $data['shop_id'] = $shop->pancake_shop_id;
+        $data['shipping_address'] = [
+            'full_address' => 'Authoritative order shipping address',
+        ];
+        $data['customer']['shop_customer_addresses'] = [];
+
+        $this->runWebhook($data);
+
+        $order = Order::query()->sole();
+        $customerCare = CustomerCare::query()->sole();
+
+        $this->assertSame('Authoritative order shipping address', $order->customer_address);
+        $this->assertSame($order->customer_address, $customerCare->customer_addresss);
+        $this->assertSame($order->pancake_order_id, $customerCare->pancake_order_id);
+        $this->assertSame($shop->id, $customerCare->shop_id);
     }
 
     public function test_existing_webhook_order_update_gets_no_new_order_event(): void
@@ -414,6 +441,23 @@ class OrderJourneyEventTest extends TestCase
             $table->string('customer_phone')->nullable();
             $table->text('customer_address')->nullable();
             $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('customer_cares', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->string('pancake_customer_id')->nullable();
+            $table->string('pancake_order_id')->nullable();
+            $table->json('customer_phones')->nullable();
+            $table->string('customer_name')->nullable();
+            $table->string('customer_addresss')->nullable();
+            $table->date('date_care')->nullable();
+            $table->text('note')->nullable();
+            $table->string('user_creator_id')->nullable();
+            $table->string('user_care_id')->nullable();
+            $table->string('user_assigning_seller_id')->nullable();
+            $table->integer('status')->default(0);
             $table->timestamps();
         });
 

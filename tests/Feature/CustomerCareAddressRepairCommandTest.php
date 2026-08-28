@@ -137,6 +137,24 @@ class CustomerCareAddressRepairCommandTest extends TestCase
         $this->assertSame(0, ActivityLog::query()->count());
     }
 
+    public function test_order_from_a_different_shop_is_skipped(): void
+    {
+        $order = $this->createOrder(shopId: 2, customerAddress: 'Other shop address');
+        $care = $this->createCare($order, null);
+        $care->update(['shop_id' => 1]);
+        $this->createOrderAssignment($care, $order);
+
+        $this->artisan('customer-care:repair-addresses', [
+            '--ids' => (string) $care->id,
+            '--execute' => true,
+        ])->expectsOutputToContain('SOURCE_ORDER_NOT_FOUND')
+            ->expectsOutputToContain('Repaired: 0')
+            ->assertSuccessful();
+
+        $this->assertNull($care->fresh()->customer_addresss);
+        $this->assertSame(0, ActivityLog::query()->count());
+    }
+
     public function test_duplicate_external_order_ids_without_exact_assignment_are_ambiguous(): void
     {
         $first = $this->createOrder(pancakeOrderId: 'DUPLICATE-ORDER', customerAddress: 'First source');
