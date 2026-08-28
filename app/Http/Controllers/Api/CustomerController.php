@@ -7,17 +7,22 @@ use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\Customer;
 use App\Models\Order;
 use App\Models\User;
+use App\Services\CustomerJourneyFilterService;
+use App\Services\CustomerJourneyService;
 use App\Services\CustomerReadAccessService;
 use App\Services\ShopAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 
 class CustomerController extends Controller implements HasMiddleware
 {
-    public function __construct(private readonly ShopAccessService $shopAccessService, private readonly CustomerReadAccessService $customerReadAccessService)
-    {
-    }
+    public function __construct(
+        private readonly ShopAccessService $shopAccessService,
+        private readonly CustomerReadAccessService $customerReadAccessService,
+        private readonly CustomerJourneyFilterService $customerJourneyFilterService
+    ) {}
 
     /**
      * Khai báo middleware cho Controller
@@ -34,10 +39,20 @@ class CustomerController extends Controller implements HasMiddleware
     public function index(Request $request)
     {
         $user = $request->user();
+        $journeyFilters = $request->validate([
+            'journey_action' => ['nullable', 'string', 'in:'.implode(',', CustomerJourneyService::ACTIONS)],
+            'journey_date_from' => ['nullable', 'date_format:Y-m-d'],
+            'journey_date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:journey_date_from'],
+            'care_count_min' => ['nullable', 'integer', 'min:0'],
+            'care_count_max' => ['nullable', 'integer', 'min:0', 'gte:care_count_min'],
+            'has_order' => ['nullable', 'string', 'in:all,yes,no'],
+            'care_user_id' => ['nullable', 'integer', 'min:1', 'exists:users,id'],
+        ]);
         $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
             $user,
             $request->filled('shop_id') ? $request->integer('shop_id') : null
         );
+        $this->authorizeCareUserFilter($user, $requestedShopId, $journeyFilters);
 
         try {
             $inputs = $request->only(
@@ -101,6 +116,7 @@ class CustomerController extends Controller implements HasMiddleware
             if (! $this->shopAccessService->isGlobal($user)) {
                 $this->customerReadAccessService->applyRecordScope($query, $user, 'assigned_user_id');
             }
+            $this->customerJourneyFilterService->apply($query, $journeyFilters);
             $pageNumber = $inputs["page"];
             $page_size  = $inputs["page_size"] ?? 30;
             // 4. Sắp xếp và Phân trang (Lấy 30 records mỗi trang)
@@ -112,9 +128,9 @@ class CustomerController extends Controller implements HasMiddleware
                 'data'    => [
                     "customers" => $customers->items(),
                     'current_page' => $customers->currentPage(),
-                    'per_page'     => $customers->perPage(),
-                    'total_items'  => $customers->total(),
-                    'total_pages'  => $customers->lastPage(),
+                    'per_page' => $customers->perPage(),
+                    'total_items' => $customers->total(),
+                    'total_pages' => $customers->lastPage(),
                 ],
             ], 200);
         } catch (\Throwable $th) {
@@ -122,6 +138,24 @@ class CustomerController extends Controller implements HasMiddleware
                 'success' => false,
                 'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
             ], 500);
+        }
+    }
+
+    /** @param array<string, mixed> $filters */
+    private function authorizeCareUserFilter(User $actor, ?int $requestedShopId, array $filters): void
+    {
+        if (empty($filters['care_user_id'])) {
+            return;
+        }
+
+        $careUser = User::query()->findOrFail((int) $filters['care_user_id']);
+        $allowed = $requestedShopId !== null
+            ? $careUser->shops()->whereKey($requestedShopId)->exists()
+            : ($this->shopAccessService->isGlobal($actor)
+                || $this->shopAccessService->canAccessUser($actor, $careUser));
+
+        if (! $allowed) {
+            throw new AuthorizationException('You do not have access to the requested care employee.');
         }
     }
 

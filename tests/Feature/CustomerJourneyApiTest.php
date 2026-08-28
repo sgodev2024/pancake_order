@@ -381,6 +381,284 @@ class CustomerJourneyApiTest extends TestCase
         $this->assertSame('2026-08-20T04:00:00.000000Z', $pageTwo->json('data.timeline.0.occurred_at'));
     }
 
+    public function test_customer_list_supports_journey_filters_with_customer_and_same_event_semantics(): void
+    {
+        $shop = $this->createShop('Shop One');
+        $otherShop = $this->createShop('Shop Two');
+        $admin = $this->createUser('admin', 'Admin');
+        $careOne = $this->createUser('staff-cskh', 'Care One');
+        $careTwo = $this->createUser('staff-cskh', 'Care Two');
+        $this->grantPermission($admin, 'list-customer');
+        $this->attach($careOne, $shop);
+        $this->attach($careTwo, $shop);
+
+        $twoCares = $this->createCustomer($shop, ['name' => 'Two cares', 'pancake_customer_id' => 'SHARED']);
+        $zeroCare = $this->createCustomer($shop, ['name' => 'Zero care']);
+        $oneCare = $this->createCustomer($shop, ['name' => 'One care']);
+        $otherShopCustomer = $this->createCustomer($otherShop, [
+            'name' => 'Other shop',
+            'pancake_customer_id' => 'SHARED',
+        ]);
+
+        [$firstCare, $firstAssignment, $firstOrder] = $this->createOrderCareJourney($shop, $twoCares);
+        [$secondCare, $secondAssignment] = $this->createOrderCareJourney($shop, $twoCares);
+        [$thirdCare, $thirdAssignment] = $this->createOrderCareJourney($shop, $oneCare);
+        $otherOrder = $this->createOrder($otherShop, ['pancake_customer_id' => 'SHARED']);
+
+        $this->createLog([
+            'action' => 'customer_care.completed',
+            'subject_type' => 'customer_care',
+            'subject_id' => $firstCare->id,
+            'target_user_id' => $careOne->id,
+            'metadata' => ['customer_id' => $twoCares->id, 'assignment_id' => $firstAssignment->id],
+            'occurred_at' => '2026-08-05 09:00:00',
+        ]);
+        $this->createLog([
+            'action' => 'customer_care.completed',
+            'subject_type' => 'customer_care',
+            'subject_id' => $secondCare->id,
+            'target_user_id' => $careTwo->id,
+            'metadata' => ['customer_id' => $twoCares->id, 'assignment_id' => $secondAssignment->id],
+            'occurred_at' => '2026-08-20 09:00:00',
+        ]);
+        $this->createLog([
+            'action' => 'order.created',
+            'subject_type' => 'order',
+            'subject_id' => $firstOrder->id,
+            'pancake_customer_id' => $twoCares->pancake_customer_id,
+            'metadata' => ['customer_id' => $twoCares->id, 'order_id' => $firstOrder->id],
+            'occurred_at' => '2026-08-07 09:00:00',
+        ]);
+        $this->createLog([
+            'action' => 'customer.entered_system',
+            'subject_type' => 'customer',
+            'subject_id' => $twoCares->id,
+            'metadata' => ['customer_id' => $twoCares->id],
+            'occurred_at' => '2026-08-01 08:00:00',
+        ]);
+        foreach ([
+            'customer_care.assigned',
+            'customer_care.reassigned',
+            'customer_care.reclaimed',
+        ] as $assignmentAction) {
+            $this->createLog([
+                'action' => $assignmentAction,
+                'subject_type' => 'customer_care_assignment',
+                'subject_id' => $firstAssignment->id,
+                'target_user_id' => $careOne->id,
+                'metadata' => ['assignment_id' => $firstAssignment->id],
+                'occurred_at' => '2026-08-04 09:00:00',
+            ]);
+        }
+        $this->createLog([
+            'action' => 'customer_care.completed',
+            'subject_type' => 'customer_care',
+            'subject_id' => $thirdCare->id,
+            'target_user_id' => $careOne->id,
+            'metadata' => ['customer_id' => $oneCare->id, 'assignment_id' => $thirdAssignment->id],
+            'occurred_at' => '2026-08-20 10:00:00',
+        ]);
+        $this->createLog([
+            'action' => 'order.created',
+            'subject_type' => 'order',
+            'subject_id' => $otherOrder->id,
+            'pancake_customer_id' => 'SHARED',
+            'metadata' => [],
+            'occurred_at' => '2026-08-08 09:00:00',
+        ], $otherShop);
+
+        $this->assertCustomerListIds($admin, "shop_id={$shop->id}&journey_action=customer_care.completed", [
+            $twoCares->id,
+            $oneCare->id,
+        ]);
+        foreach ([
+            'customer.entered_system',
+            'customer_care.assigned',
+            'customer_care.reassigned',
+            'customer_care.reclaimed',
+            'order.created',
+        ] as $action) {
+            $this->assertCustomerListIds($admin, "shop_id={$shop->id}&journey_action={$action}", [
+                $twoCares->id,
+            ]);
+        }
+        $this->assertCustomerListIds(
+            $admin,
+            "shop_id={$shop->id}&journey_action=customer_care.completed&journey_date_from=2026-08-15",
+            [$twoCares->id, $oneCare->id]
+        );
+        $this->assertCustomerListIds(
+            $admin,
+            "shop_id={$shop->id}&journey_action=customer_care.completed&journey_date_to=2026-08-10",
+            [$twoCares->id]
+        );
+        $this->assertCustomerListIds(
+            $admin,
+            "shop_id={$shop->id}&journey_action=customer_care.completed&care_user_id={$careOne->id}",
+            [$twoCares->id, $oneCare->id]
+        );
+        $this->assertCustomerListIds(
+            $admin,
+            "shop_id={$shop->id}&journey_action=customer_care.completed&journey_date_from=2026-08-15&care_user_id={$careOne->id}",
+            [$oneCare->id]
+        );
+        $this->assertCustomerListIds($admin, "shop_id={$shop->id}&care_count_min=2&care_count_max=2", [
+            $twoCares->id,
+        ]);
+        $this->assertCustomerListIds($admin, "shop_id={$shop->id}&care_count_min=1&care_count_max=1", [
+            $oneCare->id,
+        ]);
+        $this->assertCustomerListIds($admin, "shop_id={$shop->id}&care_count_min=0&care_count_max=0", [
+            $zeroCare->id,
+        ]);
+        $this->assertCustomerListIds($admin, "shop_id={$shop->id}&has_order=yes", [$twoCares->id]);
+        $this->assertCustomerListIds($admin, "shop_id={$shop->id}&has_order=no", [
+            $zeroCare->id,
+            $oneCare->id,
+        ]);
+        $this->assertCustomerListIds(
+            $admin,
+            "shop_id={$shop->id}&care_count_min=2&has_order=yes&journey_date_from=2026-08-01&journey_date_to=2026-08-31",
+            [$twoCares->id]
+        );
+        $this->assertCustomerListIds($admin, "shop_id={$otherShop->id}&has_order=yes", [$otherShopCustomer->id]);
+
+        $pageOne = $this->actingAs($admin, 'api')->getJson(
+            "/api/v1/customers?shop_id={$shop->id}&journey_action=customer_care.completed&page_size=1&page=1"
+        )->assertOk()->assertJsonPath('data.total_items', 2);
+        $pageTwo = $this->actingAs($admin, 'api')->getJson(
+            "/api/v1/customers?shop_id={$shop->id}&journey_action=customer_care.completed&page_size=1&page=2"
+        )->assertOk()->assertJsonPath('data.total_items', 2);
+        $this->assertNotSame($pageOne->json('data.customers.0.id'), $pageTwo->json('data.customers.0.id'));
+    }
+
+    public function test_customer_list_journey_filters_preserve_shop_employee_and_staff_security(): void
+    {
+        $shop = $this->createShop('Shop One');
+        $otherShop = $this->createShop('Shop Two');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $staff = $this->createUser('staff-sale', 'Staff');
+        $otherStaff = $this->createUser('staff-sale', 'Other Staff');
+        $care = $this->createUser('staff-cskh', 'Care');
+        $foreignCare = $this->createUser('staff-cskh', 'Foreign Care');
+        foreach ([$manager, $staff] as $actor) {
+            $this->grantPermission($actor, 'list-customer');
+            $this->attach($actor, $shop);
+        }
+        $this->attach($care, $shop);
+        $this->attach($foreignCare, $otherShop);
+
+        $own = $this->createCustomer($shop, [
+            'assigned_user_id' => $staff->pancake_user_id,
+            'pancake_customer_id' => 'DUPLICATE-EXTERNAL',
+        ]);
+        $notOwn = $this->createCustomer($shop, ['assigned_user_id' => $otherStaff->pancake_user_id]);
+        $foreign = $this->createCustomer($otherShop, ['pancake_customer_id' => 'DUPLICATE-EXTERNAL']);
+        foreach ([[$shop, $own], [$shop, $notOwn], [$otherShop, $foreign]] as [$eventShop, $customer]) {
+            $order = $this->createOrder($eventShop, ['pancake_customer_id' => $customer->pancake_customer_id]);
+            $this->createLog([
+                'action' => 'order.created',
+                'subject_type' => 'order',
+                'subject_id' => $order->id,
+                'pancake_customer_id' => $customer->pancake_customer_id,
+                'metadata' => ['customer_id' => $customer->id],
+            ], $eventShop);
+        }
+
+        $this->assertCustomerListIds($manager, "shop_id={$shop->id}&journey_action=order.created", [
+            $own->id,
+            $notOwn->id,
+        ]);
+        $this->assertCustomerListIds($staff, "shop_id={$shop->id}&journey_action=order.created", [$own->id]);
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/customers?shop_id={$otherShop->id}&journey_action=order.created")
+            ->assertForbidden();
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/customers?shop_id={$shop->id}&care_user_id={$foreignCare->id}")
+            ->assertForbidden();
+        $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/customers?shop_id={$shop->id}&care_user_id={$care->id}&page=1")
+            ->assertOk();
+    }
+
+    public function test_customer_list_validates_journey_filters_and_no_filter_keeps_legacy_results(): void
+    {
+        $shop = $this->createShop();
+        $admin = $this->createUser('admin', 'Admin');
+        $this->grantPermission($admin, 'list-customer');
+        $first = $this->createCustomer($shop);
+        $second = $this->createCustomer($shop);
+
+        $this->assertCustomerListIds($admin, '', [$first->id, $second->id]);
+
+        foreach ([
+            'journey_action=activity.login',
+            'journey_date_from=not-a-date',
+            'journey_date_to=not-a-date',
+            'journey_date_from=2026-08-20&journey_date_to=2026-08-19',
+            'care_count_min=-1',
+            'care_count_max=-1',
+            'care_count_min=2&care_count_max=1',
+            'has_order=purchased',
+            'care_user_id=0',
+            'care_user_id=999999',
+        ] as $query) {
+            $this->actingAs($admin, 'api')
+                ->getJson('/api/v1/customers?'.$query)
+                ->assertStatus(422);
+        }
+    }
+
+    public function test_customer_list_without_journey_filters_does_not_query_activity_logs(): void
+    {
+        $shop = $this->createShop();
+        $admin = $this->createUser('admin', 'Admin');
+        $this->grantPermission($admin, 'list-customer');
+        $customer = $this->createCustomer($shop);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        try {
+            $this->assertCustomerListIds($admin, '', [$customer->id]);
+            $queries = collect(DB::getQueryLog())->pluck('query')->implode("\n");
+            $this->assertStringNotContainsString('activity_logs', $queries);
+        } finally {
+            DB::disableQueryLog();
+        }
+    }
+
+    public function test_one_log_matching_metadata_and_assignment_linkage_counts_once_for_timeline_and_filters(): void
+    {
+        $shop = $this->createShop();
+        $admin = $this->createUser('admin', 'Admin');
+        $this->grantPermission($admin, 'list-customer');
+        $customer = $this->createCustomer($shop);
+        [$care, $assignment] = $this->createOrderCareJourney($shop, $customer);
+
+        $this->createLog([
+            'action' => 'customer_care.completed',
+            'subject_type' => 'customer_care',
+            'subject_id' => $care->id,
+            'metadata' => [
+                'customer_id' => $customer->id,
+                'assignment_id' => $assignment->id,
+            ],
+            'occurred_at' => '2026-08-31 23:59:59',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->getJson("/api/v1/customers/{$customer->id}/journey")
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.summary.care_count', 1);
+        $this->assertCustomerListIds(
+            $admin,
+            "shop_id={$shop->id}&journey_action=customer_care.completed&journey_date_to=2026-08-31&care_count_min=1&care_count_max=1",
+            [$customer->id]
+        );
+    }
+
     private function createSchema(): void
     {
         Schema::create('roles', function (Blueprint $table): void {
@@ -426,9 +704,14 @@ class CustomerJourneyApiTest extends TestCase
         Schema::create('customers', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('shop_id');
+            $table->unsignedBigInteger('loyalty_tier_id')->nullable();
             $table->string('pancake_customer_id')->nullable();
             $table->string('name')->nullable();
+            $table->json('phone_numbers')->nullable();
+            $table->json('pancake_full_data')->nullable();
             $table->string('assigned_user_id')->nullable();
+            $table->decimal('purchased_amount', 15, 2)->default(0);
+            $table->unsignedInteger('order_count')->default(0);
             $table->timestamps();
         });
         Schema::create('orders', function (Blueprint $table): void {
@@ -581,6 +864,31 @@ class CustomerJourneyApiTest extends TestCase
         $id = DB::table('activity_logs')->insertGetId($attributes);
 
         return ActivityLog::query()->findOrFail($id);
+    }
+
+    /** @return array{CustomerCare, CustomerCareAssignment, Order} */
+    private function createOrderCareJourney(Shop $shop, Customer $customer): array
+    {
+        $order = $this->createOrder($shop, ['pancake_customer_id' => $customer->pancake_customer_id]);
+        $care = $this->createCare($shop, $customer, $order);
+        $assignment = $this->createAssignment($shop, $care, $order);
+
+        return [$care, $assignment, $order];
+    }
+
+    /** @param list<int> $expectedIds */
+    private function assertCustomerListIds(User $actor, string $query, array $expectedIds): void
+    {
+        $query = $query === '' ? 'page=1' : $query.'&page=1';
+        $response = $this->actingAs($actor, 'api')
+            ->getJson('/api/v1/customers?'.$query)
+            ->assertOk();
+
+        $this->assertEqualsCanonicalizing(
+            $expectedIds,
+            collect($response->json('data.customers'))->pluck('id')->all()
+        );
+        $response->assertJsonPath('data.total_items', count($expectedIds));
     }
 
     private function currentShopId(): int
