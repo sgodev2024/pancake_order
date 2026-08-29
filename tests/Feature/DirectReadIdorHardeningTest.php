@@ -226,6 +226,80 @@ class DirectReadIdorHardeningTest extends TestCase
         );
     }
 
+    public function test_customer_orders_preserve_the_legacy_v1_detail_modal_contract(): void
+    {
+        $shop11 = $this->createShop(11);
+        $shop12 = $this->createShop(12);
+        $manager = $this->createUser('manager-cskh', 'Manager M1');
+        $localCreator = $this->createUser('staff-sale', 'Local creator');
+        $otherShopManager = $this->createUser('manager-cskh', 'Manager M2');
+        $this->attach($manager, $shop11);
+        $this->attach($otherShopManager, $shop12);
+        $this->grantPermission($manager, 'list-customer');
+        $this->grantPermission($otherShopManager, 'list-customer');
+
+        $customerId = 'V1-DETAIL-CUSTOMER';
+        $firstOrder = $this->createOrder($shop11, [
+            'pancake_customer_id' => $customerId,
+            'user_creator_id' => $localCreator->pancake_user_id,
+            'cod' => 345000,
+            'pancake_full_data' => [
+                'inserted_at' => '2026-08-28T08:30:00Z',
+                'creator' => ['id' => $localCreator->pancake_user_id, 'name' => 'Pancake creator'],
+                'items' => [
+                    ['variation_info' => ['name' => 'Product one', 'images' => ['https://cdn.example.test/one.jpg']], 'quantity' => 1],
+                    ['variation_info' => ['name' => 'Product two', 'images' => []], 'quantity' => 2],
+                ],
+            ],
+        ]);
+        $secondOrder = $this->createOrder($shop11, [
+            'pancake_customer_id' => $customerId,
+            'cod' => 120000,
+            'pancake_full_data' => [
+                'inserted_at' => '2026-08-27T08:30:00Z',
+                'items' => [],
+            ],
+        ]);
+        $otherShopOrder = $this->createOrder($shop12, [
+            'pancake_customer_id' => $customerId,
+            'pancake_full_data' => [
+                'inserted_at' => '2026-08-26T08:30:00Z',
+                'items' => [['variation_info' => ['name' => 'Other shop product']]],
+            ],
+        ]);
+
+        $response = $this->actingAs($manager, 'api')
+            ->getJson("/api/v1/customers/{$customerId}/orders?page_number=1")
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.total_items', 2)
+            ->assertJsonPath('data.total_entries', 2);
+
+        $orders = collect($response->json('data.data'))->keyBy('id');
+        $first = $orders->get($firstOrder->id);
+        $second = $orders->get($secondOrder->id);
+
+        $this->assertCount(2, $orders);
+        $this->assertArrayNotHasKey($otherShopOrder->id, $orders->all());
+        $this->assertSame(345000, (int) $first['cod']);
+        $this->assertSame('2026-08-28T08:30:00Z', $first['inserted_at']);
+        $this->assertSame('Pancake creator', $first['creator']['name']);
+        $this->assertSame('Product one', $first['items'][0]['variation_info']['name']);
+        $this->assertSame('Product two', $first['items'][1]['variation_info']['name']);
+        $this->assertSame(2, $first['items'][1]['quantity']);
+        $this->assertSame([], $second['items']);
+        $this->assertNull($second['creator']);
+        $this->assertArrayHasKey('pancake_full_data', $first);
+        $this->assertArrayHasKey('user_creator', $first);
+
+        $this->actingAs($otherShopManager, 'api')
+            ->getJson("/api/v1/customers/{$customerId}/orders")
+            ->assertOk()
+            ->assertJsonPath('data.total_entries', 1)
+            ->assertJsonPath('data.data.0.id', $otherShopOrder->id)
+            ->assertJsonMissing(['id' => $firstOrder->id]);
+    }
+
     public function test_list_endpoints_reject_tampered_shop_ids_instead_of_silently_broadening_scope(): void
     {
         $shop11 = $this->createShop(11);

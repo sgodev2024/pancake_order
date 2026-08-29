@@ -209,11 +209,19 @@ class CustomerController extends Controller implements HasMiddleware
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'data' => $orders->items(),
+                    // Preserve the current local-order payload and add the fields
+                    // read by the deployed V1 customer-order modal. The old modal
+                    // renders product rows from `items`, the creator from
+                    // `creator.name`, and the purchase date from `inserted_at`.
+                    'data' => collect($orders->items())
+                        ->map(fn (Order $order) => $this->legacyOrderDetailData($order))
+                        ->values()
+                        ->all(),
                     'page_number' => $orders->currentPage(),
                     'page_size' => $orders->perPage(),
                     'total_pages' => $orders->lastPage(),
                     'total_items' => $orders->total(),
+                    'total_entries' => $orders->total(),
                 ],
             ]);
         } catch (\Throwable $th) {
@@ -234,5 +242,43 @@ class CustomerController extends Controller implements HasMiddleware
             $scope->where('user_creator_id', $actor->pancake_user_id)
                 ->orWhere('user_care_id', $actor->pancake_user_id);
         });
+    }
+
+    /**
+     * Keep the response fields expected by the legacy V1 customer order modal
+     * without removing fields consumed by newer clients.
+     *
+     * @return array<string, mixed>
+     */
+    private function legacyOrderDetailData(Order $order): array
+    {
+        $payload = is_array($order->pancake_full_data) ? $order->pancake_full_data : [];
+        $payloadCreator = $payload['creator'] ?? null;
+        $localCreator = $order->user_creator;
+
+        if (is_array($payloadCreator)) {
+            $creator = $payloadCreator;
+
+            if (empty($creator['name']) && $localCreator !== null) {
+                $creator['name'] = $localCreator->name;
+            }
+        } elseif ($localCreator !== null) {
+            $creator = [
+                'id' => $localCreator->pancake_user_id,
+                'name' => $localCreator->name,
+            ];
+        } else {
+            $creator = null;
+        }
+
+        return array_merge($order->toArray(), [
+            // V1 renders every Pancake item, including multi-product orders.
+            'items' => is_array($payload['items'] ?? null) ? $payload['items'] : [],
+            // Preserve Pancake's original purchase timestamp when available.
+            'inserted_at' => $payload['inserted_at'] ?? null,
+            // Preserve the source creator and fill a missing name from the
+            // already eager-loaded local mapping only.
+            'creator' => $creator,
+        ]);
     }
 }
