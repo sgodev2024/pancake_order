@@ -21,6 +21,7 @@ class OrderController extends Controller
     {
         $user = $request->user();
         $isSummaryView = $request->query('view') === 'summary';
+        $request->validate(['order_page_id' => ['nullable', 'string', 'max:255']]);
         $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
             $user,
             $request->filled('shop_id') ? $request->integer('shop_id') : null
@@ -37,7 +38,8 @@ class OrderController extends Controller
                 'date_from',
                 'date_to',
                 'user_id',
-                'order_source_id'
+                'order_source_id',
+                'order_page_id'
             );
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
@@ -100,6 +102,9 @@ class OrderController extends Controller
             if (isset($inputs['order_source_id']) && $inputs['order_source_id'] !== '') {
                 $query->where('orders.pancake_order_source_id', $inputs['order_source_id']);
             }
+            if ($request->filled('order_page_id')) {
+                $query->where('orders.pancake_order_page_id', $inputs['order_page_id']);
+            }
             // (Bonus) Lọc theo search (ví dụ tìm theo số điện thoại hoặc mã đơn VTP)
             if (! empty($inputs['search'])) {
                 $searchTerm = $inputs['search'].'%';
@@ -126,6 +131,8 @@ class OrderController extends Controller
                     'pancake_order_source_id as order_source_id',
                     'pancake_order_source_name as order_source_name',
                     'shop_id',
+                    'pancake_order_page_id as order_page_id',
+                    'pancake_order_page_name as order_page_name',
                     'user_creator_id',
                 ]);
             } else {

@@ -17,6 +17,8 @@ class Order extends Model
         'pancake_order_id',
         'pancake_order_source_id',
         'pancake_order_source_name',
+        'pancake_order_page_id',
+        'pancake_order_page_name',
         'order_number_vtp',
         'total_quantity',
         'cod',

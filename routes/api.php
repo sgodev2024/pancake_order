@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\CustomerJourneyController;
 use App\Http\Controllers\Api\ImportedOpportunityController;
 use App\Http\Controllers\Api\LoyaltyTierController;
 use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\OrderPageController;
 use App\Http\Controllers\Api\OrderSourceController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\PermissionGroupController;
@@ -90,6 +91,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('orders/{order}/history', [OrderController::class, 'history'])
         ->middleware(PermissionCheckMiddleware::class.':view-chance,strict');
     Route::get('order-sources', [OrderSourceController::class, 'index']);
+    Route::get('order-pages', [OrderPageController::class, 'index']);
     Route::apiResource('orders', OrderController::class);
 
     Route::get('activity-logs', [ActivityLogController::class, 'index'])

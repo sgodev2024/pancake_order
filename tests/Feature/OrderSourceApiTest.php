@@ -306,6 +306,8 @@ class OrderSourceApiTest extends TestCase
             'customer_name',
             'id',
             'order_number_vtp',
+            'order_page_id',
+            'order_page_name',
             'order_source_id',
             'order_source_name',
             'pancake_order_id',
@@ -358,6 +360,150 @@ class OrderSourceApiTest extends TestCase
             [$createdOrder->id, $caredOrder->id],
             collect($response->json('data.orders'))->pluck('id')->all()
         );
+    }
+
+    public function test_page_summary_and_exact_filter_preserve_shop_scope_and_legacy_response(): void
+    {
+        $shop = $this->createShop('Own');
+        $other = $this->createShop('Other');
+        $manager = $this->createUser('manager-sale', 'Manager');
+        $this->attachShop($manager, $shop);
+        $attributes = [
+            'pancake_order_page_id' => '115624128265497',
+            'pancake_order_page_name' => 'Hương Chất TV',
+            'pancake_order_source_id' => '-1',
+            'pancake_order_source_name' => 'Facebook',
+        ];
+        $order = $this->createOrder($shop, $attributes);
+        $this->createOrder($other, $attributes);
+        $this->createOrder($shop, ['pancake_order_page_id' => '1156241282654970']);
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&view=summary&order_page_id=115624128265497')
+            ->assertOk()->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.orders.0.id', $order->id)
+            ->assertJsonPath('data.orders.0.order_page_id', '115624128265497')
+            ->assertJsonPath('data.orders.0.order_page_name', 'Hương Chất TV')
+            ->assertJsonPath('data.orders.0.order_source_id', '-1')
+            ->assertJsonPath('data.orders.0.order_source_name', 'Facebook')
+            ->assertJsonMissingPath('data.orders.0.pancake_full_data');
+        $this->getJson('/api/v1/orders?page=1&order_page_id=115624128265497')
+            ->assertOk()->assertJsonPath('data.total_items', 1)
+            ->assertJsonStructure(['data' => ['orders' => [['pancake_full_data', 'order_source_id', 'order_source_name']]]])
+            ->assertJsonMissingPath('data.orders.0.order_page_id');
+        $this->getJson('/api/v1/orders?page=1&view=summary&shop_id='.$other->id.'&order_page_id=115624128265497')
+            ->assertForbidden();
+    }
+
+    public function test_zalo_page_filter_composes_with_source_and_pagination_and_blank_is_unfiltered(): void
+    {
+        $shop = $this->createShop('Own');
+        $admin = $this->createUser('admin', 'Admin');
+        foreach (['-8', '-8', '-1'] as $source) {
+            $this->createOrder($shop, [
+                'pancake_order_page_id' => 'pzl_695112902870160686',
+                'pancake_order_source_id' => $source,
+            ]);
+        }
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/orders?page=2&page_size=1&view=summary&order_page_id=pzl_695112902870160686&order_source_id=-8')
+            ->assertOk()->assertJsonPath('data.total_items', 2)
+            ->assertJsonPath('data.current_page', 2)->assertJsonCount(1, 'data.orders')
+            ->assertJsonPath('data.orders.0.order_page_id', 'pzl_695112902870160686');
+        $this->getJson('/api/v1/orders?page=1&view=summary&order_page_id=missing')
+            ->assertOk()->assertJsonPath('data.total_items', 0);
+        foreach (['', '&order_page_id=', '&order_page_id=%20%20'] as $filter) {
+            $this->getJson('/api/v1/orders?page=1&view=summary'.$filter)
+                ->assertOk()->assertJsonPath('data.total_items', 3);
+        }
+        $this->getJson('/api/v1/orders?page=1&order_page_id[]=invalid')->assertUnprocessable();
+    }
+
+    public function test_page_options_use_latest_visible_snapshot_distinct_stable_and_no_raw_or_external_calls(): void
+    {
+        Http::fake();
+        $shop = $this->createShop('Own');
+        $admin = $this->createUser('admin', 'Admin');
+        $old = $this->createOrder($shop, ['pancake_order_page_id' => 'page-1', 'pancake_order_page_name' => 'Old']);
+        $old->forceFill(['created_at' => '2026-01-01'])->save();
+        // created_at, not insertion order or MAX(name), chooses the snapshot.
+        $latest = $this->createOrder($shop, ['pancake_order_page_id' => 'page-1', 'pancake_order_page_name' => 'Alpha']);
+        $latest->forceFill(['created_at' => '2026-09-01'])->save();
+        $lateImport = $this->createOrder($shop, ['pancake_order_page_id' => 'page-1', 'pancake_order_page_name' => 'ZZZ']);
+        $lateImport->forceFill(['created_at' => '2026-02-01'])->save();
+        $this->createOrder($shop, ['pancake_order_page_id' => 'page-2', 'pancake_order_page_name' => 'Alpha']);
+        $this->createOrder($shop, ['pancake_order_page_id' => 'pzl_123', 'pancake_order_page_name' => 'Hương Chất Group']);
+        $this->createOrder($shop, ['pancake_order_page_id' => 'unnamed', 'pancake_order_page_name' => ' ']);
+        $this->createOrder($shop, ['pancake_order_page_id' => ' ', 'pancake_order_page_name' => 'Invalid']);
+        $this->createOrder($shop, ['pancake_order_page_name' => 'No ID']);
+        $deleted = $this->createOrder($shop, ['pancake_order_page_id' => 'deleted', 'pancake_order_page_name' => 'Deleted']);
+        $deleted->delete();
+        $this->createOrder($this->createShop('Other'), ['pancake_order_page_id' => 'page-1', 'pancake_order_page_name' => 'Other shop']);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $this->actingAs($admin, 'api')->getJson('/api/v1/order-pages?shop_id='.$shop->id)
+            ->assertOk()->assertExactJson(['success' => true, 'data' => [
+                ['id' => 'page-1', 'name' => 'Alpha'],
+                ['id' => 'page-2', 'name' => 'Alpha'],
+                ['id' => 'pzl_123', 'name' => 'Hương Chất Group'],
+                ['id' => 'unnamed', 'name' => 'unnamed'],
+            ]]);
+        $sql = implode(' ', array_column(DB::getQueryLog(), 'query'));
+        $this->assertStringNotContainsString('pancake_full_data', $sql);
+        $this->assertStringNotContainsString('pancake_order_sources', $sql);
+        Http::assertNothingSent();
+    }
+
+    public function test_page_options_require_authorized_shop_and_keep_admin_global(): void
+    {
+        $shop = $this->createShop('Own');
+        $other = $this->createShop('Other');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($manager, $shop);
+        $this->actingAs($manager, 'api')->getJson('/api/v1/order-pages')->assertUnprocessable();
+        $this->getJson('/api/v1/order-pages?shop_id=0')->assertUnprocessable();
+        $this->getJson('/api/v1/order-pages?shop_id='.$other->id)->assertForbidden();
+        $this->getJson('/api/v1/order-pages?shop_id='.$shop->id)->assertOk()->assertJsonCount(0, 'data');
+        $admin = $this->createUser('admin', 'Admin');
+        $this->actingAs($admin, 'api')->getJson('/api/v1/order-pages?shop_id='.$other->id)->assertOk();
+    }
+
+    public function test_staff_options_and_page_filter_do_not_leak_other_employees_or_their_newer_names(): void
+    {
+        $shop = $this->createShop('Own');
+        $staff = $this->createUser('staff-sale', 'Staff');
+        $this->attachShop($staff, $shop);
+        $own = $this->createOrder($shop, [
+            'pancake_order_page_id' => 'same', 'pancake_order_page_name' => 'Own snapshot',
+            'user_creator_id' => $staff->pancake_user_id,
+        ]);
+        $own->forceFill(['created_at' => '2026-01-01'])->save();
+        $this->createOrder($shop, [
+            'pancake_order_page_id' => 'care', 'pancake_order_page_name' => 'Care snapshot',
+            'user_care_id' => $staff->pancake_user_id,
+        ]);
+        $this->createOrder($shop, ['pancake_order_page_id' => 'same', 'pancake_order_page_name' => 'Hidden newer name']);
+        $this->createOrder($shop, ['pancake_order_page_id' => 'hidden', 'pancake_order_page_name' => 'Hidden page']);
+        $this->actingAs($staff, 'api')->getJson('/api/v1/order-pages?shop_id='.$shop->id)
+            ->assertOk()->assertExactJson(['success' => true, 'data' => [
+                ['id' => 'care', 'name' => 'Care snapshot'],
+                ['id' => 'same', 'name' => 'Own snapshot'],
+            ]]);
+        $this->getJson('/api/v1/orders?page=1&view=summary&order_page_id=same')
+            ->assertOk()->assertJsonPath('data.total_items', 1)->assertJsonPath('data.orders.0.id', $own->id);
+        $this->getJson('/api/v1/orders?page=1&view=summary&order_page_id=hidden')
+            ->assertOk()->assertJsonPath('data.total_items', 0);
+    }
+
+    public function test_page_options_break_equal_created_at_ties_by_order_id(): void
+    {
+        $shop = $this->createShop('Own');
+        $admin = $this->createUser('admin', 'Admin');
+        foreach (['First', 'Second'] as $name) {
+            $order = $this->createOrder($shop, ['pancake_order_page_id' => 'page', 'pancake_order_page_name' => $name]);
+            $order->forceFill(['created_at' => '2026-01-01'])->save();
+        }
+        $this->actingAs($admin, 'api')->getJson('/api/v1/order-pages?shop_id='.$shop->id)
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Second');
     }
 
     private function createShop(string $name): Shop
@@ -461,6 +607,8 @@ class OrderSourceApiTest extends TestCase
             $table->string('pancake_order_id');
             $table->string('pancake_order_source_id')->nullable()->index();
             $table->string('pancake_order_source_name')->nullable();
+            $table->string('pancake_order_page_id')->nullable();
+            $table->string('pancake_order_page_name')->nullable();
             $table->string('pancake_customer_id')->nullable();
             $table->string('user_creator_id')->nullable();
             $table->string('user_care_id')->nullable();

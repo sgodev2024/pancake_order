@@ -120,6 +120,56 @@ class OrderJourneyEventTest extends TestCase
         $this->assertSame($data, $order->pancake_full_data);
     }
 
+    public function test_bulk_order_persists_page_snapshot_without_mutating_source_or_payload(): void
+    {
+        $shop = $this->createShop();
+        $data = $this->orderData('PAN-ORDER-PAGE-BULK', null);
+        $data['order_sources'] = '-1';
+        $data['order_sources_name'] = 'Facebook';
+        $data['page_id'] = 115624128265497;
+        $data['page'] = [
+            'id' => 'page-object-fallback',
+            'name' => '  Hương Chất TV  ',
+        ];
+        $data['account'] = 'account-fallback';
+        $data['account_name'] = 'Account name fallback';
+
+        $this->runBulk($shop, [$data]);
+
+        $order = Order::query()->sole();
+
+        $this->assertSame('115624128265497', $order->pancake_order_page_id);
+        $this->assertSame('Hương Chất TV', $order->pancake_order_page_name);
+        $this->assertSame('-1', $order->pancake_order_source_id);
+        $this->assertSame('Facebook', $order->pancake_order_source_name);
+        $this->assertSame($data, $order->pancake_full_data);
+    }
+
+    public function test_existing_webhook_order_update_refreshes_the_normalized_page_snapshot(): void
+    {
+        $shop = $this->createShop();
+        $first = $this->orderData('PAN-ORDER-PAGE-WEBHOOK', null);
+        $first['shop_id'] = $shop->pancake_shop_id;
+        $first['order_sources'] = '-1';
+        $first['order_sources_name'] = 'Facebook';
+
+        $this->runWebhook($first);
+
+        $updated = $first;
+        $updated['page'] = ['id' => 'page-object-id', 'name' => 'Updated Page'];
+        $updated['account'] = 'account-fallback';
+        $updated['account_name'] = 'Account fallback';
+
+        $this->runWebhook($updated);
+
+        $order = Order::query()->sole();
+        $this->assertSame('page-object-id', $order->pancake_order_page_id);
+        $this->assertSame('Updated Page', $order->pancake_order_page_name);
+        $this->assertSame('-1', $order->pancake_order_source_id);
+        $this->assertSame('Facebook', $order->pancake_order_source_name);
+        $this->assertSame($updated, $order->pancake_full_data);
+    }
+
     public function test_order_source_normalization_keeps_null_id_and_blanks_name_without_fallback(): void
     {
         $shop = $this->createShop('Must Not Be Used As Source');
@@ -476,6 +526,8 @@ class OrderJourneyEventTest extends TestCase
             $table->string('pancake_order_id');
             $table->string('pancake_order_source_id')->nullable()->index();
             $table->string('pancake_order_source_name')->nullable();
+            $table->string('pancake_order_page_id')->nullable();
+            $table->string('pancake_order_page_name')->nullable();
             $table->string('order_number_vtp')->nullable();
             $table->integer('total_quantity')->default(0);
             $table->decimal('cod', 15, 2)->default(0);

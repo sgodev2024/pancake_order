@@ -28,6 +28,8 @@ class OrderService
             'pancake_order_id' => $data_item['id'].'_'.$shop_id,
             'pancake_order_source_id' => OrderSourceNormalizer::id($data_item['order_sources'] ?? null),
             'pancake_order_source_name' => OrderSourceNormalizer::name($data_item['order_sources_name'] ?? null),
+            'pancake_order_page_id' => OrderPageNormalizer::id($data_item),
+            'pancake_order_page_name' => OrderPageNormalizer::name($data_item),
             'total_quantity' => $total_quantity,
             'cod' => $data_item['cod'] ?? 0,
             'discount_percent' => get_discount_by_customer($data_item['customer']['id']),

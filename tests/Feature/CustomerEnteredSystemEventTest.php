@@ -372,6 +372,8 @@ class CustomerEnteredSystemEventTest extends TestCase
             $table->string('pancake_order_id');
             $table->string('pancake_order_source_id')->nullable()->index();
             $table->string('pancake_order_source_name')->nullable();
+            $table->string('pancake_order_page_id')->nullable();
+            $table->string('pancake_order_page_name')->nullable();
             $table->string('order_number_vtp')->nullable();
             $table->integer('total_quantity')->default(0);
             $table->decimal('cod', 15, 2)->default(0);
