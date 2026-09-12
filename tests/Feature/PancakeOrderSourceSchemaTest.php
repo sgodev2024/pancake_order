@@ -42,6 +42,7 @@ class PancakeOrderSourceSchemaTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('shop_id');
             $table->string('pancake_order_id');
+            $table->timestamps();
         });
 
         $catalogMigration = require database_path(
@@ -53,6 +54,11 @@ class PancakeOrderSourceSchemaTest extends TestCase
             'migrations/2026_09_12_000001_add_pancake_order_source_to_orders_table.php'
         );
         $orderMigration->up();
+
+        $filterIndexMigration = require database_path(
+            'migrations/2026_09_12_000003_add_order_source_filter_index_to_orders_table.php'
+        );
+        $filterIndexMigration->up();
     }
 
     public function test_migrations_create_catalog_and_indexed_order_snapshot_columns(): void
@@ -80,6 +86,11 @@ class PancakeOrderSourceSchemaTest extends TestCase
         $this->assertTrue(
             $indexes->contains(
                 fn ($index): bool => $index->name === 'orders_pancake_order_source_id_index'
+            )
+        );
+        $this->assertTrue(
+            $indexes->contains(
+                fn ($index): bool => $index->name === 'orders_shop_source_created_at_index'
             )
         );
     }

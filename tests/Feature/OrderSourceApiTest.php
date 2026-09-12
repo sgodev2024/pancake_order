@@ -1,0 +1,502 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\Order;
+use App\Models\PancakeOrderSource;
+use App\Models\Role;
+use App\Models\Shop;
+use App\Models\User;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
+use Tests\TestCase;
+
+class OrderSourceApiTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config([
+            'database.default' => 'order_source_api_testing',
+            'database.connections.order_source_api_testing' => [
+                'driver' => 'sqlite',
+                'database' => ':memory:',
+                'prefix' => '',
+                'foreign_key_constraints' => false,
+            ],
+        ]);
+
+        DB::purge('order_source_api_testing');
+        DB::setDefaultConnection('order_source_api_testing');
+        Http::preventStrayRequests();
+
+        $this->createSchema();
+    }
+
+    public function test_catalog_returns_only_active_sources_for_the_authorized_shop_in_stable_name_order(): void
+    {
+        $shop = $this->createShop('Own shop');
+        $otherShop = $this->createShop('Other shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($manager, $shop);
+
+        $this->createSource($shop, '2', 'Alpha', ['parent_external_source_id' => 'parent-2']);
+        $this->createSource($shop, '1', 'Alpha');
+        $this->createSource($shop, '3', 'Beta');
+        $this->createSource($shop, '4', 'Inactive', ['is_active' => false]);
+        $this->createSource($otherShop, '1', 'Other shop source');
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/order-sources?shop_id='.$shop->id)
+            ->assertOk()
+            ->assertExactJson([
+                'success' => true,
+                'data' => [
+                    [
+                        'id' => '1',
+                        'name' => 'Alpha',
+                        'parent_id' => null,
+                        'is_active' => true,
+                    ],
+                    [
+                        'id' => '2',
+                        'name' => 'Alpha',
+                        'parent_id' => 'parent-2',
+                        'is_active' => true,
+                    ],
+                    [
+                        'id' => '3',
+                        'name' => 'Beta',
+                        'parent_id' => null,
+                        'is_active' => true,
+                    ],
+                ],
+            ]);
+    }
+
+    public function test_catalog_rejects_an_unauthorized_shop_but_admin_keeps_global_access(): void
+    {
+        $ownShop = $this->createShop('Own shop');
+        $otherShop = $this->createShop('Other shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $admin = $this->createUser('admin', 'Admin');
+        $this->attachShop($manager, $ownShop);
+        $this->createSource($otherShop, '-9', 'TikTok');
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/order-sources?shop_id='.$otherShop->id)
+            ->assertForbidden();
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/order-sources?shop_id='.$otherShop->id)
+            ->assertOk()
+            ->assertJsonPath('data.0.id', '-9');
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/order-sources')
+            ->assertUnprocessable();
+    }
+
+    public function test_order_source_filter_is_exact_and_remains_inside_existing_shop_scope(): void
+    {
+        $ownShop = $this->createShop('Own shop');
+        $otherShop = $this->createShop('Other shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($manager, $ownShop);
+
+        $matchingOrder = $this->createOrder($ownShop, [
+            'pancake_order_id' => 'OWN-MATCH',
+            'pancake_order_source_id' => '-9',
+            'pancake_order_source_name' => 'Tiktok historical snapshot',
+        ]);
+        $this->createOrder($ownShop, [
+            'pancake_order_id' => 'OWN-OTHER-SOURCE',
+            'pancake_order_source_id' => '-90',
+            'pancake_order_source_name' => 'Another source',
+        ]);
+        $this->createOrder($otherShop, [
+            'pancake_order_id' => 'OTHER-SHOP-MATCH',
+            'pancake_order_source_id' => '-9',
+            'pancake_order_source_name' => 'Other shop source',
+        ]);
+        $this->createSource($ownShop, '-9', 'TikTok current catalog name');
+
+        $response = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&shop_id='.$ownShop->id.'&order_source_id=-9&view=summary')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.orders.0.id', $matchingOrder->id)
+            ->assertJsonPath('data.orders.0.order_source_id', '-9')
+            ->assertJsonPath(
+                'data.orders.0.order_source_name',
+                'Tiktok historical snapshot'
+            );
+
+        $this->assertArrayNotHasKey('pancake_order_source_id', $response->json('data.orders.0'));
+        $this->assertArrayNotHasKey('pancake_order_source_name', $response->json('data.orders.0'));
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&shop_id='.$ownShop->id.'&order_source_id=missing&view=summary')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 0)
+            ->assertJsonCount(0, 'data.orders');
+    }
+
+    public function test_absent_or_blank_source_filter_preserves_existing_scoped_list_behavior(): void
+    {
+        $ownShop = $this->createShop('Own shop');
+        $otherShop = $this->createShop('Other shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($manager, $ownShop);
+
+        $this->createOrder($ownShop, ['pancake_order_id' => 'OWN-1']);
+        $this->createOrder($ownShop, ['pancake_order_id' => 'OWN-2']);
+        $this->createOrder($otherShop, ['pancake_order_id' => 'OTHER-1']);
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 2);
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&order_source_id=')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 2);
+    }
+
+    public function test_source_filter_composes_with_search_legacy_filters_and_pagination(): void
+    {
+        $shop = $this->createShop('Own shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($manager, $shop);
+
+        $first = $this->createOrder($shop, [
+            'pancake_order_id' => 'MATCH-1',
+            'pancake_order_source_id' => 'source-a',
+            'customer_phone' => '0901000001',
+            'cod' => 100000,
+            'status' => 3,
+            'received_at_shop' => true,
+        ]);
+        $first->forceFill(['created_at' => '2026-09-10 10:00:00'])->save();
+        $second = $this->createOrder($shop, [
+            'pancake_order_id' => 'MATCH-2',
+            'pancake_order_source_id' => 'source-a',
+            'customer_phone' => '0901000002',
+            'cod' => 200000,
+            'status' => 3,
+            'received_at_shop' => true,
+        ]);
+        $second->forceFill(['created_at' => '2026-09-09 10:00:00'])->save();
+        $this->createOrder($shop, [
+            'pancake_order_id' => 'WRONG-SOURCE',
+            'pancake_order_source_id' => 'source-b',
+            'customer_phone' => '0901000003',
+            'status' => 3,
+            'received_at_shop' => true,
+        ]);
+        $this->createOrder($shop, [
+            'pancake_order_id' => 'WRONG-STATUS',
+            'pancake_order_source_id' => 'source-a',
+            'customer_phone' => '0901000004',
+            'status' => 4,
+            'received_at_shop' => true,
+        ]);
+        $this->createOrder($shop, [
+            'pancake_order_id' => 'WRONG-SEARCH',
+            'pancake_order_source_id' => 'source-a',
+            'customer_phone' => '0801000005',
+            'status' => 3,
+            'received_at_shop' => true,
+        ]);
+        $outsideDate = $this->createOrder($shop, [
+            'pancake_order_id' => 'WRONG-DATE',
+            'pancake_order_source_id' => 'source-a',
+            'customer_phone' => '0901000006',
+            'status' => 3,
+            'received_at_shop' => true,
+        ]);
+        $outsideDate->forceFill(['created_at' => '2026-08-31 23:59:59'])->save();
+
+        $query = http_build_query([
+            'page' => 1,
+            'page_size' => 1,
+            'shop_id' => $shop->id,
+            'order_source_id' => 'source-a',
+            'search' => '0901',
+            'status' => 3,
+            'received_at_shop' => 1,
+            'date_from' => '2026-09-01',
+            'date_to' => '2026-09-30',
+            'view' => 'summary',
+        ]);
+
+        $summaryResponse = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?'.$query)
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 2)
+            ->assertJsonPath('data.per_page', 1)
+            ->assertJsonPath('data.total_pages', 2)
+            ->assertJsonPath('data.total_revenue', 300000)
+            ->assertJsonPath('data.orders.0.id', $first->id);
+
+        $defaultResponse = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?'.str_replace('&view=summary', '', $query))
+            ->assertOk();
+
+        $this->assertSame($defaultResponse->json('data.total_items'), $summaryResponse->json('data.total_items'));
+        $this->assertSame($defaultResponse->json('data.per_page'), $summaryResponse->json('data.per_page'));
+        $this->assertSame($defaultResponse->json('data.total_pages'), $summaryResponse->json('data.total_pages'));
+        $this->assertEquals($defaultResponse->json('data.total_revenue'), $summaryResponse->json('data.total_revenue'));
+    }
+
+    public function test_summary_contract_is_compact_while_default_keeps_the_legacy_payload(): void
+    {
+        $ownShop = $this->createShop('Own shop');
+        $otherShop = $this->createShop('Other shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $creator = $this->createUser('staff-sale', 'Creator');
+        $this->attachShop($manager, $ownShop);
+
+        $order = $this->createOrder($ownShop, [
+            'pancake_order_id' => 'SUMMARY-ORDER',
+            'pancake_order_source_id' => '-9',
+            'pancake_order_source_name' => 'TikTok snapshot',
+            'order_number_vtp' => 'VTP-123',
+            'total_quantity' => 3,
+            'cod' => 345000,
+            'customer_name' => 'Summary customer',
+            'status' => 4,
+            'status_vtp' => 'DELIVERING',
+            'user_creator_id' => $creator->pancake_user_id,
+            'pancake_full_data' => ['large' => ['legacy' => true]],
+        ]);
+        $this->createOrder($otherShop, ['pancake_order_id' => 'MUST-NOT-LEAK']);
+
+        $defaultResponse = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&page_size=30')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.orders.0.id', $order->id)
+            ->assertJsonPath('data.orders.0.pancake_full_data.large.legacy', true);
+        $this->assertArrayHasKey('pancake_full_data', $defaultResponse->json('data.orders.0'));
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $summaryResponse = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&page_size=30&view=summary')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.orders.0.id', $order->id)
+            ->assertJsonPath('data.orders.0.order_source_id', '-9')
+            ->assertJsonPath('data.orders.0.order_source_name', 'TikTok snapshot')
+            ->assertJsonPath('data.orders.0.shop.id', $ownShop->id)
+            ->assertJsonPath('data.orders.0.shop.name', 'Own shop')
+            ->assertJsonPath('data.orders.0.user_creator.id', $creator->id)
+            ->assertJsonPath('data.orders.0.user_creator.name', 'Creator');
+
+        $summaryOrder = $summaryResponse->json('data.orders.0');
+        $expectedKeys = [
+            'cod',
+            'created_at',
+            'customer_name',
+            'id',
+            'order_number_vtp',
+            'order_source_id',
+            'order_source_name',
+            'pancake_order_id',
+            'shop',
+            'shop_id',
+            'status',
+            'status_vtp',
+            'total_quantity',
+            'user_creator',
+            'user_creator_id',
+        ];
+        $actualKeys = array_keys($summaryOrder);
+        sort($actualKeys);
+        $this->assertSame($expectedKeys, $actualKeys);
+        $this->assertSame(['id', 'name'], array_keys($summaryOrder['shop']));
+        $this->assertSame(['id', 'name'], array_keys($summaryOrder['user_creator']));
+        $this->assertArrayNotHasKey('pancake_full_data', $summaryOrder);
+
+        $mainSelect = collect(DB::getQueryLog())->first(function (array $query): bool {
+            $sql = strtolower($query['query']);
+
+            return str_contains($sql, 'from "orders"') && str_contains($sql, ' limit ');
+        });
+        $this->assertNotNull($mainSelect);
+        $this->assertStringNotContainsString('pancake_full_data', strtolower($mainSelect['query']));
+    }
+
+    public function test_summary_preserves_staff_creator_or_care_scope(): void
+    {
+        $shop = $this->createShop('Own shop');
+        $staff = $this->createUser('staff-sale', 'Scoped staff');
+        $this->attachShop($staff, $shop);
+
+        $createdOrder = $this->createOrder($shop, [
+            'pancake_order_id' => 'CREATED-BY-STAFF',
+            'user_creator_id' => $staff->pancake_user_id,
+        ]);
+        $caredOrder = $this->createOrder($shop, [
+            'pancake_order_id' => 'CARED-BY-STAFF',
+            'user_care_id' => $staff->pancake_user_id,
+        ]);
+        $this->createOrder($shop, ['pancake_order_id' => 'UNRELATED']);
+
+        $response = $this->actingAs($staff, 'api')
+            ->getJson('/api/v1/orders?page=1&view=summary')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 2);
+
+        $this->assertEqualsCanonicalizing(
+            [$createdOrder->id, $caredOrder->id],
+            collect($response->json('data.orders'))->pluck('id')->all()
+        );
+    }
+
+    private function createShop(string $name): Shop
+    {
+        return Shop::query()->create([
+            'name' => $name,
+            'pancake_shop_id' => 'pancake-'.$name,
+        ]);
+    }
+
+    private function createUser(string $roleSlug, string $name): User
+    {
+        $role = Role::query()->firstOrCreate(
+            ['slug' => $roleSlug],
+            ['name' => $roleSlug]
+        );
+
+        return User::query()->create([
+            'role_id' => $role->id,
+            'name' => $name,
+            'email' => strtolower(str_replace(' ', '.', $name)).'@example.test',
+            'password' => 'password',
+            'pancake_user_id' => 'pancake-user-'.$name,
+        ]);
+    }
+
+    private function attachShop(User $user, Shop $shop): void
+    {
+        $user->shops()->attach($shop->id, ['is_manager' => false]);
+    }
+
+    private function createSource(Shop $shop, string $externalId, string $name, array $attributes = []): PancakeOrderSource
+    {
+        return PancakeOrderSource::query()->create(array_merge([
+            'shop_id' => $shop->id,
+            'external_source_id' => $externalId,
+            'name' => $name,
+            'is_active' => true,
+        ], $attributes));
+    }
+
+    private function createOrder(Shop $shop, array $attributes = []): Order
+    {
+        return Order::query()->create(array_merge([
+            'shop_id' => $shop->id,
+            'pancake_order_id' => 'order-'.uniqid(),
+            'order_number_vtp' => null,
+            'total_quantity' => 1,
+            'cod' => 100000,
+            'cash' => 0,
+            'note' => null,
+            'status' => 3,
+            'status_vtp' => null,
+            'pancake_full_data' => [],
+            'received_at_shop' => false,
+            'customer_name' => 'Customer',
+            'customer_phone' => '0900000000',
+            'customer_address' => 'Address',
+        ], $attributes));
+    }
+
+    private function createSchema(): void
+    {
+        Schema::create('roles', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->string('slug')->unique();
+            $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('users', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('role_id')->nullable();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->string('pancake_user_id')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('shops', function (Blueprint $table): void {
+            $table->id();
+            $table->string('pancake_shop_id')->nullable();
+            $table->string('name');
+            $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('shop_users', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->unsignedBigInteger('user_id');
+            $table->boolean('is_manager')->default(false);
+            $table->timestamps();
+        });
+
+        Schema::create('orders', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->string('pancake_order_id');
+            $table->string('pancake_order_source_id')->nullable()->index();
+            $table->string('pancake_order_source_name')->nullable();
+            $table->string('pancake_customer_id')->nullable();
+            $table->string('user_creator_id')->nullable();
+            $table->string('user_care_id')->nullable();
+            $table->string('user_assigning_seller_id')->nullable();
+            $table->string('order_number_vtp')->nullable();
+            $table->integer('total_quantity')->nullable();
+            $table->decimal('cod', 15, 2)->default(0);
+            $table->decimal('cash', 15, 2)->default(0);
+            $table->text('note')->nullable();
+            $table->string('customer_name')->nullable();
+            $table->string('customer_phone')->nullable();
+            $table->string('customer_address')->nullable();
+            $table->integer('status')->default(3);
+            $table->string('status_vtp')->nullable();
+            $table->json('pancake_full_data')->nullable();
+            $table->boolean('received_at_shop')->default(false);
+            $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('pancake_order_sources', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('shop_id');
+            $table->string('external_source_id');
+            $table->string('name');
+            $table->string('parent_external_source_id')->nullable();
+            $table->string('link')->nullable();
+            $table->timestamp('source_inserted_at')->nullable();
+            $table->timestamp('source_updated_at')->nullable();
+            $table->timestamp('synced_at')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->timestamp('last_seen_at')->nullable();
+            $table->timestamps();
+
+            $table->unique(['shop_id', 'external_source_id']);
+            $table->index(['shop_id', 'is_active']);
+        });
+    }
+}

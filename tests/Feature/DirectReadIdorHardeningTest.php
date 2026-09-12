@@ -504,6 +504,8 @@ class DirectReadIdorHardeningTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('shop_id');
             $table->string('pancake_order_id');
+            $table->string('pancake_order_source_id')->nullable()->index();
+            $table->string('pancake_order_source_name')->nullable();
             $table->string('pancake_customer_id')->nullable();
             $table->string('user_creator_id')->nullable();
             $table->string('user_care_id')->nullable();

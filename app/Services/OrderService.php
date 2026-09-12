@@ -26,8 +26,8 @@ class OrderService
             'province_id' => ! empty($province) ? $province->id : null,
             'order_number_vtp' => $data_item['partner']['order_number_vtp'] ?? null,
             'pancake_order_id' => $data_item['id'].'_'.$shop_id,
-            'pancake_order_source_id' => $this->normalizeOrderSourceId($data_item['order_sources'] ?? null),
-            'pancake_order_source_name' => $this->normalizeOrderSourceName($data_item['order_sources_name'] ?? null),
+            'pancake_order_source_id' => OrderSourceNormalizer::id($data_item['order_sources'] ?? null),
+            'pancake_order_source_name' => OrderSourceNormalizer::name($data_item['order_sources_name'] ?? null),
             'total_quantity' => $total_quantity,
             'cod' => $data_item['cod'] ?? 0,
             'discount_percent' => get_discount_by_customer($data_item['customer']['id']),
@@ -46,21 +46,5 @@ class OrderService
             'created_at' => $created_at,
             'updated_at' => $updated_at,
         ];
-    }
-
-    private function normalizeOrderSourceId($sourceId): ?string
-    {
-        return $sourceId === null ? null : (string) $sourceId;
-    }
-
-    private function normalizeOrderSourceName($sourceName): ?string
-    {
-        if ($sourceName === null) {
-            return null;
-        }
-
-        $sourceName = trim((string) $sourceName);
-
-        return $sourceName === '' ? null : $sourceName;
     }
 }
