@@ -87,6 +87,57 @@ class OrderJourneyEventTest extends TestCase
         $this->assertArrayNotHasKey('pancake_full_data', $event->metadata);
     }
 
+    public function test_bulk_order_persists_string_source_snapshot_and_full_payload(): void
+    {
+        $shop = $this->createShop();
+        $data = $this->orderData('PAN-ORDER-SOURCE-BULK', null);
+        $data['order_sources'] = '-9';
+        $data['order_sources_name'] = '  TikTok  ';
+
+        $this->runBulk($shop, [$data]);
+
+        $order = Order::query()->sole();
+
+        $this->assertSame('-9', $order->pancake_order_source_id);
+        $this->assertSame('TikTok', $order->pancake_order_source_name);
+        $this->assertSame($data, $order->pancake_full_data);
+    }
+
+    public function test_webhook_order_persists_integer_source_id_as_string(): void
+    {
+        $shop = $this->createShop();
+        $data = $this->orderData('PAN-ORDER-SOURCE-WEBHOOK', null);
+        $data['shop_id'] = $shop->pancake_shop_id;
+        $data['order_sources'] = -9;
+        $data['order_sources_name'] = '  Tiktok  ';
+
+        $this->runWebhook($data);
+
+        $order = Order::query()->sole();
+
+        $this->assertSame('-9', $order->pancake_order_source_id);
+        $this->assertSame('Tiktok', $order->pancake_order_source_name);
+        $this->assertSame($data, $order->pancake_full_data);
+    }
+
+    public function test_order_source_normalization_keeps_null_id_and_blanks_name_without_fallback(): void
+    {
+        $shop = $this->createShop('Must Not Be Used As Source');
+        $data = $this->orderData('PAN-ORDER-SOURCE-NULL', null);
+        $data['shop_id'] = $shop->pancake_shop_id;
+        $data['order_sources'] = null;
+        $data['order_sources_name'] = " \t\r\n ";
+        $data['page'] = ['name' => 'Page fallback'];
+        $data['ads_source'] = 'Ads fallback';
+
+        $this->runWebhook($data);
+
+        $order = Order::query()->sole();
+
+        $this->assertNull($order->pancake_order_source_id);
+        $this->assertNull($order->pancake_order_source_name);
+    }
+
     public function test_repeated_bulk_sync_does_not_create_a_duplicate_order_or_event(): void
     {
         $shop = $this->createShop();
@@ -423,6 +474,8 @@ class OrderJourneyEventTest extends TestCase
             $table->unsignedBigInteger('shop_id');
             $table->unsignedBigInteger('province_id')->nullable();
             $table->string('pancake_order_id');
+            $table->string('pancake_order_source_id')->nullable()->index();
+            $table->string('pancake_order_source_name')->nullable();
             $table->string('order_number_vtp')->nullable();
             $table->integer('total_quantity')->default(0);
             $table->decimal('cod', 15, 2)->default(0);

@@ -11,15 +11,15 @@ class Shop extends Model
 
     public const DEFAULT_CARE_CYCLE_DAYS = 5;
 
-    protected $table = "shops";
+    protected $table = 'shops';
 
     protected $fillable = [
-        "avatar_url",
-        "pancake_shop_id",
-        "name",
-        "api_key",
-        "pancake_full_data",
-        "care_cycle_days"
+        'avatar_url',
+        'pancake_shop_id',
+        'name',
+        'api_key',
+        'pancake_full_data',
+        'care_cycle_days',
     ];
 
     protected $casts = [
@@ -37,15 +37,19 @@ class Shop extends Model
             : $careCycleDays;
     }
 
-
     public function customers()
     {
-        return $this->hasMany(Customer::class, "shop_id", "id");
+        return $this->hasMany(Customer::class, 'shop_id', 'id');
     }
 
     public function orders()
     {
-        return $this->hasMany(Order::class, "shop_id", "id");
+        return $this->hasMany(Order::class, 'shop_id', 'id');
+    }
+
+    public function pancakeOrderSources()
+    {
+        return $this->hasMany(PancakeOrderSource::class, 'shop_id', 'id');
     }
 
     public function users()
