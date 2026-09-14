@@ -10,6 +10,7 @@ use App\Models\Shop;
 use App\Models\User;
 use App\Services\CustomerCareListQuery;
 use App\Services\CustomerCareOrderSourceService;
+use Illuminate\Database\Query\Grammars\MySqlGrammar;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -292,6 +293,39 @@ class CustomerCareOrderSourceTest extends TestCase
         $details = implode("\n", array_column($plan, 'detail'));
         $this->assertStringContainsString('orders_shop_page_index', $details);
         $this->assertCount(30, $query->get());
+    }
+
+    public function test_mysql_compatible_resolver_sql_uses_correlated_exists_without_union_subqueries(): void
+    {
+        $connection = DB::connection();
+        $originalGrammar = $connection->getQueryGrammar();
+        $connection->setQueryGrammar(new MySqlGrammar($connection));
+
+        try {
+            $sources = app(CustomerCareOrderSourceService::class);
+            $display = $sources->selectResolvedOrder(
+                app(CustomerCareListQuery::class)->query('customer_care_edit', $this->admin, ['shop_id' => $this->shop->id])
+            )->toSql();
+
+            $filtered = app(CustomerCareListQuery::class)->query(
+                'customer_care_edit', $this->admin, ['shop_id' => $this->shop->id]
+            );
+            $sources->filter($filtered, 'pzl_695112902870160686');
+
+            $options = $sources->pageOptions(
+                app(CustomerCareListQuery::class)->query('customer_care_edit', $this->admin, ['shop_id' => $this->shop->id]),
+                $this->shop->id
+            )->toSql();
+
+            foreach ([$display, $filtered->toSql(), $options] as $sql) {
+                $normalized = strtolower($sql);
+                $this->assertStringContainsString('exists (select', $normalized);
+                $this->assertStringNotContainsString('union', $normalized);
+                $this->assertDoesNotMatchRegularExpression('/\\bin\\s*\\(\\s*select\\b.*\\bunion\\b/is', $normalized);
+            }
+        } finally {
+            $connection->setQueryGrammar($originalGrammar);
+        }
     }
 
     private function listUrl(string $type, int $page = 1): string

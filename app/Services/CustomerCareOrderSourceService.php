@@ -22,23 +22,14 @@ class CustomerCareOrderSourceService
             ->whereColumn('source_links.customer_care_id', 'customer_cares.id')
             ->where('source_links.source_type', CustomerCareAssignment::SOURCE_ORDER);
 
-        // Bound candidate lookup by the care's keys, never scan every Order in its shop.
-        // These are candidates only; the guards below still reject every invalid link.
-        $candidateIds = DB::table('customer_care_assignments as candidate_links')
-            ->select('candidate_links.source_id')
-            ->whereColumn('candidate_links.customer_care_id', 'customer_cares.id')
-            ->where('candidate_links.source_type', CustomerCareAssignment::SOURCE_ORDER)
-            ->union(DB::table('orders as legacy_candidates')->select('legacy_candidates.id')
-                ->whereColumn('legacy_candidates.shop_id', 'customer_cares.shop_id')
-                ->whereColumn('legacy_candidates.pancake_order_id', 'customer_cares.pancake_order_id')
-                ->whereNull('legacy_candidates.deleted_at'));
-
         return DB::table('orders as care_source_orders')
-            ->whereIn('care_source_orders.id', $candidateIds)
             ->whereColumn('care_source_orders.shop_id', 'customer_cares.shop_id')
             ->whereNull('care_source_orders.deleted_at')
             ->where(function (Builder $branches) use ($assignments): void {
                 $branches->where(function (Builder $direct) use ($assignments): void {
+                    // The correlated guards prove this candidate is the sole valid direct
+                    // order link, avoiding a UNION subquery that MariaDB 10.3 cannot use
+                    // inside an IN predicate.
                     $direct->whereExists($assignments())
                         ->whereNotExists($assignments()->where(function (Builder $invalid): void {
                             $invalid->whereColumn('source_links.source_id', '!=', 'care_source_orders.id')
