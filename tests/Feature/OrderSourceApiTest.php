@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Order;
 use App\Models\PancakeOrderSource;
+use App\Models\Province;
 use App\Models\Role;
 use App\Models\Shop;
 use App\Models\User;
@@ -269,11 +270,20 @@ class OrderSourceApiTest extends TestCase
             'total_quantity' => 3,
             'cod' => 345000,
             'customer_name' => 'Summary customer',
+            'customer_phone' => '+84901234567',
+            'customer_address' => '123 Example Street',
+            'note' => 'Call before delivery',
             'status' => 4,
             'status_vtp' => 'DELIVERING',
             'user_creator_id' => $creator->pancake_user_id,
             'pancake_full_data' => ['large' => ['legacy' => true]],
         ]);
+        $province = Province::query()->create([
+            'name' => 'Ho Chi Minh',
+            'name_en' => 'Ho Chi Minh City',
+            'new_id' => '79',
+        ]);
+        $order->update(['province_id' => $province->id]);
         $this->createOrder($otherShop, ['pancake_order_id' => 'MUST-NOT-LEAK']);
 
         $defaultResponse = $this->actingAs($manager, 'api')
@@ -292,6 +302,10 @@ class OrderSourceApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.total_items', 1)
             ->assertJsonPath('data.orders.0.id', $order->id)
+            ->assertJsonPath('data.orders.0.customer_phone', '+84901234567')
+            ->assertJsonPath('data.orders.0.customer_address', '123 Example Street')
+            ->assertJsonPath('data.orders.0.province_name', 'Ho Chi Minh')
+            ->assertJsonPath('data.orders.0.note', 'Call before delivery')
             ->assertJsonPath('data.orders.0.order_source_id', '-9')
             ->assertJsonPath('data.orders.0.order_source_name', 'TikTok snapshot')
             ->assertJsonPath('data.orders.0.shop.id', $ownShop->id)
@@ -303,14 +317,18 @@ class OrderSourceApiTest extends TestCase
         $expectedKeys = [
             'cod',
             'created_at',
+            'customer_address',
             'customer_name',
+            'customer_phone',
             'id',
+            'note',
             'order_number_vtp',
             'order_page_id',
             'order_page_name',
             'order_source_id',
             'order_source_name',
             'pancake_order_id',
+            'province_name',
             'shop',
             'shop_id',
             'status',
@@ -325,6 +343,23 @@ class OrderSourceApiTest extends TestCase
         $this->assertSame(['id', 'name'], array_keys($summaryOrder['shop']));
         $this->assertSame(['id', 'name'], array_keys($summaryOrder['user_creator']));
         $this->assertArrayNotHasKey('pancake_full_data', $summaryOrder);
+
+        $nullOrder = $this->createOrder($ownShop, [
+            'pancake_order_id' => 'SUMMARY-NULL-VALUES',
+            'customer_phone' => null,
+            'customer_address' => null,
+            'note' => null,
+            'province_id' => null,
+        ]);
+        $nullSummary = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&page_size=30&view=summary')
+            ->assertOk()
+            ->json('data.orders');
+        $nullSummaryOrder = collect($nullSummary)->firstWhere('id', $nullOrder->id);
+        $this->assertSame(null, $nullSummaryOrder['customer_phone']);
+        $this->assertSame(null, $nullSummaryOrder['customer_address']);
+        $this->assertSame(null, $nullSummaryOrder['province_name']);
+        $this->assertSame(null, $nullSummaryOrder['note']);
 
         $mainSelect = collect(DB::getQueryLog())->first(function (array $query): bool {
             $sql = strtolower($query['query']);
@@ -604,6 +639,7 @@ class OrderSourceApiTest extends TestCase
         Schema::create('orders', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('shop_id');
+            $table->unsignedBigInteger('province_id')->nullable();
             $table->string('pancake_order_id');
             $table->string('pancake_order_source_id')->nullable()->index();
             $table->string('pancake_order_source_name')->nullable();
@@ -626,6 +662,14 @@ class OrderSourceApiTest extends TestCase
             $table->json('pancake_full_data')->nullable();
             $table->boolean('received_at_shop')->default(false);
             $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('provinces', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->string('name_en');
+            $table->string('new_id');
             $table->timestamps();
         });
 

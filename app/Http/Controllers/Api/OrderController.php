@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
+use App\Models\Province;
 use App\Services\ShopAccessService;
 use Illuminate\Http\Request;
 
@@ -128,13 +129,22 @@ class OrderController extends Controller
                     'total_quantity',
                     'cod',
                     'customer_name',
+                    'customer_phone',
+                    'customer_address',
+                    'note',
                     'pancake_order_source_id as order_source_id',
                     'pancake_order_source_name as order_source_name',
                     'shop_id',
                     'pancake_order_page_id as order_page_id',
                     'pancake_order_page_name as order_page_name',
                     'user_creator_id',
-                ]);
+                ])->selectSub(
+                    Province::query()
+                        ->select('name')
+                        ->whereColumn('provinces.id', 'orders.province_id')
+                        ->limit(1),
+                    'province_name'
+                );
             } else {
                 $query->select([
                     'id',
