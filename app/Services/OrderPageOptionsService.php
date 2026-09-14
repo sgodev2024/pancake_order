@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Order;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -15,10 +16,7 @@ class OrderPageOptionsService
     {
         $this->shopAccess->authorizeRequestedShopId($user, $shopId);
 
-        $snapshots = Order::query()
-            ->where('shop_id', $shopId)
-            ->whereNotNull('pancake_order_page_id')
-            ->whereRaw("TRIM(pancake_order_page_id) <> ''");
+        $snapshots = Order::query()->where('shop_id', $shopId);
 
         // Match OrderController@index: options must not reveal hidden staff Orders,
         // including newer names belonging to another employee's snapshot.
@@ -29,7 +27,15 @@ class OrderPageOptionsService
             });
         }
 
-        $snapshots->select(['pancake_order_page_id', 'pancake_order_page_name'])
+        return $this->fromSnapshots($snapshots);
+    }
+
+    /** Apply the same label policy to an already authorized set of Orders. */
+    public function fromSnapshots(EloquentBuilder $snapshots): Builder
+    {
+        $snapshots->whereNotNull('pancake_order_page_id')
+            ->whereRaw("TRIM(pancake_order_page_id) <> ''")
+            ->select(['pancake_order_page_id', 'pancake_order_page_name'])
             ->selectRaw('ROW_NUMBER() OVER (PARTITION BY pancake_order_page_id ORDER BY created_at DESC, id DESC) AS snapshot_rank');
 
         // Keep ID-only pages filterable. Do not substitute a catalog/older name.

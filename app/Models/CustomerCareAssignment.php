@@ -63,8 +63,7 @@ class CustomerCareAssignment extends Model
 
     public static function calculateReclaimEligibleOn(
         CarbonInterface $scheduledCareDate
-    ): CarbonImmutable
-    {
+    ): CarbonImmutable {
         return CarbonImmutable::instance($scheduledCareDate)
             ->setTimezone(config('app.timezone'))
             ->startOfDay()
@@ -88,6 +87,12 @@ class CustomerCareAssignment extends Model
 
     public function sourceOrder()
     {
-        return $this->belongsTo(Order::class, 'source_id');
+        return $this->belongsTo(Order::class, 'order_source_id');
+    }
+
+    // Eager loading also reads this key, so imported IDs never enter its Order query.
+    public function getOrderSourceIdAttribute(): ?int
+    {
+        return $this->source_type === self::SOURCE_ORDER ? $this->source_id : null;
     }
 }
