@@ -22,6 +22,14 @@ class Shop extends Model
         'care_cycle_days',
     ];
 
+    /**
+     * Credentials and raw upstream payloads must never be serialized to clients.
+     */
+    protected $hidden = [
+        'api_key',
+        'pancake_full_data',
+    ];
+
     protected $casts = [
         'pancake_full_data' => 'array',
     ];

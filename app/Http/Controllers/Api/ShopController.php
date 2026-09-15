@@ -60,7 +60,13 @@ class ShopController extends Controller implements HasMiddleware
             }
 
             $inputs = $request->only("date_from", "date_to");
-            $shops = Shop::query();
+            $shops = Shop::query()->select([
+                'shops.id',
+                'shops.name',
+                'shops.pancake_shop_id',
+                'shops.care_cycle_days',
+                'shops.created_at',
+            ]);
             $shops->with([
                 "users" => function ($q) {
                     $q->select("users.id", "users.name", "users.email", "users.role_id")
@@ -92,8 +98,6 @@ class ShopController extends Controller implements HasMiddleware
                     $userQuery->where('users.id', auth()->id());
                 });
             }
-            $shops->addSelect(["id", "name", "pancake_shop_id", "care_cycle_days", "created_at"]);
-
             return response()->json([
                 "success" => true,
                 "data"    => $shops->latest()->get()

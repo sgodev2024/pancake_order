@@ -2,8 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Models\PermissionGroup;
 use App\Models\Permission;
+use App\Models\PermissionGroup;
 use App\Models\Role;
 use App\Models\Shop;
 use App\Models\User;
@@ -461,6 +461,93 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
         $this->assertDatabaseCount('api_keys', 1);
     }
 
+    public function test_shop_lists_preserve_access_and_legacy_fields_without_exposing_secrets(): void
+    {
+        $shop11 = $this->createShop(11);
+        $this->createShop(12);
+        DB::table('shops')->where('id', $shop11->id)->update([
+            'pancake_full_data' => json_encode([
+                'access_token' => 'upstream-access-token-marker',
+                'secret' => 'upstream-secret-marker',
+            ]),
+        ]);
+        $manager = $this->createUser('manager-cskh', 'Manager M1');
+        $admin = $this->createUser('admin', 'Admin A');
+        $this->attachShops($manager, [11]);
+
+        $adminRows = $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/shops')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->json('data');
+        $adminRowsById = collect($adminRows)->keyBy('id');
+        $legacyRow = $adminRowsById->get(11);
+
+        $this->assertCount(2, $adminRows);
+        $this->assertSame('external-11', $legacyRow['pancake_shop_id']);
+        foreach (['id', 'name', 'pancake_shop_id', 'care_cycle_days', 'created_at', 'total_cod', 'orders_count', 'users'] as $field) {
+            $this->assertArrayHasKey($field, $legacyRow);
+        }
+
+        $managerRows = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/shops')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->json('data');
+        $this->assertSame([11], collect($managerRows)->pluck('id')->all());
+
+        foreach ([$adminRows, $managerRows] as $rows) {
+            $serialized = json_encode($rows);
+            $this->assertStringNotContainsString('api_key', $serialized);
+            $this->assertStringNotContainsString('pancake_full_data', $serialized);
+            $this->assertStringNotContainsString('shop-key-', $serialized);
+            $this->assertStringNotContainsString('upstream-access-token-marker', $serialized);
+            $this->assertStringNotContainsString('upstream-secret-marker', $serialized);
+        }
+    }
+
+    public function test_shop_summary_is_minimal_and_tampered_parameters_cannot_expand_scope(): void
+    {
+        $this->createShop(11);
+        $this->createShop(12);
+        $manager = $this->createUser('manager-cskh', 'Manager M1');
+        $staff = $this->createUser('staff-cskh', 'Staff S1');
+        $staffWithoutShops = $this->createUser('staff-cskh', 'Staff S0');
+        $admin = $this->createUser('admin', 'Admin A');
+        $this->attachShops($manager, [11]);
+        $this->attachShops($staff, [12]);
+
+        $managerRows = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/shops?view=summary&shop_id=12&include=all')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->json('data');
+        $this->assertSame([['id' => 11, 'name' => 'Shop 11']], $managerRows);
+
+        $staffRows = $this->actingAs($staff, 'api')
+            ->getJson('/api/v1/shops?view=summary')
+            ->assertOk()
+            ->json('data');
+        $this->assertSame([['id' => 12, 'name' => 'Shop 12']], $staffRows);
+
+        $this->actingAs($staffWithoutShops, 'api')
+            ->getJson('/api/v1/shops?view=summary')
+            ->assertOk()
+            ->assertExactJson([
+                'success' => true,
+                'data' => [],
+            ]);
+
+        $adminRows = $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/shops?view=summary')
+            ->assertOk()
+            ->json('data');
+        $this->assertSame([
+            ['id' => 11, 'name' => 'Shop 11'],
+            ['id' => 12, 'name' => 'Shop 12'],
+        ], $adminRows);
+    }
+
     public function test_employee_import_membership_paths_are_admin_only(): void
     {
         $shop = $this->createShop(11);
@@ -536,6 +623,8 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
             $table->string('pancake_shop_id');
             $table->string('name');
             $table->string('api_key');
+            $table->json('pancake_full_data')->nullable();
+            $table->integer('care_cycle_days')->default(5);
             $table->softDeletes();
             $table->timestamps();
         });
