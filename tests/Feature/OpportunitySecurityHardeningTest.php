@@ -74,6 +74,123 @@ class OpportunitySecurityHardeningTest extends TestCase
         );
     }
 
+    public function test_chance_returns_page_snapshot_and_filters_exact_string_id_with_pagination(): void
+    {
+        $shop = $this->createShop('Own Shop');
+        $actor = $this->createUser('employee', 'Actor');
+        $this->attachShop($actor, $shop);
+        $this->grantPermission($actor, 'view-chance');
+
+        $orderWithoutPage = $this->createOrder($shop);
+        $this->actingAs($actor, 'api')
+            ->getJson("/api/v1/orders/chance?shop_id={$shop->id}")
+            ->assertOk()
+            ->assertJsonPath('data.orders.0.id', $orderWithoutPage->id)
+            ->assertJsonPath('data.orders.0.order_page_id', null)
+            ->assertJsonPath('data.orders.0.order_page_name', null)
+            ->assertJsonMissingPath('data.orders.0.pancake_order_page_id')
+            ->assertJsonMissingPath('data.orders.0.pancake_order_page_name');
+
+        $pageId = 'pzl_695112902870160686';
+        for ($index = 0; $index < 31; $index++) {
+            $order = $this->createOrder($shop);
+            $order->forceFill([
+                'pancake_order_page_id' => $pageId,
+                'pancake_order_page_name' => 'PZL Page',
+            ])->save();
+        }
+        $similarPage = $this->createOrder($shop);
+        $similarPage->forceFill([
+            'pancake_order_page_id' => $pageId.'0',
+            'pancake_order_page_name' => 'Similar Page',
+        ])->save();
+
+        $this->getJson("/api/v1/orders/chance?shop_id={$shop->id}&order_page_id={$pageId}&page=2")
+            ->assertOk()
+            ->assertJsonPath('data.current_page', 2)
+            ->assertJsonPath('data.per_page', 30)
+            ->assertJsonPath('data.total_items', 31)
+            ->assertJsonPath('data.total_pages', 2)
+            ->assertJsonCount(1, 'data.orders')
+            ->assertJsonPath('data.orders.0.order_page_id', $pageId)
+            ->assertJsonPath('data.orders.0.order_page_name', 'PZL Page');
+
+        $this->getJson("/api/v1/orders/chance?shop_id={$shop->id}&order_page_id[]=invalid")
+            ->assertUnprocessable();
+    }
+
+    public function test_opportunity_page_options_match_chance_scope_without_regressing_default_scope(): void
+    {
+        $shop = $this->createShop('Own Shop');
+        $otherShop = $this->createShop('Other Shop');
+        $staff = $this->createUser('staff-sale', 'Staff');
+        $this->attachShop($staff, $shop);
+        $this->grantPermission($staff, 'view-chance');
+
+        $visible = $this->createOrder($shop);
+        $visible->forceFill([
+            'pancake_order_page_id' => 'pzl_visible',
+            'pancake_order_page_name' => 'Visible Opportunity',
+        ])->save();
+
+        $notOpportunity = $this->createOrder($shop, 2);
+        $notOpportunity->forceFill([
+            'pancake_order_page_id' => 'wrong-status',
+            'pancake_order_page_name' => 'Wrong Status',
+        ])->save();
+
+        $assigned = $this->createOrder($shop);
+        $assigned->forceFill([
+            'pancake_order_page_id' => 'already-assigned',
+            'pancake_order_page_name' => 'Already Assigned',
+        ])->save();
+        $care = $this->createCustomerCare($assigned, $staff);
+        $this->createAssignment($assigned, $care, $staff, CustomerCareAssignment::STATUS_ACTIVE);
+
+        $this->createOrder($shop);
+        $outside = $this->createOrder($otherShop);
+        $outside->forceFill([
+            'pancake_order_page_id' => 'outside',
+            'pancake_order_page_name' => 'Outside Shop',
+        ])->save();
+
+        $this->actingAs($staff, 'api')
+            ->getJson('/api/v1/order-pages?shop_id='.$shop->id)
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+        $this->getJson('/api/v1/order-pages?shop_id='.$shop->id.'&context=opportunity')
+            ->assertOk()
+            ->assertExactJson([
+                'success' => true,
+                'data' => [
+                    ['id' => 'pzl_visible', 'name' => 'Visible Opportunity'],
+                ],
+            ]);
+        $this->getJson('/api/v1/order-pages?shop_id='.$otherShop->id.'&context=opportunity')
+            ->assertForbidden();
+
+        $withoutPermission = $this->createUser('employee', 'Without Permission');
+        $this->attachShop($withoutPermission, $shop);
+        $this->actingAs($withoutPermission, 'api')
+            ->getJson('/api/v1/order-pages?shop_id='.$shop->id.'&context=opportunity')
+            ->assertForbidden();
+
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($manager, $shop);
+        $this->grantPermission($manager, 'view-chance');
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/order-pages?shop_id='.$shop->id.'&context=opportunity')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', 'pzl_visible');
+
+        $admin = $this->createUser('admin', 'Admin');
+        $this->grantPermission($admin, 'view-chance');
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/v1/order-pages?shop_id='.$otherShop->id.'&context=opportunity')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', 'outside');
+    }
+
     public function test_user_without_view_chance_permission_is_denied_with_legacy_http_200_response(): void
     {
         $shop = $this->createShop();

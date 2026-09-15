@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
@@ -26,6 +27,21 @@ class OrderPageOptionsService
                     ->orWhere('user_care_id', $user->pancake_user_id);
             });
         }
+
+        return $this->fromSnapshots($snapshots);
+    }
+
+    /** Return page options from the exact order-opportunity pool for one authorized shop. */
+    public function opportunityQuery(User $user, int $shopId): Builder
+    {
+        $this->shopAccess->authorizeRequestedShopId($user, $shopId);
+
+        $snapshots = Order::query()
+            ->where('shop_id', $shopId)
+            ->where('status', 3)
+            ->whereDoesntHave('customerCareAssignments', function ($query): void {
+                $query->where('status', CustomerCareAssignment::STATUS_ACTIVE);
+            });
 
         return $this->fromSnapshots($snapshots);
     }

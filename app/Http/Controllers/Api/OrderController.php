@@ -211,6 +211,10 @@ class OrderController extends Controller
      */
     public function chance(Request $request)
     {
+        $request->validate([
+            'order_page_id' => ['nullable', 'string', 'max:255'],
+        ]);
+
         $user = $request->user();
         $requestedShopId = $user === null
             ? null
@@ -224,7 +228,8 @@ class OrderController extends Controller
                 'shop_id',
                 'page',
                 'date_from',
-                'date_to'
+                'date_to',
+                'order_page_id'
             );
             $queries = Order::query();
             $queries->where('status', 3)
@@ -242,6 +247,9 @@ class OrderController extends Controller
             if (isset($inputs['date_to'])) {
                 $queries->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
             }
+            if ($request->filled('order_page_id')) {
+                $queries->where('orders.pancake_order_page_id', $inputs['order_page_id']);
+            }
             $shopIds = $user === null ? null : $this->accessibleShopIds($user);
             if ($requestedShopId !== null) {
                 $queries->where('shop_id', $requestedShopId);
@@ -256,6 +264,8 @@ class OrderController extends Controller
                 'customer_phone',
                 'customer_address',
                 'pancake_order_id',
+                'pancake_order_page_id as order_page_id',
+                'pancake_order_page_name as order_page_name',
                 'status',
             ])
                 ->latest('created_at');
