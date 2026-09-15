@@ -6,26 +6,27 @@ use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\Product;
 use App\Services\ShopAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 
 class ProductController extends Controller implements HasMiddleware
 {
-    public function __construct(private readonly ShopAccessService $shopAccessService)
-    {
-    }
+    public function __construct(private readonly ShopAccessService $shopAccessService) {}
 
     public static function middleware(): array
     {
         return [
-            // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
-            new Middleware(PermissionCheckMiddleware::class . ':list-product', only: ['index']),
-            // new Middleware(PermissionCheckMiddleware::class . ':list-shop', only: ['index']),
+            new Middleware(
+                PermissionCheckMiddleware::class.':list-product',
+                only: ['index', 'show', 'store', 'update', 'destroy']
+            ),
         ];
     }
 
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
         $user = $request->user();
         $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
@@ -33,55 +34,113 @@ class ProductController extends Controller implements HasMiddleware
             $request->filled('shop_id') ? $request->integer('shop_id') : null
         );
 
-        try {
-            $inputs = $request->only(
-                "page",
-                "page_size",
-                "shop_id",
-                "search"
-            );
-            // 1. Khởi tạo query từ relationship
-            $query = Product::query();
-            $query->with([
-                "shop" => function ($q) {
-                    $q->select("id", "name");
-                }
-            ]);
-            if ($requestedShopId !== null) {
-                $query->where("shop_id", $requestedShopId);
-            } elseif (! $this->shopAccessService->isGlobal($user)) {
-                $query->whereIn("shop_id", $this->shopAccessService->ids($user));
-            }
-            // 3. Xử lý các điều kiện lọc (Filters)
-            // Lọc theo từ khóa tìm kiếm (Tên hoặc Số điện thoại)
-            $query->when($request->filled('search'), function ($q) use ($request) {
-                $search = $request->search;
-                $q->where(function ($sub) use ($search) {
-                    $sub->where('name', 'like', "{$search}%");
-                });
-            });
-            
-            $pageNumber = $inputs["page"];
-            $page_size  = $inputs["page_size"] ?? 30;
-            // 4. Sắp xếp và Phân trang (Lấy 30 records mỗi trang)
-            $products = $query->latest()->paginate($page_size, ['*'], 'page', $pageNumber);
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'page_size' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'search' => ['nullable', 'string', 'max:255'],
+        ]);
 
-            // 5. Trả về Response
-            return response()->json([
-                'success' => true,
-                'data'    => [
-                    "products" => $products->items(),
-                    'current_page' => $products->currentPage(),
-                    'per_page'     => $products->perPage(),
-                    'total_items'  => $products->total(),
-                    'total_pages'  => $products->lastPage(),
-                ],
-            ], 200);
-        } catch (\Throwable $th) {
-            return response()->json([
-                "success" => false,
-                "message" => $th->getMessage()
-            ]);
+        $query = Product::query();
+        $query->with(['shop:id,name']);
+        if ($requestedShopId !== null) {
+            $query->where('shop_id', $requestedShopId);
+        } elseif (! $this->shopAccessService->isGlobal($user)) {
+            $query->whereIn('shop_id', $this->shopAccessService->ids($user));
+        }
+
+        $query->when(isset($validated['search']), function ($q) use ($validated) {
+            $q->where('name', 'like', '%'.$validated['search'].'%');
+        });
+
+        $products = $query->latest()->paginate(
+            $validated['page_size'] ?? 20,
+            ['*'],
+            'page',
+            $validated['page'] ?? 1
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'products' => $products->items(),
+                'current_page' => $products->currentPage(),
+                'per_page' => $products->perPage(),
+                'total_items' => $products->total(),
+                'total_pages' => $products->lastPage(),
+            ],
+        ]);
+    }
+
+    public function show(Request $request, Product $product): JsonResponse
+    {
+        $this->authorizeProductAccess($request, $product);
+
+        return response()->json([
+            'success' => true,
+            'data' => $product->load('shop:id,name'),
+        ]);
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'shop_id' => ['required', 'integer', 'exists:shops,id'],
+            'name' => ['required', 'string', 'max:255'],
+            'pancake_product_id' => ['nullable', 'string', 'max:255'],
+            'pancake_full_data' => ['nullable', 'array'],
+        ]);
+
+        $this->shopAccessService->authorizeRequestedShopId($request->user(), $validated['shop_id']);
+        $validated['pancake_full_data'] ??= [];
+
+        $product = Product::create($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Tạo sản phẩm thành công.',
+            'data' => $product->load('shop:id,name'),
+        ], 201);
+    }
+
+    public function update(Request $request, Product $product): JsonResponse
+    {
+        $this->authorizeProductAccess($request, $product);
+
+        $validated = $request->validate([
+            'shop_id' => ['sometimes', 'integer', 'exists:shops,id'],
+            'name' => ['sometimes', 'string', 'max:255'],
+            'pancake_product_id' => ['nullable', 'string', 'max:255'],
+            'pancake_full_data' => ['nullable', 'array'],
+        ]);
+
+        if (isset($validated['shop_id'])) {
+            $this->shopAccessService->authorizeRequestedShopId($request->user(), $validated['shop_id']);
+        }
+
+        $product->update($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Cập nhật sản phẩm thành công.',
+            'data' => $product->fresh()->load('shop:id,name'),
+        ]);
+    }
+
+    public function destroy(Request $request, Product $product): JsonResponse
+    {
+        $this->authorizeProductAccess($request, $product);
+        $product->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Xóa sản phẩm thành công.',
+        ]);
+    }
+
+    private function authorizeProductAccess(Request $request, Product $product): void
+    {
+        if (! $this->shopAccessService->canAccessShop($request->user(), (int) $product->shop_id)) {
+            throw new AuthorizationException('You do not have access to this product.');
         }
     }
 }
