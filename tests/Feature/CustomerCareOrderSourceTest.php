@@ -232,6 +232,31 @@ class CustomerCareOrderSourceTest extends TestCase
         $this->getJson($this->optionsUrl('invalid'))->assertUnprocessable();
     }
 
+    public function test_customer_care_date_range_filters_and_validates_the_schedule_date(): void
+    {
+        foreach (['2026-08-01', '2026-08-15', '2026-08-31'] as $date) {
+            $this->care($this->order(), ['date_care' => $date]);
+        }
+
+        $this->getJson($this->listUrl('customer_care_edit').'&date_from=2026-08-10&date_to=2026-08-20')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.customers.0.date_care', '2026-08-15');
+
+        $this->getJson($this->listUrl('customer_care_edit').'&date_from=2026-08-15')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 2);
+
+        $this->getJson($this->listUrl('customer_care_edit').'&date_to=2026-08-15')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 2);
+
+        $this->getJson($this->listUrl('customer_care_edit').'&date_from=not-a-date')
+            ->assertUnprocessable();
+        $this->getJson($this->listUrl('customer_care_edit').'&date_from=2026-08-20&date_to=2026-08-19')
+            ->assertUnprocessable();
+    }
+
     public function test_options_use_only_allowed_snapshots_and_rows_keep_their_own_names(): void
     {
         $old = $this->order(['pancake_order_page_name' => 'Old name']);

@@ -48,6 +48,12 @@ class CustomerCareListQuery
                     ->orWhere('customer_cares.pancake_order_id', 'like', "{$search}%");
             });
         }
+        if (! empty($inputs['date_from'])) {
+            $query->whereDate('date_care', '>=', $inputs['date_from']);
+        }
+        if (! empty($inputs['date_to'])) {
+            $query->whereDate('date_care', '<=', $inputs['date_to']);
+        }
         switch ($type) {
             case 'customer_care_today':
                 $query->where('date_care', $today);

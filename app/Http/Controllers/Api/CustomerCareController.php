@@ -49,6 +49,8 @@ class CustomerCareController extends Controller implements HasMiddleware
         $request->validate([
             'order_page_id' => ['nullable', 'string', 'max:255'],
             'context' => ['nullable', 'in:v2'],
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
         ]);
         $user = $request->user();
         $isV2Summary = $request->query('context') === 'v2';
@@ -67,7 +69,9 @@ class CustomerCareController extends Controller implements HasMiddleware
                 'is_accept',
                 'is_confirm_care',
                 'search',
-                'order_page_id'
+                'order_page_id',
+                'date_from',
+                'date_to'
             );
             $inputs['shop_id'] = $requestedShopId;
             $sources = app(CustomerCareOrderSourceService::class);
