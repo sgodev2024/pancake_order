@@ -52,6 +52,17 @@ class CustomerCare extends Model
             ->where('status', CustomerCareAssignment::STATUS_ACTIVE);
     }
 
+    public function activeAssignments()
+    {
+        return $this->hasMany(CustomerCareAssignment::class)
+            ->where('status', CustomerCareAssignment::STATUS_ACTIVE);
+    }
+
+    public function assignments()
+    {
+        return $this->hasMany(CustomerCareAssignment::class);
+    }
+
     /**
      * Every assignment candidate that can represent current, uncared ownership.
      *

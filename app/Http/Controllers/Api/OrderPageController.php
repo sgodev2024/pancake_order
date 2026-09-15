@@ -28,17 +28,17 @@ class OrderPageController extends Controller
             $user = $request->user();
             abort_unless($user->isAdmin() || $user->isManagerCskh() || $user->isStaffCskh(), 403);
             $allowed = app(CustomerCareListQuery::class)->query($validated['type'], $user, ['shop_id' => $shopId]);
-            $query = app(CustomerCareOrderSourceService::class)->pageOptions($allowed, $shopId);
+            $options = app(CustomerCareOrderSourceService::class)->pageOptions($allowed, $shopId);
         } else {
-            $query = $pages->query($request->user(), $shopId);
+            $options = $pages->query($request->user(), $shopId)->get()->map(static fn ($page): array => [
+                'id' => (string) $page->id,
+                'name' => $page->name,
+            ]);
         }
 
         return response()->json([
             'success' => true,
-            'data' => $query->get()->map(static fn ($page): array => [
-                'id' => (string) $page->id,
-                'name' => $page->name,
-            ]),
+            'data' => $options,
         ]);
     }
 }

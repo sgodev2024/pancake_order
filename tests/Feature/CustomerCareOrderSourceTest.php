@@ -148,6 +148,12 @@ class CustomerCareOrderSourceTest extends TestCase
         if ($resolves) {
             $this->assertSame($order->id, $row['order']['id']);
         }
+        $this->getJson($this->listUrl('customer_care_edit').'&context=v2')
+            ->assertOk()
+            ->assertJsonPath(
+                'data.customers.0.order_page_id',
+                $resolves ? 'pzl_695112902870160686' : null
+            );
         $this->getJson($this->listUrl('customer_care_edit').'&order_page_id=pzl_695112902870160686')
             ->assertOk()->assertJsonPath('data.total_items', $resolves ? 1 : 0);
         $this->getJson($this->optionsUrl('customer_care_edit'))->assertOk()
@@ -291,11 +297,12 @@ class CustomerCareOrderSourceTest extends TestCase
         $query->select('customer_cares.id');
         $plan = DB::select('EXPLAIN QUERY PLAN '.$query->toSql(), $query->getBindings());
         $details = implode("\n", array_column($plan, 'detail'));
-        $this->assertStringContainsString('orders_shop_page_index', $details);
+        $this->assertStringContainsString('direct_orders USING INTEGER PRIMARY KEY', $details);
+        $this->assertStringContainsString('orders_pancake_order_id_index', $details);
         $this->assertCount(30, $query->get());
     }
 
-    public function test_mysql_compatible_resolver_sql_uses_correlated_exists_without_union_subqueries(): void
+    public function test_mysql_compatible_filter_and_options_use_split_exists_without_union_subqueries(): void
     {
         $connection = DB::connection();
         $originalGrammar = $connection->getQueryGrammar();
@@ -303,29 +310,84 @@ class CustomerCareOrderSourceTest extends TestCase
 
         try {
             $sources = app(CustomerCareOrderSourceService::class);
-            $display = $sources->selectResolvedOrder(
-                app(CustomerCareListQuery::class)->query('customer_care_edit', $this->admin, ['shop_id' => $this->shop->id])
-            )->toSql();
-
             $filtered = app(CustomerCareListQuery::class)->query(
                 'customer_care_edit', $this->admin, ['shop_id' => $this->shop->id]
             );
             $sources->filter($filtered, 'pzl_695112902870160686');
 
-            $options = $sources->pageOptions(
+            $optionMethod = new \ReflectionMethod($sources, 'pageOptionSnapshotQueries');
+            $optionQueries = $optionMethod->invoke(
+                $sources,
                 app(CustomerCareListQuery::class)->query('customer_care_edit', $this->admin, ['shop_id' => $this->shop->id]),
                 $this->shop->id
-            )->toSql();
+            );
 
-            foreach ([$display, $filtered->toSql(), $options] as $sql) {
+            foreach ([$filtered->toSql(), ...array_map(fn ($query) => $query->toSql(), $optionQueries)] as $sql) {
                 $normalized = strtolower($sql);
                 $this->assertStringContainsString('exists (select', $normalized);
                 $this->assertStringNotContainsString('union', $normalized);
                 $this->assertDoesNotMatchRegularExpression('/\\bin\\s*\\(\\s*select\\b.*\\bunion\\b/is', $normalized);
+                $this->assertStringContainsString('direct_orders`.`id` = `direct_links`.`source_id', $normalized);
+                $this->assertStringContainsString('legacy_orders`.`pancake_order_id` = `customer_cares`.`pancake_order_id', $normalized);
             }
         } finally {
             $connection->setQueryGrammar($originalGrammar);
         }
+    }
+
+    public function test_v2_summary_keeps_display_contract_and_omits_legacy_payload_work(): void
+    {
+        $order = $this->order();
+        $care = $this->care($order, [
+            'customer_name' => 'Summary customer',
+            'customer_phones' => '0900000000',
+            'customer_addresss' => 'Summary address',
+            'note' => 'Summary note',
+            'reason' => 'Summary reason',
+        ]);
+        $this->assignment($care, $order);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $response = $this->getJson($this->listUrl('customer_care_edit').'&context=v2')->assertOk();
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        $row = $response->json('data.customers.0');
+
+        $this->assertSame('Summary customer', $row['customer_name']);
+        $this->assertSame('Exact snapshot', $row['order_page_name']);
+        $this->assertSame($order->id, $row['order']['id']);
+        $this->assertSame($care->id, $row['active_assignment']['customer_care_id']);
+        $this->assertSame($care->id, $row['current_assignment']['customer_care_id']);
+        $this->assertLessThanOrEqual(8, count($queries));
+        foreach ([
+            'assignable_order_id', 'legacy_user_assigning', 'created_at', 'updated_at',
+            'total_edit', 'is_confirm_care', 'user_creator_id', 'user_care_id',
+            'user_assigning_seller_id', 'user_accept_id',
+        ] as $unused) {
+            $this->assertArrayNotHasKey($unused, $row);
+        }
+        foreach ($queries as $query) {
+            $this->assertStringNotContainsString('resolved_source_order_id', $query['query']);
+            $this->assertStringNotContainsString('pancake_full_data', $query['query']);
+        }
+
+        $legacyRow = $this->getJson($this->listUrl('customer_care_edit'))->json('data.customers.0');
+        $this->assertArrayHasKey('assignable_order_id', $legacyRow);
+        $this->assertArrayHasKey('legacy_user_assigning', $legacyRow);
+    }
+
+    public function test_shop_summary_preserves_shop_scope_and_returns_only_options_fields(): void
+    {
+        $otherShop = Shop::create(['name' => 'Hidden shop']);
+        $staff = $this->user('staff-cskh');
+        $staff->shops()->attach($this->shop->id);
+
+        $rows = $this->actingAs($staff, 'api')->getJson('/api/v1/shops?view=summary')
+            ->assertOk()->json('data');
+
+        $this->assertSame([['id' => $this->shop->id, 'name' => 'Allowed shop']], $rows);
+        $this->assertNotContains($otherShop->id, array_column($rows, 'id'));
     }
 
     private function listUrl(string $type, int $page = 1): string
@@ -417,7 +479,7 @@ class CustomerCareOrderSourceTest extends TestCase
             $t->unsignedBigInteger('shop_id');
             $t->string('pancake_order_id')->nullable()->index();
             $t->string('pancake_customer_id');
-            foreach (['customer_name', 'customer_phones', 'customer_addresss', 'note', 'user_creator_id', 'user_care_id', 'user_assigning_seller_id'] as $c) {
+            foreach (['customer_name', 'customer_phones', 'customer_addresss', 'note', 'reason', 'user_creator_id', 'user_care_id', 'user_assigning_seller_id'] as $c) {
                 $t->string($c)->nullable();
             }
             $t->date('date_care');

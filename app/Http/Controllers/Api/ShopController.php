@@ -44,7 +44,21 @@ class ShopController extends Controller implements HasMiddleware
     public function index(Request $request)
     {
         try {
-            $user = auth()->user();
+            $user = $request->user() ?? auth()->user();
+            if ($request->query('view') === 'summary') {
+                $shops = Shop::query()->select(['shops.id', 'shops.name']);
+                if (! $user->isAdmin()) {
+                    $shops->whereHas('users', function ($userQuery) use ($user): void {
+                        $userQuery->where('users.id', $user->getKey());
+                    });
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $shops->orderBy('shops.name')->get(),
+                ]);
+            }
+
             $inputs = $request->only("date_from", "date_to");
             $shops = Shop::query();
             $shops->with([

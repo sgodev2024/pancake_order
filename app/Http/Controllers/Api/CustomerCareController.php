@@ -46,8 +46,12 @@ class CustomerCareController extends Controller implements HasMiddleware
 
     public function index(Request $request)
     {
-        $request->validate(['order_page_id' => ['nullable', 'string', 'max:255']]);
+        $request->validate([
+            'order_page_id' => ['nullable', 'string', 'max:255'],
+            'context' => ['nullable', 'in:v2'],
+        ]);
         $user = $request->user();
+        $isV2Summary = $request->query('context') === 'v2';
         $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
             $user,
             $request->filled('shop_id') ? $request->integer('shop_id') : null
@@ -71,28 +75,73 @@ class CustomerCareController extends Controller implements HasMiddleware
             if ($request->filled('order_page_id')) {
                 $sources->filter($query, $inputs['order_page_id']);
             }
-            $result = $sources->selectResolvedOrder($query)
-                ->with([
-                    'activeAssignment.assignee:id,name',
-                    'currentAssignments.assignee:id,name',
-                    'shop' => function ($q) {
-                        $q->select('shops.id', 'shops.name')
-                            ->with([
-                                'managers' => function ($query) {
-                                    $query->select('users.id', 'users.name');
-                                },
-                            ]);
-                    },
-                    'user_creator',
-                    'user_care',
-                    'user_assigning',
-                ])
+
+            if ($isV2Summary) {
+                // Keep relation keys internally, then hide them from the V2 JSON shape.
+                $query->select([
+                    'customer_cares.id',
+                    'customer_cares.shop_id',
+                    'customer_cares.pancake_customer_id',
+                    'customer_cares.customer_phones',
+                    'customer_cares.customer_name',
+                    'customer_cares.customer_addresss',
+                    'customer_cares.pancake_order_id',
+                    'customer_cares.date_care',
+                    'customer_cares.time_care',
+                    'customer_cares.note',
+                    'customer_cares.user_creator_id',
+                    'customer_cares.user_care_id',
+                    'customer_cares.user_assigning_seller_id',
+                    'customer_cares.status',
+                    'customer_cares.reason',
+                    'customer_cares.is_accept',
+                ]);
+            }
+
+            $assignmentColumns = [
+                'id',
+                'customer_care_id',
+                'shop_id',
+                'source_type',
+                'source_id',
+                'assignee_user_id',
+                'status',
+                'cared_at',
+            ];
+            $relations = [
+                'shop' => function ($q) {
+                    $q->select('shops.id', 'shops.name')
+                        ->with([
+                            'managers' => function ($query) {
+                                $query->select('users.id', 'users.name');
+                            },
+                        ]);
+                },
+            ];
+            if ($isV2Summary) {
+                $relations['assignments'] = fn ($assignment) => $assignment->select($assignmentColumns);
+            } else {
+                $relations[] = 'activeAssignments.assignee:id,name';
+                $relations[] = 'user_creator';
+                $relations[] = 'user_care';
+                $relations[] = 'user_assigning';
+            }
+
+            $result = $query
+                ->with($relations)
                 ->paginate(30, ['*'], 'page', $inputs['page']);
 
+            if ($isV2Summary) {
+                $this->attachV2UsersAndAssignmentAssignees($result->getCollection());
+            }
             $sources->attach($result->getCollection());
             $this->attachCurrentAssignments($result->getCollection());
-            $this->attachLegacyV1DisplayCompatibility($result->getCollection());
-            $this->attachAssignableOrderIds($result->getCollection());
+            if ($isV2Summary) {
+                $this->prepareV2Summary($result->getCollection());
+            } else {
+                $this->attachLegacyV1DisplayCompatibility($result->getCollection());
+                $this->attachAssignableOrderIds($result->getCollection());
+            }
 
             return response()->json([
                 'success' => true,
@@ -883,25 +932,139 @@ class CustomerCareController extends Controller implements HasMiddleware
         }
     }
 
+    private function prepareV2Summary($customerCares): void
+    {
+        foreach ($customerCares as $customerCare) {
+            $customerCare->unsetRelation('assignments');
+            $customerCare->makeHidden([
+                'user_creator_id',
+                'user_care_id',
+                'user_assigning_seller_id',
+            ]);
+
+            foreach (['user_creator', 'user_care', 'user_assigning'] as $relation) {
+                if ($customerCare->relationLoaded($relation) && $customerCare->getRelation($relation) !== null) {
+                    $customerCare->getRelation($relation)->setVisible(['id', 'name']);
+                }
+            }
+
+            if ($customerCare->relationLoaded('shop') && $customerCare->getRelation('shop') !== null) {
+                $shop = $customerCare->getRelation('shop');
+                $shop->setVisible(['id', 'name', 'managers']);
+                if ($shop->relationLoaded('managers')) {
+                    $shop->getRelation('managers')->each(
+                        fn ($manager) => $manager->setVisible(['id', 'name'])
+                    );
+                }
+            }
+
+            foreach (['activeAssignment', 'currentAssignment'] as $relation) {
+                if (! $customerCare->relationLoaded($relation) || $customerCare->getRelation($relation) === null) {
+                    continue;
+                }
+
+                $assignment = $customerCare->getRelation($relation);
+                $assignment->setVisible([
+                    'id',
+                    'customer_care_id',
+                    'shop_id',
+                    'source_type',
+                    'source_id',
+                    'assignee_user_id',
+                    'status',
+                    'cared_at',
+                    'assignee',
+                    'source_order',
+                ]);
+                if ($assignment->relationLoaded('assignee') && $assignment->getRelation('assignee') !== null) {
+                    $assignment->getRelation('assignee')->setVisible(['id', 'name']);
+                }
+                if ($assignment->relationLoaded('sourceOrder') && $assignment->getRelation('sourceOrder') !== null) {
+                    $assignment->getRelation('sourceOrder')->setVisible(['id', 'status']);
+                }
+            }
+
+            if ($customerCare->relationLoaded('order') && $customerCare->getRelation('order') !== null) {
+                $customerCare->getRelation('order')->setVisible(['id', 'status']);
+            }
+        }
+    }
+
+    private function attachV2UsersAndAssignmentAssignees($customerCares): void
+    {
+        if ($customerCares->isEmpty()) {
+            return;
+        }
+
+        $pancakeUserIds = $customerCares->flatMap(fn ($customerCare) => [
+            $customerCare->user_creator_id,
+            $customerCare->user_care_id,
+            $customerCare->user_assigning_seller_id,
+        ])->filter(fn ($id) => $id !== null && $id !== '')->unique()->values();
+        $assigneeIds = $customerCares->flatMap(
+            fn ($customerCare) => $customerCare->getRelation('assignments')->pluck('assignee_user_id')
+        )->filter()->unique()->values();
+
+        $users = $pancakeUserIds->isEmpty() && $assigneeIds->isEmpty()
+            ? collect()
+            : User::query()
+                ->where(function ($query) use ($pancakeUserIds, $assigneeIds): void {
+                    if ($pancakeUserIds->isNotEmpty()) {
+                        $query->whereIn('pancake_user_id', $pancakeUserIds);
+                    }
+                    if ($assigneeIds->isNotEmpty()) {
+                        $method = $pancakeUserIds->isNotEmpty() ? 'orWhereIn' : 'whereIn';
+                        $query->{$method}('id', $assigneeIds);
+                    }
+                })
+                ->get(['id', 'name', 'pancake_user_id']);
+        $usersById = $users->keyBy(fn ($user) => (string) $user->getKey());
+        $usersByPancakeId = $users->keyBy(fn ($user) => (string) $user->pancake_user_id);
+
+        foreach ($customerCares as $customerCare) {
+            foreach ([
+                'user_creator' => 'user_creator_id',
+                'user_care' => 'user_care_id',
+                'user_assigning' => 'user_assigning_seller_id',
+            ] as $relation => $foreignKey) {
+                $customerCare->setRelation(
+                    $relation,
+                    $usersByPancakeId->get((string) $customerCare->getAttribute($foreignKey))
+                );
+            }
+
+            foreach ($customerCare->getRelation('assignments') as $assignment) {
+                $assignment->setRelation(
+                    'assignee',
+                    $usersById->get((string) $assignment->assignee_user_id)
+                );
+            }
+        }
+    }
+
     private function attachCurrentAssignments($customerCares): void
     {
         if ($customerCares->isEmpty()) {
             return;
         }
 
-        $activeAssignmentCounts = CustomerCareAssignment::query()
-            ->whereIn('customer_care_id', $customerCares->pluck('id'))
-            ->where('status', CustomerCareAssignment::STATUS_ACTIVE)
-            ->selectRaw('customer_care_id, COUNT(*) as assignment_count')
-            ->groupBy('customer_care_id')
-            ->pluck('assignment_count', 'customer_care_id');
-
         foreach ($customerCares as $customerCare) {
-            $currentAssignments = $customerCare->getRelation('currentAssignments');
-            $activeAssignmentCount = (int) $activeAssignmentCounts->get($customerCare->id, 0);
+            $assignmentRelation = $customerCare->relationLoaded('assignments')
+                ? 'assignments'
+                : 'activeAssignments';
+            $activeAssignments = $customerCare->getRelation($assignmentRelation)
+                ->where('status', CustomerCareAssignment::STATUS_ACTIVE);
+            $currentAssignments = $activeAssignments->whereNull('cared_at');
+            $activeAssignmentCount = $activeAssignments->count();
             $isAmbiguous = $activeAssignmentCount > 1;
 
-            $customerCare->unsetRelation('currentAssignments');
+            if ($assignmentRelation === 'activeAssignments') {
+                $customerCare->unsetRelation('activeAssignments');
+            }
+            $customerCare->setRelation(
+                'activeAssignment',
+                $activeAssignmentCount === 1 ? $activeAssignments->first() : null
+            );
             $customerCare->setRelation(
                 'currentAssignment',
                 $activeAssignmentCount === 1 && $currentAssignments->count() === 1
