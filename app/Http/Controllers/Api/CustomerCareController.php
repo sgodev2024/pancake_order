@@ -248,8 +248,8 @@ class CustomerCareController extends Controller implements HasMiddleware
                     );
                 }
 
-                if (! empty($request->next_date_care)) {
-                    CustomerCare::create([
+                if ($is_care_completion && ! empty($request->next_date_care)) {
+                    $nextCustomerCare = CustomerCare::create([
                         'shop_id' => $lockedCustomerCare->shop_id,
                         'pancake_customer_id' => $lockedCustomerCare->pancake_customer_id,
                         'pancake_order_id' => $lockedCustomerCare->pancake_order_id,
@@ -261,6 +261,18 @@ class CustomerCareController extends Controller implements HasMiddleware
                         // "user_care_id"              => $lockedCustomerCare->user_care_id,
                         // "user_assigning_seller_id"  => $lockedCustomerCare->user_assigning_seller_id
                     ]);
+
+                    $assignee = User::query()->findOrFail($completedAssignment->assignee_user_id);
+                    $this->customerCareAssignmentService->createWithJourneyEvent(
+                        $nextCustomerCare,
+                        (int) $completedAssignment->shop_id,
+                        $completedAssignment->source_type,
+                        (int) $completedAssignment->source_id,
+                        $assignee,
+                        $persistedCareTime,
+                        Carbon::parse($request->next_date_care, config('app.timezone'))->startOfDay(),
+                        $actor
+                    );
                 }
 
                 return $lockedCustomerCare;
@@ -295,16 +307,37 @@ class CustomerCareController extends Controller implements HasMiddleware
             if ($actor === null) {
                 throw new AuthorizationException('Unauthenticated.');
             }
+            $reason = $request->input('reason');
+            if (is_string($reason)) {
+                $reason = trim($reason);
+                $request->merge(['reason' => $reason]);
+            }
+
             $request->validate([
                 'is_accept' => ['required', 'boolean'],
-                'reason' => ['nullable', 'string'],
+                'reason' => [
+                    $request->has('is_accept') && ! $request->boolean('is_accept') ? 'required' : 'nullable',
+                    'string',
+                    'max:255',
+                ],
             ]);
             DB::transaction(function () use ($id, $request, $actor) {
                 $customerCare = CustomerCare::query()->whereKey($id)->lockForUpdate()->firstOrFail();
-                $this->customerCareWriteAccessService->authorize($actor, $customerCare, 'accept');
+                $isAccept = $request->boolean('is_accept');
+                $this->customerCareWriteAccessService->authorizeApprovalDecision(
+                    $actor,
+                    $customerCare,
+                    $isAccept
+                );
                 $this->customerCareWriteAccessService->ensureSourceConsistency($customerCare);
+
+                $expectedCurrentState = $isAccept ? 0 : 1;
+                if ((int) $customerCare->is_accept !== $expectedCurrentState) {
+                    throw new DomainException('CustomerCare approval state transition is no longer valid.');
+                }
+
                 $customerCare->update([
-                    'is_accept' => $request->boolean('is_accept'),
+                    'is_accept' => $isAccept,
                     'reason' => $request->input('reason'),
                     'user_accept_id' => $actor->getKey(),
                 ]);
@@ -312,7 +345,9 @@ class CustomerCareController extends Controller implements HasMiddleware
 
             return response()->json([
                 'success' => true,
-                'message' => 'Duyệt thành công',
+                'message' => $request->boolean('is_accept')
+                    ? 'Duyệt thành công'
+                    : 'Từ chối thành công',
             ]);
         } catch (AuthorizationException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);

@@ -76,7 +76,9 @@ class CustomerCareListQuery
                     ->oldest('date_care');
                 break;
             case 'customer_care_edit':
-                $query->where('total_edit', '>', 1)->where('is_accept', 1);
+                // The edit-request page must include both pending and reviewed requests.
+                // An explicit is_accept filter above can still narrow either state.
+                $query->where('total_edit', '>', 1);
                 break;
             case 'chance': // trang cơ hội: lấy những thằng chưa chăm sóc + chưa phân công
                 $query->where('status', 0);

@@ -144,6 +144,36 @@ class CustomerCareAssignmentServiceTest extends TestCase
         }
     }
 
+    public function test_completed_active_assignment_does_not_block_follow_up_assignment(): void
+    {
+        CustomerCareAssignment::create([
+            'shop_id' => 9,
+            'customer_care_id' => 103,
+            'source_type' => CustomerCareAssignment::SOURCE_ORDER,
+            'source_id' => 701,
+            'assignee_user_id' => 33,
+            'assignee_pancake_user_id' => 'PANCAKE-33',
+            'assigned_at' => '2026-08-21 10:00:00',
+            'reclaim_eligible_on' => '2026-08-24',
+            'status' => CustomerCareAssignment::STATUS_ACTIVE,
+            'cared_at' => '2026-08-24 10:00:00',
+        ]);
+
+        $followUp = $this->service->create(
+            $this->persistedCustomerCare(104, 9),
+            9,
+            CustomerCareAssignment::SOURCE_ORDER,
+            701,
+            $this->persistedAssignee(33, 'PANCAKE-33'),
+            CarbonImmutable::parse('2026-08-24 10:00:00', 'Asia/Ho_Chi_Minh'),
+            CarbonImmutable::parse('2026-08-28', 'Asia/Ho_Chi_Minh')
+        );
+
+        $this->assertSame(2, CustomerCareAssignment::query()->count());
+        $this->assertSame(104, $followUp->customer_care_id);
+        $this->assertNull($followUp->cared_at);
+    }
+
     public function test_assignment_insert_is_rolled_back_with_owning_transaction(): void
     {
         try {
