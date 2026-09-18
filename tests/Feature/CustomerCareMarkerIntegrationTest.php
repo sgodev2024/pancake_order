@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -108,7 +109,6 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         $statusOnly = $this->createCustomerCare();
         $statusOnlyAssignment = $this->createAssignment($statusOnly);
         $statusOnlyResponse = $this->updateCare($statusOnly, 1, null);
-
         $timeOnly = $this->createCustomerCare();
         $timeOnlyAssignment = $this->createAssignment($timeOnly);
         $this->updateCare($timeOnly, 0, '2026-08-21 12:00:00');
@@ -212,9 +212,10 @@ class CustomerCareMarkerIntegrationTest extends TestCase
 
     public function test_accept_does_not_set_cared_at(): void
     {
-        $customerCare = $this->createCustomerCare();
+        $customerCare = $this->createCustomerCare(['is_accept' => 0]);
         $assignment = $this->createAssignment($customerCare);
         $manager = $this->createUser(32, 'manager-cskh', 'Care Manager', [7]);
+        $this->grantPermission($manager, 'accept-schedule');
         $this->authenticateAs($manager);
         $request = Request::create(
             "/api/v1/customer-cares/{$customerCare->id}/accept",
@@ -229,15 +230,325 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         $this->assertNull($assignment->fresh()->cared_at);
     }
 
+    public function test_completion_persists_note_and_creates_optional_next_care_date(): void
+    {
+        $customerCare = $this->createCustomerCare([
+            'pancake_customer_id' => 'CUSTOMER-NEXT-CARE',
+            'pancake_order_id' => 'ORDER-NEXT-CARE',
+        ]);
+        $assignment = $this->createAssignment($customerCare);
+        Carbon::setTestNow('2026-08-21 15:10:00');
+        $request = Request::create(
+            "/api/v1/customer-cares/{$customerCare->id}",
+            'PUT',
+            [
+                'status' => 1,
+                'date' => '2026-08-20 10:00:00',
+                'note' => 'Đã gọi và xác nhận nhu cầu',
+                'next_date_care' => '2026-08-28',
+            ]
+        );
+
+        $response = $this->controller->update($request, $customerCare);
+
+        $this->assertTrue($response->getData(true)['success']);
+        $this->assertSame('Đã gọi và xác nhận nhu cầu', $customerCare->fresh()->note);
+        $this->assertSame('2026-08-21 15:10:00', $customerCare->fresh()->time_care);
+        $this->assertSame('2026-08-21 15:10:00', $assignment->fresh()->cared_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseHas('customer_cares', [
+            'shop_id' => 7,
+            'pancake_customer_id' => 'CUSTOMER-NEXT-CARE',
+            'pancake_order_id' => 'ORDER-NEXT-CARE',
+            'date_care' => '2026-08-28',
+            'status' => 0,
+        ]);
+        $nextCare = CustomerCare::query()
+            ->whereKeyNot($customerCare->id)
+            ->where('pancake_customer_id', 'CUSTOMER-NEXT-CARE')
+            ->sole();
+        $nextAssignment = CustomerCareAssignment::query()
+            ->where('customer_care_id', $nextCare->id)
+            ->sole();
+        $this->assertNotSame($assignment->id, $nextAssignment->id);
+        $this->assertSame($assignment->assignee_user_id, $nextAssignment->assignee_user_id);
+        $this->assertSame($assignment->shop_id, $nextAssignment->shop_id);
+        $this->assertSame($assignment->source_type, $nextAssignment->source_type);
+        $this->assertSame($assignment->source_id, $nextAssignment->source_id);
+        $this->assertSame($assignment->assignee_pancake_user_id, $nextAssignment->assignee_pancake_user_id);
+        $this->assertSame('2026-08-21 15:10:00', $nextAssignment->assigned_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-08-31', $nextAssignment->reclaim_eligible_on->toDateString());
+        $this->assertSame(CustomerCareAssignment::STATUS_ACTIVE, $nextAssignment->status);
+        $this->assertNull($nextAssignment->cared_at);
+        $this->assertSame(
+            1,
+            ActivityLog::query()->where('action', 'customer_care.reassigned')->count()
+        );
+    }
+
+    public function test_completion_without_next_date_does_not_create_follow_up(): void
+    {
+        $customerCare = $this->createCustomerCare();
+        $this->createAssignment($customerCare);
+
+        $response = $this->updateCare($customerCare, 1, null);
+
+        $this->assertTrue($response->getData(true)['success']);
+        $this->assertSame(1, CustomerCare::query()->count());
+        $this->assertSame(1, CustomerCareAssignment::query()->count());
+    }
+
+    public function test_follow_up_care_is_actionable_visible_and_completable_only_by_assignee(): void
+    {
+        $nextDate = date('Y-m-d', strtotime('+1 day'));
+        $order = $this->createOrder('ORDER-FOLLOW-UP', 7, 'CUSTOMER-FOLLOW-UP');
+        $firstCare = $this->createCustomerCare([
+            'pancake_customer_id' => $order->pancake_customer_id,
+            'pancake_order_id' => $order->pancake_order_id,
+        ]);
+        $firstAssignment = $this->createAssignment(
+            $firstCare,
+            CustomerCareAssignment::STATUS_ACTIVE,
+            $order->id
+        );
+
+        $response = $this->updateCare(
+            $firstCare,
+            1,
+            null,
+            ['next_date_care' => $nextDate]
+        );
+
+        $this->assertTrue($response->getData(true)['success']);
+        $followUp = CustomerCare::query()->whereKeyNot($firstCare->id)->sole();
+        $followUpAssignment = CustomerCareAssignment::query()
+            ->where('customer_care_id', $followUp->id)
+            ->sole();
+        $this->assertSame($firstAssignment->assignee_user_id, $followUpAssignment->assignee_user_id);
+        $this->assertNull($followUpAssignment->cared_at);
+        $this->assertTrue(CustomerCare::query()->actionable()->whereKey($followUp->id)->exists());
+
+        $rows = $this->indexCustomerCareRows('customer_care_pending');
+        $row = collect($rows)->firstWhere('id', $followUp->id);
+        $this->assertNotNull($row);
+        $this->assertSame($followUpAssignment->id, $row['current_assignment']['id']);
+        $this->assertFalse($row['current_assignment_ambiguous']);
+
+        $otherStaff = $this->createUser(32, 'staff-cskh', 'Other Staff', [7]);
+        $this->authenticateAs($otherStaff);
+        $denied = $this->updateCare($followUp->fresh(), 1, null);
+        $this->assertSame(403, $denied->getStatusCode());
+        $this->assertSame(0, (int) $followUp->fresh()->status);
+        $this->assertNull($followUpAssignment->fresh()->cared_at);
+
+        $this->authenticateAs(User::findOrFail($firstAssignment->assignee_user_id));
+        $completed = $this->updateCare($followUp->fresh(), 1, null);
+        $this->assertTrue($completed->getData(true)['success']);
+        $this->assertSame(1, (int) $followUp->fresh()->status);
+        $this->assertNotNull($followUpAssignment->fresh()->cared_at);
+    }
+
+    #[DataProvider('followUpCareListCases')]
+    public function test_follow_up_care_appears_in_the_matching_date_list(
+        string $nextDate,
+        string $expectedType
+    ): void {
+        $order = $this->createOrder(
+            'ORDER-FOLLOW-UP-'.$expectedType,
+            7,
+            'CUSTOMER-FOLLOW-UP-'.$expectedType
+        );
+        $firstCare = $this->createCustomerCare([
+            'pancake_customer_id' => $order->pancake_customer_id,
+            'pancake_order_id' => $order->pancake_order_id,
+        ]);
+        $this->createAssignment(
+            $firstCare,
+            CustomerCareAssignment::STATUS_ACTIVE,
+            $order->id
+        );
+
+        $response = $this->updateCare(
+            $firstCare,
+            1,
+            null,
+            ['next_date_care' => $nextDate]
+        );
+
+        $this->assertTrue($response->getData(true)['success']);
+        $followUp = CustomerCare::query()->where('id', '!=', $firstCare->id)->sole();
+        $this->assertContains($followUp->id, $this->indexCustomerCareIds($expectedType));
+    }
+
+    public static function followUpCareListCases(): array
+    {
+        return [
+            'today' => [date('Y-m-d'), 'customer_care_today'],
+            'upcoming' => [date('Y-m-d', strtotime('+1 day')), 'customer_care_pending'],
+            'overdue' => [date('Y-m-d', strtotime('-1 day')), 'customer_care_expire'],
+        ];
+    }
+
+    public function test_manager_can_reject_edit_request_with_reason_in_shop_scope(): void
+    {
+        $customerCare = $this->createCustomerCare(['is_accept' => 1, 'total_edit' => 2]);
+        $manager = $this->createUser(32, 'manager-cskh', 'Care Manager', [7]);
+        $this->grantPermission($manager, 'reject-cskh');
+        $this->authenticateAs($manager);
+        $request = Request::create(
+            "/api/v1/customer-cares/{$customerCare->id}/accept",
+            'POST',
+            ['is_accept' => 0, 'reason' => 'Thông tin chỉnh sửa chưa hợp lệ']
+        );
+
+        $response = $this->controller->accept($customerCare->id, $request);
+
+        $this->assertTrue($response->getData(true)['success']);
+        $this->assertSame('Từ chối thành công', $response->getData(true)['message']);
+        $this->assertSame(0, (int) $customerCare->fresh()->is_accept);
+        $this->assertSame('Thông tin chỉnh sửa chưa hợp lệ', $customerCare->fresh()->reason);
+        $this->assertSame($manager->id, (int) $customerCare->fresh()->user_accept_id);
+    }
+
+    public function test_reject_edit_request_enforces_manager_shop_scope_and_denies_staff(): void
+    {
+        $customerCare = $this->createCustomerCare(['is_accept' => 1, 'total_edit' => 2]);
+        $request = Request::create(
+            "/api/v1/customer-cares/{$customerCare->id}/accept",
+            'POST',
+            ['is_accept' => 0, 'reason' => 'Không duyệt']
+        );
+
+        $staffResponse = $this->controller->accept($customerCare->id, $request);
+        $this->assertSame(403, $staffResponse->getStatusCode());
+
+        $this->createShop(8);
+        $otherShopManager = $this->createUser(32, 'manager-cskh', 'Other Shop Manager', [8]);
+        $this->grantPermission($otherShopManager, 'reject-cskh');
+        $this->authenticateAs($otherShopManager);
+        $crossShopResponse = $this->controller->accept($customerCare->id, $request);
+
+        $this->assertSame(403, $crossShopResponse->getStatusCode());
+        $this->assertSame(1, (int) $customerCare->fresh()->is_accept);
+        $this->assertNull($customerCare->fresh()->reason);
+    }
+
+    public function test_approve_and_reject_require_their_backend_permissions(): void
+    {
+        $manager = $this->createUser(32, 'manager-cskh', 'Care Manager', [7]);
+        $this->authenticateAs($manager);
+        $pending = $this->createCustomerCare(['is_accept' => 0, 'total_edit' => 2]);
+        $approved = $this->createCustomerCare(['is_accept' => 1, 'total_edit' => 2]);
+
+        $approve = Request::create(
+            "/api/v1/customer-cares/{$pending->id}/accept",
+            'POST',
+            ['is_accept' => 1, 'reason' => 'Hợp lệ']
+        );
+        $reject = Request::create(
+            "/api/v1/customer-cares/{$approved->id}/accept",
+            'POST',
+            ['is_accept' => 0, 'reason' => 'Không hợp lệ']
+        );
+
+        $this->assertSame(403, $this->controller->accept($pending->id, $approve)->getStatusCode());
+        $this->assertSame(403, $this->controller->accept($approved->id, $reject)->getStatusCode());
+        $this->assertSame(0, (int) $pending->fresh()->is_accept);
+        $this->assertSame(1, (int) $approved->fresh()->is_accept);
+
+        $this->grantPermission($manager, 'accept-schedule');
+        $manager->unsetRelation('role');
+        $this->assertTrue($this->controller->accept($pending->id, $approve)->getData(true)['success']);
+        $this->assertSame(403, $this->controller->accept($approved->id, $reject)->getStatusCode());
+    }
+
+    public function test_admin_can_review_without_explicit_role_permission(): void
+    {
+        $admin = $this->createUser(50, 'admin', 'Admin', []);
+        $this->authenticateAs($admin);
+        $pending = $this->createCustomerCare(['is_accept' => 0, 'total_edit' => 2]);
+        $request = Request::create(
+            "/api/v1/customer-cares/{$pending->id}/accept",
+            'POST',
+            ['is_accept' => 1]
+        );
+
+        $response = $this->controller->accept($pending->id, $request);
+
+        $this->assertTrue($response->getData(true)['success']);
+        $this->assertSame(1, (int) $pending->fresh()->is_accept);
+        $this->assertSame($admin->id, (int) $pending->fresh()->user_accept_id);
+    }
+
+    public function test_reject_requires_non_blank_trimmed_reason(): void
+    {
+        $manager = $this->createUser(32, 'manager-cskh', 'Care Manager', [7]);
+        $this->grantPermission($manager, 'reject-cskh');
+        $this->authenticateAs($manager);
+        $approved = $this->createCustomerCare(['is_accept' => 1, 'total_edit' => 2]);
+
+        foreach ([null, '   '] as $reason) {
+            $request = Request::create(
+                "/api/v1/customer-cares/{$approved->id}/accept",
+                'POST',
+                ['is_accept' => 0, 'reason' => $reason]
+            );
+            $this->assertSame(422, $this->controller->accept($approved->id, $request)->getStatusCode());
+        }
+
+        $this->assertSame(1, (int) $approved->fresh()->is_accept);
+        $valid = Request::create(
+            "/api/v1/customer-cares/{$approved->id}/accept",
+            'POST',
+            ['is_accept' => 0, 'reason' => '  Sai thông tin  ']
+        );
+        $this->assertTrue($this->controller->accept($approved->id, $valid)->getData(true)['success']);
+        $this->assertSame('Sai thông tin', $approved->fresh()->reason);
+    }
+
+    public function test_invalid_or_repeated_approval_transitions_are_blocked(): void
+    {
+        $manager = $this->createUser(32, 'manager-cskh', 'Care Manager', [7]);
+        $this->grantPermission($manager, 'accept-schedule');
+        $this->grantPermission($manager, 'reject-cskh');
+        $this->authenticateAs($manager);
+        $pending = $this->createCustomerCare(['is_accept' => 0, 'total_edit' => 2]);
+        $approved = $this->createCustomerCare(['is_accept' => 1, 'total_edit' => 2]);
+
+        $approveApproved = Request::create(
+            "/api/v1/customer-cares/{$approved->id}/accept",
+            'POST',
+            ['is_accept' => 1]
+        );
+        $rejectPending = Request::create(
+            "/api/v1/customer-cares/{$pending->id}/accept",
+            'POST',
+            ['is_accept' => 0, 'reason' => 'Không hợp lệ']
+        );
+
+        $this->assertSame(409, $this->controller->accept($approved->id, $approveApproved)->getStatusCode());
+        $this->assertSame(409, $this->controller->accept($pending->id, $rejectPending)->getStatusCode());
+    }
+
     public function test_second_completion_is_rejected_without_mutation(): void
     {
         $customerCare = $this->createCustomerCare();
         $assignment = $this->createAssignment($customerCare);
         Carbon::setTestNow('2026-08-21 15:10:00');
-        $this->updateCare($customerCare, 1, '2026-08-20 10:00:00');
+        $nextDate = '2026-08-28';
+        $this->updateCare(
+            $customerCare,
+            1,
+            '2026-08-20 10:00:00',
+            ['next_date_care' => $nextDate]
+        );
 
         Carbon::setTestNow('2026-08-22 09:00:00');
-        $secondResponse = $this->updateCare($customerCare->fresh(), 1, '2026-08-22 08:00:00');
+        $secondResponse = $this->updateCare(
+            $customerCare->fresh(),
+            1,
+            '2026-08-22 08:00:00',
+            ['next_date_care' => $nextDate]
+        );
 
         $this->assertSame(409, $secondResponse->getStatusCode());
         $this->assertFalse($secondResponse->getData(true)['success']);
@@ -256,6 +567,8 @@ class CustomerCareMarkerIntegrationTest extends TestCase
                 ->metadata['care_sequence_number']
         );
         $this->assertSame(1, DB::table('customer_care_journey_sequences')->value('last_sequence'));
+        $this->assertSame(2, CustomerCare::query()->count());
+        $this->assertSame(2, CustomerCareAssignment::query()->count());
     }
 
     public function test_status_already_completed_without_cca_marker_is_not_logged_again(): void
@@ -526,6 +839,34 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         $this->assertSame(0, (int) $customerCare->fresh()->status);
         $this->assertNull($customerCare->fresh()->time_care);
         $this->assertNull($assignment->fresh()->cared_at);
+    }
+
+    public function test_follow_up_assignment_creation_failure_rolls_back_entire_completion(): void
+    {
+        $customerCare = $this->createCustomerCare();
+        $assignment = $this->createAssignment($customerCare);
+        CustomerCareAssignment::creating(function () {
+            throw new RuntimeException('Simulated follow-up assignment creation failure.');
+        });
+
+        try {
+            $response = $this->updateCare(
+                $customerCare,
+                1,
+                '2026-08-21 14:00:00',
+                ['next_date_care' => '2026-08-28']
+            );
+        } finally {
+            CustomerCareAssignment::flushEventListeners();
+        }
+
+        $this->assertFalse($response->getData(true)['success']);
+        $this->assertSame(0, (int) $customerCare->fresh()->status);
+        $this->assertNull($customerCare->fresh()->time_care);
+        $this->assertNull($assignment->fresh()->cared_at);
+        $this->assertSame(1, CustomerCare::query()->count());
+        $this->assertSame(1, CustomerCareAssignment::query()->count());
+        $this->assertSame(0, ActivityLog::query()->count());
     }
 
     public function test_reclaimed_assignment_cannot_be_completed(): void
@@ -852,31 +1193,47 @@ class CustomerCareMarkerIntegrationTest extends TestCase
     private function updateCare(
         CustomerCare $customerCare,
         int $status,
-        ?string $timeCare
+        ?string $timeCare,
+        array $extraPayload = []
     ) {
-        return $this->updateCareWithController($this->controller, $customerCare, $status, $timeCare);
+        return $this->updateCareWithController(
+            $this->controller,
+            $customerCare,
+            $status,
+            $timeCare,
+            $extraPayload
+        );
     }
 
     private function updateCareWithController(
         CustomerCareController $controller,
         CustomerCare $customerCare,
         int $status,
-        ?string $timeCare
+        ?string $timeCare,
+        array $extraPayload = []
     ) {
         $request = Request::create(
             "/api/v1/customer-cares/{$customerCare->id}",
             'PUT',
-            [
+            array_merge([
                 'status' => $status,
                 'date' => $timeCare,
                 'note' => 'Care note',
-            ]
+            ], $extraPayload)
         );
 
         return $controller->update($request, $customerCare);
     }
 
     private function indexCustomerCareIds(string $type): array
+    {
+        return array_map(
+            static fn (array $customer) => (int) $customer['id'],
+            $this->indexCustomerCareRows($type)
+        );
+    }
+
+    private function indexCustomerCareRows(string $type): array
     {
         $request = Request::create(
             '/api/v1/customer-cares',
@@ -889,10 +1246,7 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         $payload = $response->getData(true);
         $this->assertTrue($payload['success'], $payload['message'] ?? 'CustomerCare index failed.');
 
-        return array_map(
-            static fn (array $customer) => (int) $customer['id'],
-            $payload['data']['customers']
-        );
+        return $payload['data']['customers'];
     }
 
     private function createCustomerCare(array $overrides = []): CustomerCare
@@ -987,6 +1341,37 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         return User::findOrFail($id);
     }
 
+    private function grantPermission(User $user, string $slug): void
+    {
+        $groupId = DB::table('permission_groups')->value('id');
+        if ($groupId === null) {
+            $groupId = DB::table('permission_groups')->insertGetId([
+                'name' => 'Customer Care',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $permissionId = DB::table('permissions')->where('slug', $slug)->value('id');
+        if ($permissionId === null) {
+            $permissionId = DB::table('permissions')->insertGetId([
+                'permission_group_id' => $groupId,
+                'name' => $slug,
+                'slug' => $slug,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $user->role_id,
+            'permission_id' => $permissionId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $user->unsetRelation('role');
+    }
+
     private function authenticateAs(User $user): void
     {
         Auth::guard('web')->setUser($user);
@@ -1073,6 +1458,30 @@ class CustomerCareMarkerIntegrationTest extends TestCase
             $table->timestamps();
         });
 
+        Schema::create('permission_groups', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('permissions', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('permission_group_id');
+            $table->string('name');
+            $table->string('slug');
+            $table->softDeletes();
+            $table->timestamps();
+        });
+
+        Schema::create('role_permissions', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('role_id');
+            $table->unsignedBigInteger('permission_id');
+            $table->softDeletes();
+            $table->timestamps();
+        });
+
         Schema::create('users', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('role_id')->nullable();
@@ -1124,6 +1533,8 @@ class CustomerCareMarkerIntegrationTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('shop_id');
             $table->string('pancake_order_id');
+            $table->string('pancake_order_page_id')->nullable();
+            $table->string('pancake_order_page_name')->nullable();
             $table->string('pancake_customer_id')->nullable();
             $table->integer('status')->default(3);
             $table->softDeletes();

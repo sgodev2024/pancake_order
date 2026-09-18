@@ -93,6 +93,26 @@ class CustomerCareWriteAccessService
         }
     }
 
+    public function authorizeApprovalDecision(
+        User $actor,
+        CustomerCare $customerCare,
+        bool $isAccept
+    ): void {
+        $this->authorize($actor, $customerCare, 'accept');
+
+        // Frontend permission semantics grant administrators every permission.
+        if ($actor->isAdmin()) {
+            return;
+        }
+
+        $requiredPermission = $isAccept ? 'accept-schedule' : 'reject-cskh';
+        $actor->loadMissing('role.permissions:id,slug');
+
+        if (! $actor->role?->permissions->contains('slug', $requiredPermission)) {
+            throw new AuthorizationException('You do not have permission to review this CustomerCare request.');
+        }
+    }
+
     private function authorizeCurrentAssignee(User $actor, CustomerCare $customerCare): void
     {
         $assignments = CustomerCareAssignment::query()

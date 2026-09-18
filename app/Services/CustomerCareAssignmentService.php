@@ -81,6 +81,7 @@ class CustomerCareAssignmentService
             ->where('source_type', $sourceType)
             ->where('source_id', $sourceId)
             ->where('status', CustomerCareAssignment::STATUS_ACTIVE)
+            ->whereNull('cared_at')
             ->exists();
 
         if ($hasActiveAssignment) {

@@ -177,6 +177,29 @@ class CustomerCareOrderSourceTest extends TestCase
         ]);
     }
 
+    public function test_edit_request_list_includes_pending_and_reviewed_rows_and_keeps_approval_filter(): void
+    {
+        $pending = $this->care($this->order(), ['is_accept' => 0]);
+        $reviewed = $this->care($this->order(), ['is_accept' => 1]);
+
+        $allIds = collect($this->getJson($this->listUrl('customer_care_edit'))
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 2)
+            ->json('data.customers'))
+            ->pluck('id')
+            ->all();
+        $this->assertEqualsCanonicalizing([$pending->id, $reviewed->id], $allIds);
+
+        $this->getJson($this->listUrl('customer_care_edit').'&is_accept=0')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.customers.0.id', $pending->id);
+        $this->getJson($this->listUrl('customer_care_edit').'&is_accept=1')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.customers.0.id', $reviewed->id);
+    }
+
     public function test_staff_context_uses_care_ownership_and_does_not_broaden_default_options(): void
     {
         $staff = $this->user('staff-cskh');
