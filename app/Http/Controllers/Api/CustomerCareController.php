@@ -607,6 +607,7 @@ class CustomerCareController extends Controller implements HasMiddleware
             $shop_ids = $user->shops()->pluck('shops.id');
             $taskBaseQuery = CustomerCare::query();
             $this->applyOverviewAccessScope($taskBaseQuery, $user, $shop_ids, true);
+            $totalCustomerCare = (clone $taskBaseQuery)->count();
 
             $taskOverview = (clone $taskBaseQuery)->actionable()->selectRaw('
                 SUM(CASE WHEN date_care = ? AND is_accept = 1 THEN 1 ELSE 0 END) as customer_care_today,
@@ -686,6 +687,7 @@ class CustomerCareController extends Controller implements HasMiddleware
             return response()->json([
                 'success' => true,
                 'data' => [
+                    'total_customer_care' => $totalCustomerCare,
                     'customer_care_today' => (int) $taskOverview->customer_care_today,
                     'customer_care_today_done' => (int) $taskOverview->customer_care_today_done,
                     'customer_care_pending' => (int) $taskOverview->customer_care_pending,
