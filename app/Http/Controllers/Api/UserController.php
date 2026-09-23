@@ -56,7 +56,7 @@ class UserController extends Controller implements HasMiddleware
                 : null);
 
         try {
-            $inputs = $request->only("role_id", "date", "page", "search", "is_all", "page_name", "shop_id");
+            $inputs = $request->only("role_id", "date", "date_from", "date_to", "page", "search", "is_all", "page_name", "shop_id");
             $inputs['shop_id'] = $requestedShopId;
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $queries = User::with([
@@ -65,6 +65,7 @@ class UserController extends Controller implements HasMiddleware
                                     $q->where("shops.id", $inputs["shop_id"]);
                                 }
                                 $q->select("shops.id", "shops.name");
+                                $q->with(['managers:id,name']);
                                 if (($inputs["page_name"] ?? null) == "report_page") {
                                     $q->with([
                                         "users" => function ($query) {
@@ -84,10 +85,10 @@ class UserController extends Controller implements HasMiddleware
                             if ($effectiveShopIds !== null) {
                                 $q->whereIn('orders.shop_id', $effectiveShopIds);
                             }
-                            if (isset($inputs["date"])) {
+                            if (isset($inputs["date_from"]) || isset($inputs["date_to"]) || isset($inputs["date"])) {
                                 $q->whereBetween("orders.created_at", [
-                                    $inputs["date"] . " 00:00:00",
-                                    $inputs["date"] . " 23:59:59"
+                                    ($inputs["date_from"] ?? $inputs["date"] ?? '1970-01-01') . " 00:00:00",
+                                    ($inputs["date_to"] ?? $inputs["date"] ?? now()->toDateString()) . " 23:59:59"
                                 ]);
                             }
                         }])
@@ -95,10 +96,10 @@ class UserController extends Controller implements HasMiddleware
                             if ($effectiveShopIds !== null) {
                                 $q->whereIn('orders.shop_id', $effectiveShopIds);
                             }
-                            if (isset($inputs["date"])) {
+                            if (isset($inputs["date_from"]) || isset($inputs["date_to"]) || isset($inputs["date"])) {
                                 $q->whereBetween("orders.created_at", [
-                                    $inputs["date"] . " 00:00:00",
-                                    $inputs["date"] . " 23:59:59"
+                                    ($inputs["date_from"] ?? $inputs["date"] ?? '1970-01-01') . " 00:00:00",
+                                    ($inputs["date_to"] ?? $inputs["date"] ?? now()->toDateString()) . " 23:59:59"
                                 ]);
                             }
                         }], 'cod');
@@ -127,10 +128,10 @@ class UserController extends Controller implements HasMiddleware
                                 ->when($effectiveShopIds !== null, function ($q) use ($effectiveShopIds) {
                                     $q->whereIn('shop_id', $effectiveShopIds);
                                 })
-                                ->when(isset($inputs["date"]), function ($q) use ($inputs) {
+                                ->when(isset($inputs["date_from"]) || isset($inputs["date_to"]) || isset($inputs["date"]), function ($q) use ($inputs) {
                                     $q->whereBetween("created_at", [
-                                        $inputs["date"] . " 00:00:00",
-                                        $inputs["date"] . " 23:59:59"
+                                        ($inputs["date_from"] ?? $inputs["date"] ?? '1970-01-01') . " 00:00:00",
+                                        ($inputs["date_to"] ?? $inputs["date"] ?? now()->toDateString()) . " 23:59:59"
                                     ]);
                                 })
                                 ->sum('cod');
