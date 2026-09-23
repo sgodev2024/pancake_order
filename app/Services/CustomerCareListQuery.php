@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\CustomerCare;
+use App\Models\CustomerCareAssignment;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -83,6 +84,18 @@ class CustomerCareListQuery
             case 'chance': // trang cơ hội: lấy những thằng chưa chăm sóc + chưa phân công
                 $query->where('status', 0);
                 break;
+        }
+
+        if ($type === 'assignment_tracking') {
+            $query->whereHas('assignments', function ($assignmentQuery) {
+                $assignmentQuery->whereIn('source_type', ['order', 'imported_opportunity']);
+            })->orderByDesc(
+                CustomerCareAssignment::query()
+                    ->select('assigned_at')
+                    ->whereColumn('customer_care_assignments.customer_care_id', 'customer_cares.id')
+                    ->orderByDesc('assigned_at')
+                    ->limit(1)
+            );
         }
 
         return $query->where(fn ($q) => $this->applyAccessFilter($q, $user, $type));

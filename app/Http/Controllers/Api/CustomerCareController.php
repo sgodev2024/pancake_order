@@ -109,6 +109,7 @@ class CustomerCareController extends Controller implements HasMiddleware
                 'source_type',
                 'source_id',
                 'assignee_user_id',
+                'assigned_at',
                 'status',
                 'cared_at',
             ];
@@ -1012,6 +1013,7 @@ class CustomerCareController extends Controller implements HasMiddleware
                     'source_type',
                     'source_id',
                     'assignee_user_id',
+                    'assigned_at',
                     'status',
                     'cared_at',
                     'assignee',

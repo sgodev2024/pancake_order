@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\CustomerCare;
+use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\ShopAccessService;
@@ -508,6 +509,47 @@ class UserController extends Controller implements HasMiddleware
         $mustScopeByShop = $requestedShopId !== null || ! $isGlobal;
 
         try {
+            $request->validate([
+                'staff_id' => ['nullable', 'integer', 'exists:users,id'],
+            ]);
+
+            $today = now(config('app.timezone'))->toDateString();
+            $assignmentStats = CustomerCareAssignment::query()
+                ->join('customer_cares as monitored_cares', 'monitored_cares.id', '=', 'customer_care_assignments.customer_care_id')
+                ->select('customer_care_assignments.assignee_user_id')
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care = ? THEN 1 ELSE 0 END) as today_total', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care = ? AND monitored_cares.status = 1 THEN 1 ELSE 0 END) as today_done', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care > ? THEN 1 ELSE 0 END) as upcoming_total', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care > ? AND monitored_cares.status = 1 THEN 1 ELSE 0 END) as upcoming_done', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care < ? THEN 1 ELSE 0 END) as overdue_total', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care < ? AND monitored_cares.status = 1 THEN 1 ELSE 0 END) as overdue_done', [$today])
+                ->whereIn('customer_care_assignments.source_type', [CustomerCareAssignment::SOURCE_ORDER, CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY])
+                ->when($mustScopeByShop, fn ($query) => $query->whereIn('customer_care_assignments.shop_id', $shopIds))
+                ->groupBy('customer_care_assignments.assignee_user_id');
+
+            $staffs = User::query()
+                ->select('users.id', 'users.name')
+                ->selectRaw('COALESCE(stats.today_done, 0) as today_done')
+                ->selectRaw('COALESCE(stats.today_total, 0) as today_total')
+                ->selectRaw('COALESCE(stats.upcoming_done, 0) as upcoming_done')
+                ->selectRaw('COALESCE(stats.upcoming_total, 0) as upcoming_total')
+                ->selectRaw('COALESCE(stats.overdue_done, 0) as overdue_done')
+                ->selectRaw('COALESCE(stats.overdue_total, 0) as overdue_total')
+                ->leftJoinSub($assignmentStats, 'stats', 'stats.assignee_user_id', '=', 'users.id')
+                ->whereHas('role', fn ($role) => $role->whereIn('slug', ['manager-cskh', 'staff-cskh']))
+                ->when($mustScopeByShop, fn ($query) => $query->whereHas('shops', fn ($shop) => $shop->whereIn('shops.id', $shopIds)))
+                ->when($request->filled('staff_id'), fn ($query) => $query->whereKey($request->integer('staff_id')))
+                ->orderBy('users.name')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'items' => $staffs,
+                    'total_appointments' => $staffs->sum(fn ($staff) => (int) $staff->today_total + (int) $staff->upcoming_total + (int) $staff->overdue_total),
+                ],
+            ]);
+
             // Subquery 1: Thống kê orders
             $orderStats = DB::table('orders')
                 ->select([
