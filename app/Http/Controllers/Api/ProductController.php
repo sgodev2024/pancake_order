@@ -143,4 +143,5 @@ class ProductController extends Controller implements HasMiddleware
             throw new AuthorizationException('You do not have access to this product.');
         }
     }
+
 }
