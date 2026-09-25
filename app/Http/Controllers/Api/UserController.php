@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\CustomerCare;
+use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\ShopAccessService;
@@ -55,7 +56,7 @@ class UserController extends Controller implements HasMiddleware
                 : null);
 
         try {
-            $inputs = $request->only("role_id", "date", "page", "search", "is_all", "page_name", "shop_id");
+            $inputs = $request->only("role_id", "date", "date_from", "date_to", "page", "search", "is_all", "page_name", "shop_id");
             $inputs['shop_id'] = $requestedShopId;
             // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $queries = User::with([
@@ -64,6 +65,7 @@ class UserController extends Controller implements HasMiddleware
                                     $q->where("shops.id", $inputs["shop_id"]);
                                 }
                                 $q->select("shops.id", "shops.name");
+                                $q->with(['managers:id,name']);
                                 if (($inputs["page_name"] ?? null) == "report_page") {
                                     $q->with([
                                         "users" => function ($query) {
@@ -83,10 +85,10 @@ class UserController extends Controller implements HasMiddleware
                             if ($effectiveShopIds !== null) {
                                 $q->whereIn('orders.shop_id', $effectiveShopIds);
                             }
-                            if (isset($inputs["date"])) {
+                            if (isset($inputs["date_from"]) || isset($inputs["date_to"]) || isset($inputs["date"])) {
                                 $q->whereBetween("orders.created_at", [
-                                    $inputs["date"] . " 00:00:00",
-                                    $inputs["date"] . " 23:59:59"
+                                    ($inputs["date_from"] ?? $inputs["date"] ?? '1970-01-01') . " 00:00:00",
+                                    ($inputs["date_to"] ?? $inputs["date"] ?? now()->toDateString()) . " 23:59:59"
                                 ]);
                             }
                         }])
@@ -94,10 +96,10 @@ class UserController extends Controller implements HasMiddleware
                             if ($effectiveShopIds !== null) {
                                 $q->whereIn('orders.shop_id', $effectiveShopIds);
                             }
-                            if (isset($inputs["date"])) {
+                            if (isset($inputs["date_from"]) || isset($inputs["date_to"]) || isset($inputs["date"])) {
                                 $q->whereBetween("orders.created_at", [
-                                    $inputs["date"] . " 00:00:00",
-                                    $inputs["date"] . " 23:59:59"
+                                    ($inputs["date_from"] ?? $inputs["date"] ?? '1970-01-01') . " 00:00:00",
+                                    ($inputs["date_to"] ?? $inputs["date"] ?? now()->toDateString()) . " 23:59:59"
                                 ]);
                             }
                         }], 'cod');
@@ -126,10 +128,10 @@ class UserController extends Controller implements HasMiddleware
                                 ->when($effectiveShopIds !== null, function ($q) use ($effectiveShopIds) {
                                     $q->whereIn('shop_id', $effectiveShopIds);
                                 })
-                                ->when(isset($inputs["date"]), function ($q) use ($inputs) {
+                                ->when(isset($inputs["date_from"]) || isset($inputs["date_to"]) || isset($inputs["date"]), function ($q) use ($inputs) {
                                     $q->whereBetween("created_at", [
-                                        $inputs["date"] . " 00:00:00",
-                                        $inputs["date"] . " 23:59:59"
+                                        ($inputs["date_from"] ?? $inputs["date"] ?? '1970-01-01') . " 00:00:00",
+                                        ($inputs["date_to"] ?? $inputs["date"] ?? now()->toDateString()) . " 23:59:59"
                                     ]);
                                 })
                                 ->sum('cod');
@@ -247,7 +249,7 @@ class UserController extends Controller implements HasMiddleware
             'name'         => 'required|string|max:255',
             'email'        => 'required|string|email|max:255|unique:users,email',
             'password'     => 'required|string|min:6',
-            'phone_number' => 'required|string|min:10',
+            'phone_number' => ['required', 'string', 'regex:/^(0\d{9,10}|\+84\d{9,10})$/'],
             'role_id'      => 'required|exists:roles,id',
             'shop_ids'     => 'nullable|array',
             'shop_ids.*'   => 'exists:shops,id',
@@ -265,20 +267,21 @@ class UserController extends Controller implements HasMiddleware
         $validatedData['password'] = Hash::make($validatedData['password']);
 
         // 3. Tạo user mới
+        $shopIds = $validatedData['shop_ids'] ?? [];
+        unset($validatedData['shop_ids']);
         $user = User::create($validatedData);
         // Hàm sync() sẽ tự động:
         // 1. Thêm những ID mới
         // 2. Xóa những ID cũ không có trong mảng gửi lên
         // 3. Giữ lại những ID đang có
-        $shopIds = $validatedData['shop_ids'];
         if (!empty($shopIds)) {
-            $user->shops()->attach($shopIds);
+            $user->shops()->sync($shopIds);
         }
         // 4. Trả về response (HTTP 201 Created)
         return response()->json([
             'success' => true,
             'message' => 'Tạo user thành công',
-            'data' => $user
+            'data' => $user->load(['shops:id,name', 'role:id,name'])
         ], 201);
     }
 
@@ -344,7 +347,7 @@ class UserController extends Controller implements HasMiddleware
                 'name'         => 'sometimes|string|max:255',
                 'email'        => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
                 'password'     => 'sometimes|string|min:6',
-                'phone_number' => 'sometimes|string|min:10',
+                'phone_number' => ['sometimes', 'string', 'regex:/^(0\d{9,10}|\+84\d{9,10})$/'],
             ]);
 
             if ($validator->fails()) {
@@ -417,6 +420,7 @@ class UserController extends Controller implements HasMiddleware
             $validatedData['password'] = Hash::make($validatedData['password']);
         }
         $shopIds = $validatedData['shop_ids'] ?? [];
+        unset($validatedData['shop_ids']);
         $user->shops()->sync($shopIds);
         // 3. Cập nhật dữ liệu
         $user->update($validatedData);
@@ -506,6 +510,47 @@ class UserController extends Controller implements HasMiddleware
         $mustScopeByShop = $requestedShopId !== null || ! $isGlobal;
 
         try {
+            $request->validate([
+                'staff_id' => ['nullable', 'integer', 'exists:users,id'],
+            ]);
+
+            $today = now(config('app.timezone'))->toDateString();
+            $assignmentStats = CustomerCareAssignment::query()
+                ->join('customer_cares as monitored_cares', 'monitored_cares.id', '=', 'customer_care_assignments.customer_care_id')
+                ->select('customer_care_assignments.assignee_user_id')
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care = ? THEN 1 ELSE 0 END) as today_total', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care = ? AND monitored_cares.status = 1 THEN 1 ELSE 0 END) as today_done', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care > ? THEN 1 ELSE 0 END) as upcoming_total', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care > ? AND monitored_cares.status = 1 THEN 1 ELSE 0 END) as upcoming_done', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care < ? THEN 1 ELSE 0 END) as overdue_total', [$today])
+                ->selectRaw('SUM(CASE WHEN monitored_cares.date_care < ? AND monitored_cares.status = 1 THEN 1 ELSE 0 END) as overdue_done', [$today])
+                ->whereIn('customer_care_assignments.source_type', [CustomerCareAssignment::SOURCE_ORDER, CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY])
+                ->when($mustScopeByShop, fn ($query) => $query->whereIn('customer_care_assignments.shop_id', $shopIds))
+                ->groupBy('customer_care_assignments.assignee_user_id');
+
+            $staffs = User::query()
+                ->select('users.id', 'users.name')
+                ->selectRaw('COALESCE(stats.today_done, 0) as today_done')
+                ->selectRaw('COALESCE(stats.today_total, 0) as today_total')
+                ->selectRaw('COALESCE(stats.upcoming_done, 0) as upcoming_done')
+                ->selectRaw('COALESCE(stats.upcoming_total, 0) as upcoming_total')
+                ->selectRaw('COALESCE(stats.overdue_done, 0) as overdue_done')
+                ->selectRaw('COALESCE(stats.overdue_total, 0) as overdue_total')
+                ->leftJoinSub($assignmentStats, 'stats', 'stats.assignee_user_id', '=', 'users.id')
+                ->whereHas('role', fn ($role) => $role->whereIn('slug', ['manager-cskh', 'staff-cskh']))
+                ->when($mustScopeByShop, fn ($query) => $query->whereHas('shops', fn ($shop) => $shop->whereIn('shops.id', $shopIds)))
+                ->when($request->filled('staff_id'), fn ($query) => $query->whereKey($request->integer('staff_id')))
+                ->orderBy('users.name')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'items' => $staffs,
+                    'total_appointments' => $staffs->sum(fn ($staff) => (int) $staff->today_total + (int) $staff->upcoming_total + (int) $staff->overdue_total),
+                ],
+            ]);
+
             // Subquery 1: Thống kê orders
             $orderStats = DB::table('orders')
                 ->select([

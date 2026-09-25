@@ -109,7 +109,6 @@ class CustomerCareMarkerIntegrationTest extends TestCase
         $statusOnly = $this->createCustomerCare();
         $statusOnlyAssignment = $this->createAssignment($statusOnly);
         $statusOnlyResponse = $this->updateCare($statusOnly, 1, null);
-
         $timeOnly = $this->createCustomerCare();
         $timeOnlyAssignment = $this->createAssignment($timeOnly);
         $this->updateCare($timeOnly, 0, '2026-08-21 12:00:00');

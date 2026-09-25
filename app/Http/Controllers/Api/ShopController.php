@@ -113,7 +113,11 @@ class ShopController extends Controller implements HasMiddleware
     public function store(Request $request)
     {
         try {
-            $inputs = $request->only("api_key");
+            $validated = $request->validate([
+                'api_key' => ['required', 'string', 'max:500'],
+                'care_cycle_days' => ['nullable', 'integer', 'min:0'],
+            ]);
+            $inputs = $validated;
             $response = Http::get($this->apiUrl . "shops?api_key={$inputs['api_key']}")->json();
             if (!empty($response["shops"])) {
                 $shops = $response["shops"];
