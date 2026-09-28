@@ -50,7 +50,7 @@ class RoleController extends Controller implements HasMiddleware
             ]], 200);
         }
 
-        $roles = Role::select("id", "name")->latest()->get();
+        $roles = Role::select("id", "name", "slug")->latest()->get();
         $permissionGroups = PermissionGroup::select("id", "name")
                                             ->with(["permissions" => function ($q) {
                                                 $q->select("id", "slug as code", "name", "permission_group_id");
@@ -82,19 +82,19 @@ class RoleController extends Controller implements HasMiddleware
     {
         
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|unique:roles,name|max:255',
+            'name' => ['required', 'string', 'max:255', Rule::unique('roles', 'name')->withoutTrashed()],
             'code' => [
                 'required',
                 'string',
                 'regex:/^[a-z0-9-]+$/',
-                // Bỏ qua các bản ghi đã bị xóa mềm khi check unique
-                Rule::unique('roles', 'slug')->withoutTrashed() 
+                Rule::unique('roles', 'slug')->withoutTrashed(),
             ],
         ], [
-            'name.unique'   => 'Tên quyền đã tồn tại',
-            'name.required' => 'Tên quyền là bắt buộc',
-            'code.required' => 'Mã quyền là bắt buộc',
-            'code.regex'    => 'Mã quyền chỉ được chứa chữ thường không dấu, số và dấu -',
+            'name.unique' => 'Tên chức vụ đã tồn tại.',
+            'name.required' => 'Tên chức vụ là bắt buộc.',
+            'code.required' => 'Mã chức vụ là bắt buộc.',
+            'code.regex' => 'Mã chức vụ chỉ được chứa chữ thường không dấu, số và dấu gạch ngang.',
+            'code.unique' => 'Mã chức vụ đã tồn tại.',
         ]);
 
         if ($validator->fails()) {

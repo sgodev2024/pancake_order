@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\PermissionGroup;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Validation\Rule;
 
 class PermissionGroupController extends Controller implements HasMiddleware
 {
@@ -42,8 +44,15 @@ class PermissionGroupController extends Controller implements HasMiddleware
      */
     public function store(Request $request)
     {
+        if (is_string($request->input('name'))) {
+            $request->merge(['name' => trim($request->input('name'))]);
+        }
+
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|unique:permission_groups,name|max:255',
+            'name' => ['required', 'string', 'max:255', Rule::unique('permission_groups', 'name')],
+        ], [
+            'name.required' => 'Tên nhóm quyền là bắt buộc.',
+            'name.unique' => 'Tên nhóm quyền đã tồn tại.',
         ]);
 
         if ($validator->fails()) {
@@ -120,7 +129,17 @@ class PermissionGroupController extends Controller implements HasMiddleware
             return response()->json(['success' => false, 'message' => 'Không tìm thấy'], 404);
         }
 
-        $group->delete();
+        DB::transaction(function () use ($group) {
+            $permissionIds = $group->permissions()->pluck('id');
+
+            if ($permissionIds->isNotEmpty()) {
+                DB::table('role_permissions')
+                    ->whereIn('permission_id', $permissionIds)
+                    ->delete();
+            }
+
+            $group->delete();
+        });
 
         return response()->json([
             'success' => true,

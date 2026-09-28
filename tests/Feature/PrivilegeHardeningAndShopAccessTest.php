@@ -278,6 +278,7 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
             ['postJson', '/api/v1/permission-groups', ['name' => 'Injected']],
             ['getJson', '/api/v1/permissions', []],
             ['postJson', '/api/v1/permissions', []],
+            ['putJson', '/api/v1/permission-catalog/bulk', []],
             ['getJson', '/api/v1/role-permissions/1', []],
             ['postJson', '/api/v1/role-permissions', []],
             ['putJson', '/api/v1/role-permissions/1', []],
@@ -441,6 +442,184 @@ class PrivilegeHardeningAndShopAccessTest extends TestCase
                 'permission_ids' => [$permissionResponse->json('data.id')],
             ])
             ->assertOk();
+    }
+
+    public function test_admin_can_create_roles_and_permission_groups_with_validated_fields(): void
+    {
+        $admin = $this->createUser('admin', 'Admin A');
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/v1/roles', [
+                'name' => 'Trưởng nhóm bán hàng',
+                'code' => 'truong-nhom-ban-hang',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.name', 'Trưởng nhóm bán hàng')
+            ->assertJsonPath('data.slug', 'truong-nhom-ban-hang');
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/v1/permission-groups', ['name' => 'Báo cáo bán hàng'])
+            ->assertCreated()
+            ->assertJsonPath('data.name', 'Báo cáo bán hàng');
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/v1/roles', [
+                'name' => 'Chức vụ khác',
+                'code' => 'invalid code',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('code');
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/v1/permission-groups', ['name' => ' Báo cáo bán hàng '])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('name');
+
+        $this->assertDatabaseCount('roles', 2);
+        $this->assertDatabaseCount('permission_groups', 1);
+    }
+
+    public function test_admin_can_create_update_and_delete_permissions(): void
+    {
+        $admin = $this->createUser('admin', 'Admin A');
+        $group = PermissionGroup::create(['name' => 'Customers']);
+        $otherGroup = PermissionGroup::create(['name' => 'Reports']);
+        $role = Role::create(['name' => 'Manager', 'slug' => 'manager']);
+
+        $created = $this->actingAs($admin, 'api')
+            ->postJson('/api/v1/permissions', [
+                'permission_group_id' => $group->id,
+                'name' => 'View customers',
+                'slug' => 'view-customers',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.permission_group_id', $group->id)
+            ->assertJsonPath('data.slug', 'view-customers');
+        $permissionId = $created->json('data.id');
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $permissionId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->putJson('/api/v1/permissions/'.$permissionId, [
+                'permission_group_id' => $otherGroup->id,
+                'name' => 'View sales reports',
+                'slug' => 'view-sales-reports',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.permission_group_id', $otherGroup->id)
+            ->assertJsonPath('data.name', 'View sales reports')
+            ->assertJsonPath('data.slug', 'view-sales-reports');
+
+        $this->actingAs($admin, 'api')
+            ->putJson('/api/v1/permissions/'.$permissionId, ['name' => 'Read sales reports'])
+            ->assertOk()
+            ->assertJsonPath('data.name', 'Read sales reports')
+            ->assertJsonPath('data.slug', 'view-sales-reports');
+
+        $this->actingAs($admin, 'api')
+            ->putJson('/api/v1/permissions/'.$permissionId, ['slug' => 'invalid slug'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('slug');
+
+        $this->actingAs($admin, 'api')
+            ->deleteJson('/api/v1/permissions/'.$permissionId)
+            ->assertOk();
+
+        $this->assertSoftDeleted('permissions', ['id' => $permissionId]);
+        $this->assertDatabaseMissing('role_permissions', ['permission_id' => $permissionId]);
+    }
+
+    public function test_admin_can_bulk_edit_permission_catalog_atomically(): void
+    {
+        $admin = $this->createUser('admin', 'Admin A');
+        $firstGroup = PermissionGroup::create(['name' => 'First group']);
+        $secondGroup = PermissionGroup::create(['name' => 'Second group']);
+        $firstPermission = Permission::create([
+            'permission_group_id' => $firstGroup->id,
+            'name' => 'First permission',
+            'slug' => 'first-permission',
+        ]);
+        $secondPermission = Permission::create([
+            'permission_group_id' => $secondGroup->id,
+            'name' => 'Second permission',
+            'slug' => 'second-permission',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->putJson('/api/v1/permission-catalog/bulk', [
+                'groups' => [
+                    ['id' => $firstGroup->id, 'name' => 'Second group'],
+                    ['id' => $secondGroup->id, 'name' => 'First group'],
+                ],
+                'permissions' => [
+                    [
+                        'id' => $firstPermission->id,
+                        'permission_group_id' => $secondGroup->id,
+                        'name' => 'Updated first permission',
+                        'slug' => 'second-permission',
+                    ],
+                    [
+                        'id' => $secondPermission->id,
+                        'permission_group_id' => $firstGroup->id,
+                        'name' => 'Updated second permission',
+                        'slug' => 'first-permission',
+                    ],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.groups_updated', 2)
+            ->assertJsonPath('data.permissions_updated', 2);
+
+        $this->assertDatabaseHas('permission_groups', ['id' => $firstGroup->id, 'name' => 'Second group']);
+        $this->assertDatabaseHas('permission_groups', ['id' => $secondGroup->id, 'name' => 'First group']);
+        $this->assertDatabaseHas('permissions', [
+            'id' => $firstPermission->id,
+            'permission_group_id' => $secondGroup->id,
+            'name' => 'Updated first permission',
+            'slug' => 'second-permission',
+        ]);
+        $this->assertDatabaseHas('permissions', [
+            'id' => $secondPermission->id,
+            'permission_group_id' => $firstGroup->id,
+            'name' => 'Updated second permission',
+            'slug' => 'first-permission',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->putJson('/api/v1/permission-catalog/bulk', [
+                'permissions' => [
+                    [
+                        'id' => $firstPermission->id,
+                        'permission_group_id' => $firstGroup->id,
+                        'name' => 'Should not be saved',
+                        'slug' => 'duplicate-permission',
+                    ],
+                    [
+                        'id' => $secondPermission->id,
+                        'permission_group_id' => $secondGroup->id,
+                        'name' => 'Should not be saved',
+                        'slug' => 'duplicate-permission',
+                    ],
+                ],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['permissions.0.slug', 'permissions.1.slug']);
+
+        $this->assertDatabaseHas('permissions', [
+            'id' => $firstPermission->id,
+            'name' => 'Updated first permission',
+            'slug' => 'second-permission',
+        ]);
+        $this->assertDatabaseHas('permissions', [
+            'id' => $secondPermission->id,
+            'name' => 'Updated second permission',
+            'slug' => 'first-permission',
+        ]);
     }
 
     public function test_api_key_management_is_admin_only(): void

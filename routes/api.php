@@ -74,6 +74,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     // Các router quản lý dự án, nhân sự khác sẽ nằm ở đây...
     Route::apiResource('roles', RoleController::class);
     Route::apiResource('permission-groups', PermissionGroupController::class);
+    Route::put('permission-catalog/bulk', [PermissionController::class, 'bulkUpdate']);
     Route::apiResource('permissions', PermissionController::class);
     Route::apiResource('role-permissions', RolePermissionController::class);
 
