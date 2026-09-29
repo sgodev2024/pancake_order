@@ -17,8 +17,13 @@ use App\Services\CustomerCareReclaimService;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Maatwebsite\Excel\Concerns\FromArray;
+use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Excel as ExcelFormat;
+use Maatwebsite\Excel\Facades\Excel;
 use Tests\TestCase;
 
 class OpportunitySecurityHardeningTest extends TestCase
@@ -116,6 +121,26 @@ class OpportunitySecurityHardeningTest extends TestCase
             ->assertJsonPath('data.orders.0.order_page_name', 'PZL Page');
 
         $this->getJson("/api/v1/orders/chance?shop_id={$shop->id}&order_page_id[]=invalid")
+            ->assertUnprocessable();
+    }
+
+    public function test_chance_filters_orders_by_partial_customer_phone(): void
+    {
+        $shop = $this->createShop('Own Shop');
+        $actor = $this->createUser('employee', 'Actor');
+        $this->attachShop($actor, $shop);
+        $this->grantPermission($actor, 'view-chance');
+        $matchingOrder = $this->createOrder($shop);
+        $matchingOrder->forceFill(['customer_phone' => '0912345678'])->save();
+        $this->createOrder($shop)->forceFill(['customer_phone' => '0987654321'])->save();
+
+        $this->actingAs($actor, 'api')
+            ->getJson("/api/v1/orders/chance?shop_id={$shop->id}&phone=1234")
+            ->assertOk()
+            ->assertJsonCount(1, 'data.orders')
+            ->assertJsonPath('data.orders.0.id', $matchingOrder->id);
+
+        $this->getJson("/api/v1/orders/chance?shop_id={$shop->id}&phone[]=invalid")
             ->assertUnprocessable();
     }
 
@@ -1334,6 +1359,46 @@ class OpportunitySecurityHardeningTest extends TestCase
 
         $this->actingAs($manager, 'api')->postJson('/api/v1/imported-opportunities/import', ['shop_id' => $ownShop->id])->assertStatus(422);
         $this->actingAs($admin, 'api')->postJson('/api/v1/imported-opportunities/import', ['shop_id' => $otherShop->id])->assertStatus(422);
+        $this->assertDatabaseCount('imported_opportunities', 0);
+    }
+
+    public function test_import_rejects_incomplete_rows_and_invalid_phone_numbers_without_partial_import(): void
+    {
+        $shop = $this->createShop('Own Shop');
+        $actor = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($actor, $shop);
+        $this->grantPermission($actor, 'view-chance');
+        $fileContents = Excel::raw(new class implements FromArray, WithHeadings
+        {
+            public function array(): array
+            {
+                return [
+                    ['Thiếu địa chỉ', '', '0901234567'],
+                    ['Sai số điện thoại', 'Địa chỉ đầy đủ', '12345'],
+                    ['Dòng hợp lệ', 'Địa chỉ đầy đủ', '0912345678'],
+                ];
+            }
+
+            public function headings(): array
+            {
+                return ['Tên', 'Địa chỉ', 'Số điện thoại'];
+            }
+        }, ExcelFormat::XLSX);
+        $file = UploadedFile::fake()->createWithContent('opportunities.xlsx', $fileContents);
+
+        $response = $this->actingAs($actor, 'api')
+            ->post('/api/v1/imported-opportunities/import', [
+                'shop_id' => $shop->id,
+                'file' => $file,
+            ], ['Accept' => 'application/json'])
+            ->assertUnprocessable();
+
+        $responseContent = $response->getContent();
+        $this->assertStringContainsString('Dòng 2', $responseContent);
+        $this->assertStringContainsString('Địa chỉ là bắt buộc.', $responseContent);
+        $this->assertStringContainsString('Dòng 3', $responseContent);
+        $this->assertStringContainsString('Số điện thoại phải gồm đúng 10 chữ số.', $responseContent);
+
         $this->assertDatabaseCount('imported_opportunities', 0);
     }
 

@@ -213,6 +213,7 @@ class OrderController extends Controller
     {
         $request->validate([
             'order_page_id' => ['nullable', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:255'],
         ]);
 
         $user = $request->user();
@@ -229,7 +230,8 @@ class OrderController extends Controller
                 'page',
                 'date_from',
                 'date_to',
-                'order_page_id'
+                'order_page_id',
+                'phone'
             );
             $queries = Order::query();
             $queries->where('status', 3)
@@ -249,6 +251,10 @@ class OrderController extends Controller
             }
             if ($request->filled('order_page_id')) {
                 $queries->where('orders.pancake_order_page_id', $inputs['order_page_id']);
+            }
+            $phone = trim($inputs['phone'] ?? '');
+            if ($phone !== '') {
+                $queries->where('orders.customer_phone', 'like', '%'.$phone.'%');
             }
             $shopIds = $user === null ? null : $this->accessibleShopIds($user);
             if ($requestedShopId !== null) {

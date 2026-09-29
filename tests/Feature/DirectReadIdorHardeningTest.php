@@ -60,7 +60,10 @@ class DirectReadIdorHardeningTest extends TestCase
         $this->actingAs($manager, 'api')
             ->getJson("/api/v1/users/{$onlyShop11->id}")
             ->assertOk()
-            ->assertJsonPath('data.id', $onlyShop11->id);
+            ->assertJsonPath('data.id', $onlyShop11->id)
+            ->assertJsonPath('data.email', $onlyShop11->email)
+            ->assertJsonPath('data.role.id', $onlyShop11->role_id)
+            ->assertJsonPath('data.shops.0.id', $shop11->id);
         $this->actingAs($manager, 'api')
             ->getJson("/api/v1/users/{$onlyShop12->id}")
             ->assertForbidden();

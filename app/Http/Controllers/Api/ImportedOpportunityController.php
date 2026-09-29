@@ -99,7 +99,16 @@ class ImportedOpportunityController extends Controller
             ]);
 
             $import = new OpportunityImport((int) $request->shop_id, $actor->getKey());
-            Excel::import($import, $request->file('file'));
+            DB::transaction(function () use ($import, $request) {
+                Excel::import($import, $request->file('file'));
+
+                $failureMessages = $import->failureMessages();
+                if ($failureMessages !== []) {
+                    $message = "Không thể import vì file Excel có thông tin chưa hợp lệ:\n"
+                        .implode("\n", $failureMessages);
+                    throw ValidationException::withMessages(['file' => [$message]]);
+                }
+            });
 
             return response()->json([
                 'success' => true,
@@ -109,7 +118,11 @@ class ImportedOpportunityController extends Controller
         } catch (AuthorizationException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 403);
         } catch (ValidationException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            return response()->json([
+                'success' => false,
+                'message' => $e->errors()['file'][0] ?? $e->getMessage(),
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Throwable $th) {
             return response()->json(['success' => false, 'message' => 'Đã có lỗi xảy ra: '.$th->getMessage()], 500);
         }

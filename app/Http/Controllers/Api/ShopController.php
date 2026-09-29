@@ -284,6 +284,7 @@ class ShopController extends Controller implements HasMiddleware
                     break;
                 case 'product':
                     $this->getProduct($shop);
+                    break;
                 case 'customer':
                     $this->getCustomer($shop);
             }

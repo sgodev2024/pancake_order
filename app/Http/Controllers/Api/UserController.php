@@ -297,7 +297,7 @@ class UserController extends Controller implements HasMiddleware
 
         return response()->json([
             'success' => true,
-            'data' => $user
+            'data' => $user->load(['shops:id,name', 'role:id,name'])
         ], 200);
     }
 
