@@ -22,7 +22,10 @@ class OrderController extends Controller
     {
         $user = $request->user();
         $isSummaryView = $request->query('view') === 'summary';
-        $request->validate(['order_page_id' => ['nullable', 'string', 'max:255']]);
+        $request->validate([
+            'order_page_id' => ['nullable', 'string', 'max:255'],
+            'cod' => ['nullable', 'numeric', 'min:0'],
+        ]);
         $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
             $user,
             $request->filled('shop_id') ? $request->integer('shop_id') : null
@@ -40,7 +43,8 @@ class OrderController extends Controller
                 'date_to',
                 'user_id',
                 'order_source_id',
-                'order_page_id'
+                'order_page_id',
+                'cod'
             );
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
@@ -102,6 +106,9 @@ class OrderController extends Controller
             }
             if (isset($inputs['order_source_id']) && $inputs['order_source_id'] !== '') {
                 $query->where('orders.pancake_order_source_id', $inputs['order_source_id']);
+            }
+            if (isset($inputs['cod']) && $inputs['cod'] !== '') {
+                $query->where('orders.cod', $inputs['cod']);
             }
             if ($request->filled('order_page_id')) {
                 $query->where('orders.pancake_order_page_id', $inputs['order_page_id']);

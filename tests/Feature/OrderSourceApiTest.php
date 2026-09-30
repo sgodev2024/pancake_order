@@ -146,6 +146,38 @@ class OrderSourceApiTest extends TestCase
             ->assertJsonCount(0, 'data.orders');
     }
 
+    public function test_cod_filter_matches_exact_amount_including_zero(): void
+    {
+        $shop = $this->createShop('Own shop');
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attachShop($manager, $shop);
+
+        $zeroCodOrder = $this->createOrder($shop, [
+            'pancake_order_id' => 'COD-ZERO',
+            'cod' => 0,
+            'note' => 'Số tiền ghi trong ghi chú',
+        ]);
+        $this->createOrder($shop, [
+            'pancake_order_id' => 'COD-OTHER',
+            'cod' => 125000,
+        ]);
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&shop_id='.$shop->id.'&cod=0&view=summary')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.total_revenue', 0)
+            ->assertJsonPath('data.orders.0.id', $zeroCodOrder->id)
+            ->assertJsonPath('data.orders.0.cod', 0)
+            ->assertJsonPath('data.orders.0.note', 'Số tiền ghi trong ghi chú');
+
+        $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/orders?page=1&shop_id='.$shop->id.'&cod=125000&view=summary')
+            ->assertOk()
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonPath('data.orders.0.pancake_order_id', 'COD-OTHER');
+    }
+
     public function test_absent_or_blank_source_filter_preserves_existing_scoped_list_behavior(): void
     {
         $ownShop = $this->createShop('Own shop');
