@@ -48,7 +48,7 @@ class OrderByShopChunkJob implements ShouldQueue
     public function handle(): void
     {
         foreach ($this->pages as $page) {
-            $response = Http::get($this->apiUrl . "shops/{$this->pancake_shop_id}/orders?api_key={$this->api_key}&page_size={$this->page_size}&page_number={$page}")->json();
+               $response = Http::get($this->apiUrl . "shops/{$this->pancake_shop_id}/orders?api_key={$this->api_key}&page_size={$this->page_size}&page_number={$page}")->json();
             if (!empty($response["data"])) {
                 GetOrderByShopJob::dispatch(
                     $response["data"],

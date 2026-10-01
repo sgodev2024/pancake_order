@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\Province;
 use App\Services\ShopAccessService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class OrderController extends Controller
 {
@@ -135,6 +136,8 @@ class OrderController extends Controller
                     'order_number_vtp',
                     'total_quantity',
                     'cod',
+                    'cash',
+                    'pancake_full_data->prepaid as prepaid_amount',
                     'customer_name',
                     'customer_phone',
                     'customer_address',
@@ -178,30 +181,51 @@ class OrderController extends Controller
                 ]);
             }
 
-            $pageNumber = $inputs['page'];
-            $page_size = $inputs['page_size'] ?? 30;
-            // 4. Sắp xếp và Phân trang (Lấy 30 records mỗi trang)
-            $total_revenue = (clone $query)->sum('cod');
-            $orders = $query->latest('created_at')->paginate($page_size, ['*'], 'page', $pageNumber);
+            $prepaidColumn = $query->getQuery()->getGrammar()->wrap('orders.pancake_full_data->prepaid');
+            $revenueExpression = "COALESCE(SUM(COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0)), 0)";
 
             if ($isSummaryView) {
-                foreach ($orders->items() as $order) {
+                $pageNumber = max((int) ($inputs['page'] ?? 1), 1);
+                $pageSize = max((int) ($inputs['page_size'] ?? 30), 1);
+                $summaryTotals = (clone $query)->toBase()
+                    ->cloneWithout(['columns', 'orders'])
+                    ->cloneWithoutBindings(['select', 'order'])
+                    ->selectRaw("COUNT(*) AS total_items, {$revenueExpression} AS total_revenue")
+                    ->first();
+                $orderItems = $query->latest('created_at')
+                    ->forPage($pageNumber, $pageSize)
+                    ->get();
+                $totalItems = (int) $summaryTotals->total_items;
+                $totalPages = max(1, (int) ceil($totalItems / $pageSize));
+                $totalRevenue = $summaryTotals->total_revenue;
+
+                foreach ($orderItems as $order) {
                     $userCreator = $order->getRelation('user_creator');
                     if ($userCreator !== null) {
                         $userCreator->setVisible(['id', 'name']);
                     }
                 }
+            } else {
+                $pageNumber = $inputs['page'];
+                $pageSize = $inputs['page_size'] ?? 30;
+                $totalRevenue = (clone $query)->sum(DB::raw("COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0)"));
+                $orders = $query->latest('created_at')->paginate($pageSize, ['*'], 'page', $pageNumber);
+                $orderItems = $orders->items();
+                $pageNumber = $orders->currentPage();
+                $pageSize = $orders->perPage();
+                $totalItems = $orders->total();
+                $totalPages = $orders->lastPage();
             }
 
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'orders' => $orders->items(),
-                    'current_page' => $orders->currentPage(),
-                    'per_page' => $orders->perPage(),
-                    'total_items' => $orders->total(),
-                    'total_pages' => $orders->lastPage(),
-                    'total_revenue' => $total_revenue,
+                    'orders' => $orderItems,
+                    'current_page' => $pageNumber,
+                    'per_page' => $pageSize,
+                    'total_items' => $totalItems,
+                    'total_pages' => $totalPages,
+                    'total_revenue' => $totalRevenue,
                 ],
             ]);
         } catch (\Throwable $th) {

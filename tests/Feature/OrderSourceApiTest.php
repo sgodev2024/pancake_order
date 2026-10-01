@@ -211,6 +211,7 @@ class OrderSourceApiTest extends TestCase
             'pancake_order_source_id' => 'source-a',
             'customer_phone' => '0901000001',
             'cod' => 100000,
+            'pancake_full_data' => ['prepaid' => 10000],
             'status' => 3,
             'received_at_shop' => true,
         ]);
@@ -220,6 +221,7 @@ class OrderSourceApiTest extends TestCase
             'pancake_order_source_id' => 'source-a',
             'customer_phone' => '0901000002',
             'cod' => 200000,
+            'pancake_full_data' => ['prepaid' => 20000],
             'status' => 3,
             'received_at_shop' => true,
         ]);
@@ -273,7 +275,7 @@ class OrderSourceApiTest extends TestCase
             ->assertJsonPath('data.total_items', 2)
             ->assertJsonPath('data.per_page', 1)
             ->assertJsonPath('data.total_pages', 2)
-            ->assertJsonPath('data.total_revenue', 300000)
+            ->assertJsonPath('data.total_revenue', 330000)
             ->assertJsonPath('data.orders.0.id', $first->id);
 
         $defaultResponse = $this->actingAs($manager, 'api')
@@ -301,6 +303,7 @@ class OrderSourceApiTest extends TestCase
             'order_number_vtp' => 'VTP-123',
             'total_quantity' => 3,
             'cod' => 345000,
+            'cash' => 100000,
             'customer_name' => 'Summary customer',
             'customer_phone' => '+84901234567',
             'customer_address' => '123 Example Street',
@@ -308,7 +311,7 @@ class OrderSourceApiTest extends TestCase
             'status' => 4,
             'status_vtp' => 'DELIVERING',
             'user_creator_id' => $creator->pancake_user_id,
-            'pancake_full_data' => ['large' => ['legacy' => true]],
+            'pancake_full_data' => ['prepaid' => 7440000, 'large' => ['legacy' => true]],
         ]);
         $province = Province::query()->create([
             'name' => 'Ho Chi Minh',
@@ -334,6 +337,8 @@ class OrderSourceApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.total_items', 1)
             ->assertJsonPath('data.orders.0.id', $order->id)
+            ->assertJsonPath('data.orders.0.prepaid_amount', 7440000)
+            ->assertJsonPath('data.orders.0.cash', 100000)
             ->assertJsonPath('data.orders.0.customer_phone', '+84901234567')
             ->assertJsonPath('data.orders.0.customer_address', '123 Example Street')
             ->assertJsonPath('data.orders.0.province_name', 'Ho Chi Minh')
@@ -347,6 +352,7 @@ class OrderSourceApiTest extends TestCase
 
         $summaryOrder = $summaryResponse->json('data.orders.0');
         $expectedKeys = [
+            'cash',
             'cod',
             'created_at',
             'customer_address',
@@ -360,6 +366,7 @@ class OrderSourceApiTest extends TestCase
             'order_source_id',
             'order_source_name',
             'pancake_order_id',
+            'prepaid_amount',
             'province_name',
             'shop',
             'shop_id',
@@ -378,6 +385,7 @@ class OrderSourceApiTest extends TestCase
 
         $nullOrder = $this->createOrder($ownShop, [
             'pancake_order_id' => 'SUMMARY-NULL-VALUES',
+            'pancake_full_data' => [],
             'customer_phone' => null,
             'customer_address' => null,
             'note' => null,
@@ -399,7 +407,7 @@ class OrderSourceApiTest extends TestCase
             return str_contains($sql, 'from "orders"') && str_contains($sql, ' limit ');
         });
         $this->assertNotNull($mainSelect);
-        $this->assertStringNotContainsString('pancake_full_data', strtolower($mainSelect['query']));
+        $this->assertStringNotContainsString('select "pancake_full_data",', strtolower($mainSelect['query']));
     }
 
     public function test_summary_preserves_staff_creator_or_care_scope(): void
