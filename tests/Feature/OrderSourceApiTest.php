@@ -311,7 +311,7 @@ class OrderSourceApiTest extends TestCase
             'status' => 4,
             'status_vtp' => 'DELIVERING',
             'user_creator_id' => $creator->pancake_user_id,
-            'pancake_full_data' => ['prepaid' => 7440000, 'large' => ['legacy' => true]],
+            'pancake_full_data' => ['prepaid' => 7440000, 'shipping_fee' => 25000, 'large' => ['legacy' => true]],
         ]);
         $province = Province::query()->create([
             'name' => 'Ho Chi Minh',
@@ -338,6 +338,7 @@ class OrderSourceApiTest extends TestCase
             ->assertJsonPath('data.total_items', 1)
             ->assertJsonPath('data.orders.0.id', $order->id)
             ->assertJsonPath('data.orders.0.prepaid_amount', 7440000)
+            ->assertJsonPath('data.orders.0.shipping_fee', 25000)
             ->assertJsonPath('data.orders.0.cash', 100000)
             ->assertJsonPath('data.orders.0.customer_phone', '+84901234567')
             ->assertJsonPath('data.orders.0.customer_address', '123 Example Street')
@@ -368,6 +369,7 @@ class OrderSourceApiTest extends TestCase
             'pancake_order_id',
             'prepaid_amount',
             'province_name',
+            'shipping_fee',
             'shop',
             'shop_id',
             'status',

@@ -24,9 +24,21 @@ class OrderController extends Controller
         $user = $request->user();
         $isSummaryView = $request->query('view') === 'summary';
         $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            // A list view never needs an unbounded response.  Apart from
+            // increasing response time, a large value causes Eloquent to
+            // hydrate far more rows than the screen can render.
+            'page_size' => ['nullable', 'integer', 'min:1', 'max:100'],
             'order_page_id' => ['nullable', 'string', 'max:255'],
             'cod' => ['nullable', 'numeric', 'min:0'],
+            // The list can be returned before its expensive aggregate is
+            // calculated. This keeps the table responsive on large local
+            // databases while retaining the existing response by default.
+            'include_totals' => ['nullable', 'boolean'],
+            'totals_only' => ['nullable', 'boolean'],
         ]);
+        $includeTotals = $request->boolean('include_totals', true);
+        $totalsOnly = $request->boolean('totals_only');
         $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
             $user,
             $request->filled('shop_id') ? $request->integer('shop_id') : null
@@ -138,6 +150,7 @@ class OrderController extends Controller
                     'cod',
                     'cash',
                     'pancake_full_data->prepaid as prepaid_amount',
+                    'pancake_full_data->shipping_fee as shipping_fee',
                     'customer_name',
                     'customer_phone',
                     'customer_address',
@@ -187,17 +200,39 @@ class OrderController extends Controller
             if ($isSummaryView) {
                 $pageNumber = max((int) ($inputs['page'] ?? 1), 1);
                 $pageSize = max((int) ($inputs['page_size'] ?? 30), 1);
-                $summaryTotals = (clone $query)->toBase()
-                    ->cloneWithout(['columns', 'orders'])
-                    ->cloneWithoutBindings(['select', 'order'])
-                    ->selectRaw("COUNT(*) AS total_items, {$revenueExpression} AS total_revenue")
-                    ->first();
-                $orderItems = $query->latest('created_at')
-                    ->forPage($pageNumber, $pageSize)
-                    ->get();
-                $totalItems = (int) $summaryTotals->total_items;
-                $totalPages = max(1, (int) ceil($totalItems / $pageSize));
-                $totalRevenue = $summaryTotals->total_revenue;
+                $summaryTotals = null;
+
+                if ($includeTotals || $totalsOnly) {
+                    // Do this only when the caller needs it: SUM over a JSON
+                    // field must inspect every matching order and was holding
+                    // up the first render of the list.
+                    $summaryTotals = (clone $query)->toBase()
+                        ->cloneWithout(['columns', 'orders'])
+                        ->cloneWithoutBindings(['select', 'order'])
+                        ->selectRaw("COUNT(*) AS total_items, {$revenueExpression} AS total_revenue")
+                        ->first();
+                }
+
+                if ($totalsOnly) {
+                    $orderItems = [];
+                } else {
+                    // Read one extra record instead of running COUNT(*) while
+                    // the table is loading. The client uses it only until the
+                    // totals request has completed.
+                    $orderItems = $query->latest('created_at')
+                        ->forPage($pageNumber, $includeTotals ? $pageSize : $pageSize + 1)
+                        ->get();
+                }
+
+                $hasMore = ! $includeTotals && ! $totalsOnly && $orderItems->count() > $pageSize;
+                if ($hasMore) {
+                    $orderItems = $orderItems->take($pageSize)->values();
+                }
+                $totalItems = $summaryTotals === null ? null : (int) $summaryTotals->total_items;
+                $totalPages = $summaryTotals === null
+                    ? null
+                    : max(1, (int) ceil($totalItems / $pageSize));
+                $totalRevenue = $summaryTotals?->total_revenue;
 
                 foreach ($orderItems as $order) {
                     $userCreator = $order->getRelation('user_creator');
@@ -206,7 +241,7 @@ class OrderController extends Controller
                     }
                 }
             } else {
-                $pageNumber = $inputs['page'];
+                $pageNumber = $inputs['page'] ?? 1;
                 $pageSize = $inputs['page_size'] ?? 30;
                 $totalRevenue = (clone $query)->sum(DB::raw("COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0)"));
                 $orders = $query->latest('created_at')->paginate($pageSize, ['*'], 'page', $pageNumber);
@@ -226,6 +261,9 @@ class OrderController extends Controller
                     'total_items' => $totalItems,
                     'total_pages' => $totalPages,
                     'total_revenue' => $totalRevenue,
+                    'has_more' => $isSummaryView && ! $includeTotals && ! $totalsOnly
+                        ? $hasMore
+                        : null,
                 ],
             ]);
         } catch (\Throwable $th) {
