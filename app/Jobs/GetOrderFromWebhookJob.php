@@ -130,7 +130,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     }
                 }
 
-                if ($isNewOrder && $result['status'] != 3) {
+                if ($isNewOrder && $order->status != 3) {
                     AddCustomerCareJob::dispatch(
                         $shop->id,
                         $shop->care_cycle_days,

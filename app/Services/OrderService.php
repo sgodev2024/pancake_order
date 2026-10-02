@@ -34,7 +34,7 @@ class OrderService
                 ->first();
         }
 
-        return [
+        $result = [
             'shop_id' => $shop_id,
             'province_id' => ! empty($province) ? $province->id : null,
             'order_number_vtp' => $data_item['partner']['order_number_vtp'] ?? null,
@@ -45,21 +45,38 @@ class OrderService
             'pancake_order_page_name' => OrderPageNormalizer::name($data_item),
             'total_quantity' => $total_quantity,
             'cod' => $data_item['cod'] ?? 0,
-            'discount_percent' => get_discount_by_customer($data_item['customer']['id']),
             'cash' => $data_item['cash'] ?? 0,
             'note' => $data_item['note'] ?? null,
             'user_creator_id' => $data_item['creator']['id'] ?? $data_item['assigning_seller']['id'] ?? $data_item['assigning_care']['id'] ?? null,
             'user_care_id' => $data_item['assigning_care']['id'] ?? null,
             'user_assigning_seller_id' => $data_item['assigning_seller']['id'] ?? null,
             'pancake_customer_id' => $data_item['customer']['customer_id'] ?? null,
-            'status' => $data_item['status'],
             'pancake_full_data' => json_encode($data_item),
-            'received_at_shop' => $data_item['received_at_shop'],
-            'customer_name' => get_customer_name($data_item),
             'customer_phone' => $data_item['bill_phone_number'] ?? null,
             'customer_address' => $data_item['shipping_address']['full_address'] ?? null,
             'created_at' => $created_at,
             'updated_at' => $updated_at,
         ];
+
+        // Webhook can be a partial payload. Only update these fields
+        // when Pancake actually sends them.
+        if (! empty($data_item['customer']['id'])) {
+            $result['discount_percent'] = get_discount_by_customer($data_item['customer']['id']);
+        }
+
+        if (array_key_exists('status', $data_item)) {
+            $result['status'] = $data_item['status'];
+        }
+
+        if (array_key_exists('received_at_shop', $data_item)) {
+            $result['received_at_shop'] = $data_item['received_at_shop'];
+        }
+
+        $customerName = get_customer_name($data_item);
+        if ($customerName !== null && $customerName !== '') {
+            $result['customer_name'] = $customerName;
+        }
+
+        return $result;
     }
 }
