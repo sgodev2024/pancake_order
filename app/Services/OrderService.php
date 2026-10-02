@@ -13,8 +13,21 @@ class OrderService
         if (! empty($data_item['items'])) {
             $total_quantity = collect($data_item['items'])->sum('quantity');
         }
-        $created_at = Carbon::parse($data_item['inserted_at'], 'UTC')->setTimezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s');
-        $updated_at = Carbon::parse($data_item['updated_at'], 'UTC')->setTimezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s');
+        $insertedAt = $data_item['inserted_at']
+            ?? $data_item['created_at']
+            ?? $data_item['updated_at']
+            ?? null;
+
+        $updatedAt = $data_item['updated_at']
+            ?? $insertedAt;
+
+        $created_at = $insertedAt
+            ? Carbon::parse($insertedAt, 'UTC')->setTimezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s')
+            : null;
+
+        $updated_at = $updatedAt
+            ? Carbon::parse($updatedAt, 'UTC')->setTimezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s')
+            : $created_at;
         if (! empty($data_item['shipping_address']['province_id'])) {
             $province = Province::where('id', $data_item['shipping_address']['province_id'])
                 ->orWhere('new_id', $data_item['shipping_address']['province_id'])
