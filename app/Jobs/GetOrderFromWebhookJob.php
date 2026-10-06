@@ -36,25 +36,28 @@ class GetOrderFromWebhookJob implements ShouldQueue
     ): void {
         try {
             if (empty($this->data['shop_id'])) {
+                \App\Services\WebhookMonitor::record('skipped', null, 'Thiếu shop_id');
                 Log::channel('pancake-webhook-error')->info('=================not found shop_id==============');
                 Log::channel('pancake-webhook-error')->info($this->data);
 
                 return;
             }
 
-            DB::transaction(function () use ($eventWriter, $orderCreatedEventWriter): void {
+            $saved = DB::transaction(function () use ($eventWriter, $orderCreatedEventWriter) {
                 $pancakeShopId = $this->data['shop_id'];
                 $shop = Shop::where('pancake_shop_id', $pancakeShopId)->first();
 
                 if (! $shop) {
-                    return;
+                    \App\Services\WebhookMonitor::record('skipped', $pancakeShopId, 'Shop chưa được cấu hình');
+                    return false;
                 }
 
                 $orderService = new OrderService;
                 $result = $orderService->getOrderItem($this->data, $shop->id);
 
                 if (empty($result['order_number_vtp'])) {
-                    return;
+                    \App\Services\WebhookMonitor::record('skipped', $pancakeShopId, 'Đơn không có mã vận đơn VTP');
+                    return false;
                 }
 
                 $result['pancake_full_data'] = json_decode($result['pancake_full_data'], true); // format lại vì dùng create/update
@@ -149,12 +152,16 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $order->user_assigning_seller_id
                     )->onQueue('add-customer-care')->afterCommit();
                 }
+                return true;
             });
+            if ($saved) \App\Services\WebhookMonitor::record('processed', $this->data['shop_id']);
 
             Log::channel('pancake-webhook-success')->info('=================Thành công GetOrderFromWebhookJob==============');
 
             return;
         } catch (\Throwable $th) {
+            $reason = $th instanceof \Illuminate\Database\QueryException ? 'Lỗi cơ sở dữ liệu' : (str_starts_with($th->getMessage(), 'Undefined array key') ? $th->getMessage() : 'Xử lý thất bại: '.get_class($th));
+            \App\Services\WebhookMonitor::record('error', $this->data['shop_id'] ?? null, $reason);
             Log::channel('pancake-webhook-error')->info('=================Lỗi GetOrderFromWebhookJob==============');
             Log::channel('pancake-webhook-error')->info($th->getMessage());
             Log::channel('pancake-webhook-error')->info($this->data);

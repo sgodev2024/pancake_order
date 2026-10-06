@@ -95,6 +95,9 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('order-pages', [OrderPageController::class, 'index']);
     Route::apiResource('orders', OrderController::class);
 
+    Route::post('webhook-monitor/cleanup', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'cleanup'])->middleware(AdminOnlyMiddleware::class);
+    Route::get('webhook-monitor', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'index'])->middleware(AdminOnlyMiddleware::class);
+
     Route::get('activity-logs', [ActivityLogController::class, 'index'])
         ->middleware(AdminOnlyMiddleware::class);
 
