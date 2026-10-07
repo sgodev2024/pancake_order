@@ -10,8 +10,10 @@ use App\Services\OrderCreatedEventWriter;
 use App\Services\OrderService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class GetOrderFromWebhookJob implements ShouldQueue
 {
@@ -54,6 +56,9 @@ class GetOrderFromWebhookJob implements ShouldQueue
 
                 $orderService = new OrderService;
                 $result = $orderService->getOrderItem($this->data, $shop->id);
+                if (Schema::hasColumn('orders', 'prepaid_amount')) {
+                    $result['prepaid_amount'] = $this->data['prepaid'] ?? 0;
+                }
 
                 if (empty($result['order_number_vtp'])) {
                     \App\Services\WebhookMonitor::record('skipped', $pancakeShopId, 'Đơn không có mã vận đơn VTP');
@@ -70,16 +75,27 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     ->first();
                 $customer = $this->data['customer'] ?? [];
                 $customerId = $customer['customer_id'] ?? null;
+                $hasLastOrderAt = Schema::hasColumn('customers', 'last_order_at');
+                $lastOrderAt = Carbon::parse(
+                    $customer['last_order_at']
+                        ?? $this->data['inserted_at']
+                        ?? $this->data['created_at']
+                        ?? now()
+                );
+                $customerColumns = ['id', 'phone_numbers', 'pancake_customer_id', 'name', 'shop_id'];
+                if ($hasLastOrderAt) {
+                    $customerColumns[] = 'last_order_at';
+                }
                 $customerExist = $customerId === null
                     ? null
-                    : Customer::select('id', 'phone_numbers', 'pancake_customer_id', 'name', 'shop_id')
+                    : Customer::select($customerColumns)
                         ->where('shop_id', $shop->id)
                         ->where('pancake_customer_id', $customerId)
                         ->first();
 
                 if (! $customerExist && $customerId !== null) {
                     $acquisitionChannel = $this->acquisitionChannel($customer);
-                    $newCustomer = Customer::create([
+                    $newCustomerData = [
                         'order_count' => $customer['order_count'] ?? 0,
                         'assigned_user_id' => $this->data['assigning_care_id'] ?? null,
                         'shop_id' => $shop->id,
@@ -92,7 +108,11 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             ? $this->data['bill_phone_number']
                             : implode(',', ($customer['phone_numbers'] ?? [])),
                         'pancake_full_data' => $customer,
-                    ]);
+                    ];
+                    if ($hasLastOrderAt) {
+                        $newCustomerData['last_order_at'] = $lastOrderAt;
+                    }
+                    $newCustomer = Customer::create($newCustomerData);
 
                     $eventWriter->write(
                         $newCustomer,
@@ -102,14 +122,20 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     );
                     $customerExist = $newCustomer;
                 } elseif ($customerExist) {
-                    $customerExist->update([
+                    $customerUpdates = [
                         'order_count' => $customer['order_count'] ?? $customerExist->order_count,
                         'assigned_user_id' => $customer['assigned_user_id'] ?? null,
                         'name' => $customer['name'] ?? $customerExist->name,
                         'loyalty_tier_id' => get_loyalty_tier($customer['purchased_amount'] ?? 0),
                         'purchased_amount' => $customer['purchased_amount'] ?? $customerExist->purchased_amount,
                         'phone_numbers' => $this->data['bill_phone_number'] ?? $customerExist->phone_numbers,
-                    ]);
+                    ];
+                    if ($hasLastOrderAt) {
+                        $customerUpdates['last_order_at'] = $customerExist->last_order_at?->greaterThan($lastOrderAt)
+                            ? $customerExist->last_order_at
+                            : $lastOrderAt;
+                    }
+                    $customerExist->update($customerUpdates);
                 }
 
                 $isNewOrder = $order === null;

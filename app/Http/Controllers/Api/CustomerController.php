@@ -141,6 +141,200 @@ class CustomerController extends Controller implements HasMiddleware
         }
     }
 
+    /**
+     * Customer purchase recency used only by the Customers tab inside Orders.
+     * Keep this contract separate from the existing customer list so its
+     * filters and response shape remain backward compatible.
+     */
+    public function orderInsights(Request $request)
+    {
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'page_size' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'shop_id' => ['nullable', 'integer', 'min:1'],
+            'search' => ['nullable', 'string', 'max:255'],
+            'inactivity_group' => ['nullable', 'string', 'in:all,0_7,8_14,15_30,0_30,31_60,61_90,over_90,never'],
+            'sort_by' => ['nullable', 'string', 'in:last_purchase_at,inactive_days,total_orders,total_value'],
+            'sort_direction' => ['nullable', 'string', 'in:asc,desc'],
+        ]);
+
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+
+        try {
+            $query = Customer::query();
+
+            if ($requestedShopId !== null) {
+                $query->where('customers.shop_id', $requestedShopId);
+            } elseif (! $this->shopAccessService->isGlobal($user)) {
+                $query->whereIn('customers.shop_id', $this->shopAccessService->ids($user));
+            }
+
+            if (! $this->shopAccessService->isGlobal($user)) {
+                $this->customerReadAccessService->applyRecordScope($query, $user, 'customers.assigned_user_id');
+            }
+
+            if ($request->filled('search')) {
+                $search = trim((string) $validated['search']);
+                $query->where(function ($searchQuery) use ($search) {
+                    $searchQuery
+                        ->where('customers.name', 'like', "{$search}%")
+                        ->orWhere('customers.phone_numbers', 'like', "{$search}%")
+                        ->orWhere('customers.pancake_customer_id', 'like', "{$search}%")
+                        ->orWhereRaw(
+                            "CAST(JSON_EXTRACT(customers.pancake_full_data, '$.emails') AS CHAR) LIKE ?",
+                            ["%{$search}%"]
+                        );
+                });
+            }
+
+            $overviewRow = (clone $query)
+                ->selectRaw('COUNT(customers.id) AS total_customers')
+                ->selectRaw('COALESCE(SUM(CASE WHEN customers.last_order_at IS NOT NULL AND TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 0 AND 7 THEN 1 ELSE 0 END), 0) AS days_0_7')
+                ->selectRaw('COALESCE(SUM(CASE WHEN TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 8 AND 14 THEN 1 ELSE 0 END), 0) AS days_8_14')
+                ->selectRaw('COALESCE(SUM(CASE WHEN TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 15 AND 30 THEN 1 ELSE 0 END), 0) AS days_15_30')
+                ->selectRaw('COALESCE(SUM(CASE WHEN customers.last_order_at IS NOT NULL AND TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 0 AND 30 THEN 1 ELSE 0 END), 0) AS days_0_30')
+                ->selectRaw('COALESCE(SUM(CASE WHEN TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 31 AND 60 THEN 1 ELSE 0 END), 0) AS days_31_60')
+                ->selectRaw('COALESCE(SUM(CASE WHEN TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 61 AND 90 THEN 1 ELSE 0 END), 0) AS days_61_90')
+                ->selectRaw('COALESCE(SUM(CASE WHEN TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) > 90 THEN 1 ELSE 0 END), 0) AS over_90')
+                ->selectRaw('COALESCE(SUM(CASE WHEN customers.last_order_at IS NULL THEN 1 ELSE 0 END), 0) AS never_purchased')
+                ->first();
+
+            $overview = [
+                'total_customers' => (int) $overviewRow->total_customers,
+                'days_0_7' => (int) $overviewRow->days_0_7,
+                'days_8_14' => (int) $overviewRow->days_8_14,
+                'days_15_30' => (int) $overviewRow->days_15_30,
+                'days_0_30' => (int) $overviewRow->days_0_30,
+                'days_31_60' => (int) $overviewRow->days_31_60,
+                'days_61_90' => (int) $overviewRow->days_61_90,
+                'over_90' => (int) $overviewRow->over_90,
+                'never_purchased' => (int) $overviewRow->never_purchased,
+            ];
+            $group = $validated['inactivity_group'] ?? 'all';
+            match ($group) {
+                '0_7' => $query->whereRaw('TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 0 AND 7'),
+                '8_14' => $query->whereRaw('TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 8 AND 14'),
+                '15_30' => $query->whereRaw('TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 15 AND 30'),
+                '0_30' => $query->whereRaw('TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 0 AND 30'),
+                '31_60' => $query->whereRaw('TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 31 AND 60'),
+                '61_90' => $query->whereRaw('TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) BETWEEN 61 AND 90'),
+                'over_90' => $query->whereRaw('TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE) > 90'),
+                'never' => $query->whereNull('customers.last_order_at'),
+                default => null,
+            };
+
+            $sortBy = $validated['sort_by'] ?? 'inactive_days';
+            $sortDirection = $validated['sort_direction'] ?? 'desc';
+            $pageSize = (int) ($validated['page_size'] ?? 30);
+            $pageNumber = (int) ($validated['page'] ?? 1);
+            $totalItems = match ($group) {
+                '0_7' => $overview['days_0_7'],
+                '8_14' => $overview['days_8_14'],
+                '15_30' => $overview['days_15_30'],
+                '0_30' => $overview['days_0_30'],
+                '31_60' => $overview['days_31_60'],
+                '61_90' => $overview['days_61_90'],
+                'over_90' => $overview['over_90'],
+                'never' => $overview['never_purchased'],
+                default => $overview['total_customers'],
+            };
+
+            $query
+                ->leftJoin('shops', 'shops.id', '=', 'customers.shop_id')
+                ->leftJoin('loyalty_tiers', 'loyalty_tiers.id', '=', 'customers.loyalty_tier_id')
+                ->select([
+                    'customers.id',
+                    'customers.shop_id',
+                    'customers.pancake_customer_id',
+                    'customers.name',
+                    'customers.phone_numbers',
+                    'customers.purchased_amount',
+                    'customers.order_count',
+                    'customers.loyalty_tier_id',
+                    'customers.created_at',
+                    'shops.name AS shop_name',
+                    'loyalty_tiers.name AS loyalty_tier_name',
+                    'loyalty_tiers.discount_percent AS loyalty_discount_percent',
+                ])
+                ->selectRaw('COALESCE(customers.order_count, 0) AS total_orders')
+                ->selectRaw('customers.last_order_at AS last_purchase_at')
+                ->selectRaw('CASE WHEN customers.last_order_at IS NULL THEN NULL ELSE GREATEST(0, TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE)) END AS inactive_days')
+                ->selectRaw('COALESCE(customers.purchased_amount, 0) AS total_value');
+
+            if ($sortBy === 'inactive_days') {
+                $query->orderByRaw('customers.last_order_at IS NULL ASC')
+                    ->orderBy('customers.last_order_at', $sortDirection === 'desc' ? 'asc' : 'desc');
+            } elseif ($sortBy === 'last_purchase_at') {
+                $query->orderByRaw('customers.last_order_at IS NULL ASC')
+                    ->orderBy('customers.last_order_at', $sortDirection);
+            } elseif ($sortBy === 'total_orders') {
+                $query->orderBy('customers.order_count', $sortDirection);
+            } else {
+                $query->orderBy('customers.purchased_amount', $sortDirection);
+            }
+
+            $rows = $query
+                ->orderByDesc('customers.id')
+                ->forPage($pageNumber, $pageSize)
+                ->get();
+
+            // Keep the window/sort query narrow. The original customer JSON is
+            // large, so load it only for the current page after pagination.
+            $profiles = Customer::query()
+                ->whereIn('id', $rows->pluck('id')->map(fn ($id) => (int) $id))
+                ->get(['id', 'pancake_full_data'])
+                ->keyBy('id');
+
+            $customers = $rows->map(function ($row) use ($profiles) {
+                $payload = $profiles->get((int) $row->id)?->pancake_full_data;
+                $customer = $row->toArray();
+                foreach (array_keys($customer) as $key) {
+                    if (str_starts_with($key, 'overview_') || $key === 'filtered_total') {
+                        unset($customer[$key]);
+                    }
+                }
+                $customer['pancake_full_data'] = is_array($payload) ? $payload : [];
+                $customer['shop'] = $row->shop_id === null ? null : [
+                    'id' => (int) $row->shop_id,
+                    'name' => $row->shop_name,
+                ];
+                $customer['loyalty_tier'] = $row->loyalty_tier_id === null ? null : [
+                    'id' => (int) $row->loyalty_tier_id,
+                    'name' => $row->loyalty_tier_name,
+                    'discount_percent' => $row->loyalty_discount_percent,
+                ];
+                unset(
+                    $customer['shop_name'],
+                    $customer['loyalty_tier_name'],
+                    $customer['loyalty_discount_percent']
+                );
+
+                return $customer;
+            })->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'customers' => $customers,
+                    'overview' => $overview,
+                    'current_page' => $pageNumber,
+                    'per_page' => $pageSize,
+                    'total_items' => $totalItems,
+                    'total_pages' => max(1, (int) ceil($totalItems / $pageSize)),
+                ],
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Đã có lỗi xảy ra: '.$th->getMessage(),
+            ], 500);
+        }
+    }
+
     /** @param array<string, mixed> $filters */
     private function authorizeCareUserFilter(User $actor, ?int $requestedShopId, array $filters): void
     {
@@ -165,6 +359,10 @@ class CustomerController extends Controller implements HasMiddleware
             $actor = $request->user();
             $pageNumber = $request->integer('page_number', 1);
             $pageSize = 10;
+            $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+                $actor,
+                $request->filled('shop_id') ? $request->integer('shop_id') : null
+            );
 
             $ordersQuery = Order::query()
                 ->where('pancake_customer_id', $pancake_customer_id)
@@ -196,6 +394,9 @@ class CustomerController extends Controller implements HasMiddleware
                     'user_assigning_seller_id',
                 ]);
 
+            if ($requestedShopId !== null) {
+                $ordersQuery->where('shop_id', $requestedShopId);
+            }
             if (! $this->shopAccessService->isGlobal($actor)) {
                 $ordersQuery->whereIn('shop_id', $this->shopAccessService->ids($actor));
                 $this->applyOrderRecordScope($ordersQuery, $actor);

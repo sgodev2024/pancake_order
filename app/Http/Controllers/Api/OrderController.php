@@ -3,10 +3,13 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\Province;
 use App\Services\ShopAccessService;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -107,6 +110,9 @@ class OrderController extends Controller
                     $query->where('orders.status', $inputs['status']);
                 }
             }
+            // Snapshot before the date window so the trend can compare the
+            // previous period and the same period last year in one pass.
+            $trendBase = clone $query;
             if (isset($inputs['date_from'])) {
                 $query->where('created_at', '>=', $inputs['date_from'].' 00:00:00');
             }
@@ -196,6 +202,31 @@ class OrderController extends Controller
 
             $prepaidColumn = $query->getQuery()->getGrammar()->wrap('orders.pancake_full_data->prepaid');
             $revenueExpression = "COALESCE(SUM(COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0)), 0)";
+            $prepaidAmountExpression = Schema::hasColumn('orders', 'prepaid_amount')
+                ? 'COALESCE(SUM(COALESCE(orders.prepaid_amount, 0)), 0)'
+                : '0';
+            // Counts and COD money only touch indexed columns. The prepaid JSON
+            // sum reads every order document and was leaving the overview stuck.
+            $overviewExpression = <<<'SQL'
+COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_cod,
+COALESCE(SUM(CASE WHEN orders.status IN (2, 8, 9) THEN 1 ELSE 0 END), 0) AS shipping_count,
+COALESCE(SUM(CASE WHEN orders.status IN (2, 8, 9) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS shipping_amount,
+COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN 1 ELSE 0 END), 0) AS success_count,
+COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS success_amount,
+COALESCE(SUM(CASE WHEN orders.status IN (6, 7) THEN 1 ELSE 0 END), 0) AS cancel_count,
+COALESCE(SUM(CASE WHEN orders.status IN (6, 7) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS cancel_amount,
+COALESCE(SUM(CASE WHEN orders.status IN (4, 5, 15) THEN 1 ELSE 0 END), 0) AS return_count,
+COALESCE(SUM(CASE WHEN orders.status IN (4, 5, 15) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS return_amount,
+COALESCE(SUM(CASE WHEN orders.status NOT IN (2, 3, 4, 5, 6, 7, 8, 9, 15, 16) THEN 1 ELSE 0 END), 0) AS pending_count,
+COALESCE(SUM(CASE WHEN orders.status NOT IN (2, 3, 4, 5, 6, 7, 8, 9, 15, 16) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS pending_amount
+SQL;
+            $statusBreakdown = null;
+            $successOrderCount = null;
+            $successAmount = null;
+            $totalPrepaidAmount = null;
+            $overdueCustomerCount = null;
+            $trendPayload = null;
+            $comparePayload = null;
 
             if ($isSummaryView) {
                 $pageNumber = max((int) ($inputs['page'] ?? 1), 1);
@@ -203,14 +234,28 @@ class OrderController extends Controller
                 $summaryTotals = null;
 
                 if ($includeTotals || $totalsOnly) {
-                    // Do this only when the caller needs it: SUM over a JSON
-                    // field must inspect every matching order and was holding
-                    // up the first render of the list.
+                    // The overview request must stay on real columns. Parsing
+                    // prepaid out of pancake_full_data does not finish on the
+                    // full order table, so that sum stays on the smaller path.
+                    $revenueSelect = $totalsOnly
+                        ? 'COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_revenue'
+                        : "{$revenueExpression} AS total_revenue";
                     $summaryTotals = (clone $query)->toBase()
                         ->cloneWithout(['columns', 'orders'])
                         ->cloneWithoutBindings(['select', 'order'])
-                        ->selectRaw("COUNT(*) AS total_items, {$revenueExpression} AS total_revenue")
+                        ->selectRaw("COUNT(*) AS total_items, {$revenueSelect}, {$overviewExpression}, {$prepaidAmountExpression} AS total_prepaid_amount")
                         ->first();
+                }
+
+                if ($totalsOnly && $summaryTotals !== null) {
+                    $statusBreakdown = $this->statusBreakdown($summaryTotals);
+                    $successOrderCount = (int) $summaryTotals->success_count;
+                    $successAmount = $summaryTotals->success_amount;
+                    $totalPrepaidAmount = $summaryTotals->total_prepaid_amount;
+                    $overdueCustomerCount = $this->overdueCustomerCount($requestedShopId, $user);
+                    $trend = $this->deliveryTrend($trendBase, $inputs);
+                    $trendPayload = $trend['series'];
+                    $comparePayload = $trend['compare'];
                 }
 
                 if ($totalsOnly) {
@@ -261,6 +306,13 @@ class OrderController extends Controller
                     'total_items' => $totalItems,
                     'total_pages' => $totalPages,
                     'total_revenue' => $totalRevenue,
+                    'success_order_count' => $successOrderCount,
+                    'success_amount' => $successAmount,
+                    'total_prepaid_amount' => $totalPrepaidAmount,
+                    'overdue_customer_count' => $overdueCustomerCount,
+                    'status_breakdown' => $statusBreakdown,
+                    'trend' => $trendPayload,
+                    'compare' => $comparePayload,
                     'has_more' => $isSummaryView && ! $includeTotals && ! $totalsOnly
                         ? $hasMore
                         : null,
@@ -484,5 +536,169 @@ class OrderController extends Controller
                 ],
             'products' => $products,
         ];
+    }
+
+    private function statusBreakdown(object $totals): array
+    {
+        return [
+            ['key' => 'shipping', 'label' => 'Đang giao', 'count' => (int) $totals->shipping_count, 'amount' => $totals->shipping_amount],
+            ['key' => 'success', 'label' => 'Giao thành công', 'count' => (int) $totals->success_count, 'amount' => $totals->success_amount],
+            ['key' => 'cancel', 'label' => 'Hủy', 'count' => (int) $totals->cancel_count, 'amount' => $totals->cancel_amount],
+            ['key' => 'return', 'label' => 'Hoàn', 'count' => (int) $totals->return_count, 'amount' => $totals->return_amount],
+            ['key' => 'pending', 'label' => 'Chưa giao / đang xử lý', 'count' => (int) $totals->pending_count, 'amount' => $totals->pending_amount],
+        ];
+    }
+
+    private function overdueCustomerCount(?int $shopId, $user): ?int
+    {
+        try {
+            if (! Schema::hasTable('customer_cares')) {
+                return null;
+            }
+
+            $query = CustomerCare::query()
+                ->where('status', 0)
+                ->whereDate('date_care', '<', now()->toDateString());
+
+            if ($shopId !== null) {
+                $query->where('shop_id', $shopId);
+            } elseif (! $this->shopAccessService->isGlobal($user)) {
+                $query->whereIn('shop_id', $this->shopAccessService->ids($user));
+            }
+
+            return (int) $query->count();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Successful-delivery value split into 30 equal slices of the selected
+     * window, plus the previous window and the same window last year.
+     */
+    private function deliveryTrend($baseQuery, array $inputs): array
+    {
+        $hasRange = isset($inputs['date_from'], $inputs['date_to'])
+            && $inputs['date_from'] !== ''
+            && $inputs['date_to'] !== '';
+
+        $trendQuery = clone $baseQuery;
+        $currentStart = null;
+        $currentEnd = null;
+        $previousStart = null;
+        $previousEnd = null;
+        $yearStart = null;
+        $yearEnd = null;
+
+        if ($hasRange) {
+            $currentStart = Carbon::parse($inputs['date_from'])->startOfDay();
+            $currentEnd = Carbon::parse($inputs['date_to'])->startOfDay();
+            if ($currentStart->greaterThan($currentEnd)) {
+                [$currentStart, $currentEnd] = [$currentEnd->copy(), $currentStart->copy()];
+            }
+            $dayCount = (int) $currentStart->diffInDays($currentEnd) + 1;
+            $previousEnd = $currentStart->copy()->subDay();
+            $previousStart = $previousEnd->copy()->subDays($dayCount - 1);
+            $yearStart = $currentStart->copy()->subYear();
+            $yearEnd = $currentEnd->copy()->subYear();
+            $fetchStart = $previousStart->lessThan($yearStart) ? $previousStart->copy() : $yearStart->copy();
+            $trendQuery
+                ->where('orders.created_at', '>=', $fetchStart->toDateTimeString())
+                ->where('orders.created_at', '<=', $currentEnd->copy()->endOfDay()->toDateTimeString());
+        }
+
+        $rows = $trendQuery
+            ->toBase()
+            ->cloneWithout(['columns', 'orders'])
+            ->cloneWithoutBindings(['select', 'order'])
+            ->selectRaw("DATE(orders.created_at) AS day, COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS success_amount, COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_cod")
+            ->groupByRaw('DATE(orders.created_at)')
+            ->get();
+
+        $byDay = [];
+        foreach ($rows as $row) {
+            $byDay[(string) $row->day] = $row;
+        }
+
+        if (! $hasRange) {
+            $days = array_keys($byDay);
+            sort($days);
+            $currentStart = $days === [] ? now()->startOfDay() : Carbon::parse($days[0])->startOfDay();
+            $currentEnd = $days === [] ? $currentStart->copy() : Carbon::parse($days[array_key_last($days)])->startOfDay();
+        }
+
+        $current = $this->bucketWindow($byDay, $currentStart, $currentEnd);
+        $previous = $hasRange ? $this->bucketWindow($byDay, $previousStart, $previousEnd) : null;
+        $year = $hasRange ? $this->bucketWindow($byDay, $yearStart, $yearEnd) : null;
+
+        return [
+            'series' => [
+                'labels' => $current['labels'],
+                'current' => $current['success'],
+                'previous' => $previous['success'] ?? [],
+                'previous_year' => $year['success'] ?? [],
+            ],
+            'compare' => $hasRange ? [
+                'created_vs_previous' => $this->percentChange($current['total'], $previous['total']),
+                'created_vs_year' => $this->percentChange($current['total'], $year['total']),
+                'success_vs_previous' => $this->percentChange($current['success_total'], $previous['success_total']),
+                'success_vs_year' => $this->percentChange($current['success_total'], $year['success_total']),
+            ] : null,
+        ];
+    }
+
+    private function bucketWindow(array $byDay, Carbon $start, Carbon $end): array
+    {
+        $startDay = $start->copy()->startOfDay();
+        $endDay = $end->copy()->startOfDay();
+        if ($startDay->greaterThan($endDay)) {
+            [$startDay, $endDay] = [$endDay->copy(), $startDay->copy()];
+        }
+
+        $dayCount = max(1, (int) $startDay->diffInDays($endDay) + 1);
+        $bucketCount = 30;
+        $labels = [];
+        $success = array_fill(0, $bucketCount, 0.0);
+        $total = 0.0;
+        $successTotal = 0.0;
+
+        for ($index = 0; $index < $bucketCount; $index++) {
+            $fromOffset = intdiv($index * $dayCount, $bucketCount);
+            $toOffset = intdiv(($index + 1) * $dayCount, $bucketCount) - 1;
+            if ($toOffset < $fromOffset) {
+                $toOffset = $fromOffset;
+            }
+
+            $from = $startDay->copy()->addDays($fromOffset);
+            $to = $startDay->copy()->addDays($toOffset);
+            $labels[] = $from->format('d/m');
+            $cursor = $from->copy();
+            while ($cursor->lte($to)) {
+                $row = $byDay[$cursor->toDateString()] ?? null;
+                if ($row !== null) {
+                    $success[$index] += (float) $row->success_amount;
+                    $total += (float) $row->total_cod;
+                    $successTotal += (float) $row->success_amount;
+                }
+                $cursor->addDay();
+            }
+        }
+
+        return [
+            'labels' => $labels,
+            'success' => $success,
+            'total' => $total,
+            'success_total' => $successTotal,
+        ];
+    }
+
+    private function percentChange(float|int|string|null $current, float|int|string|null $previous): ?float
+    {
+        $baseline = (float) $previous;
+        if ($baseline == 0.0) {
+            return null;
+        }
+
+        return round((((float) $current) - $baseline) / $baseline * 100, 1);
     }
 }

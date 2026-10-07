@@ -110,11 +110,13 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 
     Route::get('customers/{customer}/journey', [CustomerJourneyController::class, 'show'])
         ->middleware(PermissionCheckMiddleware::class.':list-customer,strict');
+    Route::get('customers/order-insights', [CustomerController::class, 'orderInsights']);
     Route::apiResource('customers', CustomerController::class);
     Route::get('customers/{pancake_customer_id}/orders', [CustomerController::class, 'getOrder']);
 
     Route::apiResource('products', ProductController::class);
 
+    Route::get('users/weekly-revenue', [UserController::class, 'weeklyRevenue']);
     Route::get('users/mornitoring', [UserController::class, 'getMornitoring']);
     Route::get('users/all-user', [UserController::class, 'getAllUser'])
         ->middleware(AdminOnlyMiddleware::class.':activity-log-query');
@@ -130,6 +132,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('customer-cares/{id}/orders', [CustomerCareController::class, 'getOrder']);
     Route::apiResource('customer-cares', CustomerCareController::class);
 
+    Route::get('provinces/charts', [ProvinceController::class, 'charts'])
+        ->middleware(AdminOnlyMiddleware::class);
     Route::get('provinces/report', [ProvinceController::class, 'report'])
         ->middleware(AdminOnlyMiddleware::class);
     Route::apiResource('provinces', ProvinceController::class);
