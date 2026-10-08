@@ -326,6 +326,22 @@ SQL;
         }
     }
 
+    public function show($id)
+    {
+        $order = Order::find($id);
+        if (! $order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy đơn hàng.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $order,
+        ]);
+    }
+
     /**
      * Lấy đơn status=3 không có CustomerCareAssignment đang hoạt động.
      * CustomerCare cũ được giữ lại làm lịch sử và không ảnh hưởng availability.
@@ -700,5 +716,215 @@ SQL;
         }
 
         return round((((float) $current) - $baseline) / $baseline * 100, 1);
+    }
+
+    /**
+     * Get aggregated revenue per shop per product for chart visualization.
+     */
+    public function salesChartData(Request $request)
+    {
+        $actor = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $actor,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $shopIds = $requestedShopId !== null
+            ? [$requestedShopId]
+            : (! $this->shopAccessService->isGlobal($actor) ? $this->shopAccessService->ids($actor)->all() : null);
+
+        if ($shopIds === []) {
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'from' => null,
+                    'to' => null,
+                    'products' => [],
+                    'top_pairings' => [],
+                    'total_revenue' => 0,
+                    'total_quantity' => 0,
+                ],
+            ]);
+        }
+
+        $request->validate([
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+            'status' => ['nullable'],
+            'order_page_id' => ['nullable', 'string'],
+            'search' => ['nullable', 'string'],
+        ]);
+
+        if ($request->filled('date_from') && $request->filled('date_to')) {
+            $start = Carbon::parse($request->query('date_from'))->startOfDay();
+            $end = Carbon::parse($request->query('date_to'))->endOfDay();
+            if ($end->lt($start)) {
+                [$start, $end] = [$end->copy()->startOfDay(), $start->copy()->endOfDay()];
+            }
+        } else {
+            $latestOrderAt = Order::query()->max('created_at');
+            if ($latestOrderAt === null) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'from' => null,
+                        'to' => null,
+                        'products' => [],
+                        'top_pairings' => [],
+                        'total_revenue' => 0,
+                        'total_quantity' => 0,
+                    ],
+                ]);
+            }
+            $end = Carbon::parse($latestOrderAt)->endOfDay();
+            $start = $end->copy()->subDays(30)->startOfDay();
+        }
+
+        $whereClauses = [
+            'orders.deleted_at IS NULL',
+            'orders.pancake_full_data IS NOT NULL',
+            'orders.created_at BETWEEN ? AND ?',
+        ];
+        $bindings = [$start->toDateTimeString(), $end->toDateTimeString()];
+
+        if ($shopIds !== null) {
+            $placeholders = implode(',', array_fill(0, count($shopIds), '?'));
+            $whereClauses[] = "orders.shop_id IN ({$placeholders})";
+            $bindings = array_merge($bindings, $shopIds);
+        }
+
+        if ($request->filled('status')) {
+            $status = $request->input('status');
+            if (is_array($status)) {
+                $placeholders = implode(',', array_fill(0, count($status), '?'));
+                $whereClauses[] = "orders.status IN ({$placeholders})";
+                $bindings = array_merge($bindings, $status);
+            } else {
+                $whereClauses[] = 'orders.status = ?';
+                $bindings[] = (int) $status;
+            }
+        } else {
+            $whereClauses[] = 'orders.status NOT IN (6, 7)';
+        }
+
+        if ($request->filled('order_page_id')) {
+            $whereClauses[] = 'orders.pancake_order_page_id = ?';
+            $bindings[] = $request->input('order_page_id');
+        }
+
+        if ($request->filled('search')) {
+            $searchTerm = $request->input('search') . '%';
+            $whereClauses[] = '(orders.order_number_vtp LIKE ? OR orders.customer_phone LIKE ? OR orders.customer_name LIKE ? OR orders.pancake_order_id = ?)';
+            $bindings[] = $searchTerm;
+            $bindings[] = $searchTerm;
+            $bindings[] = $searchTerm;
+            $bindings[] = $request->input('search');
+        }
+
+        $whereSql = implode(' AND ', $whereClauses);
+
+        $sql = "SELECT 
+            orders.shop_id, 
+            shops.name as shop_name, 
+            COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm') as product_name, 
+            SUM(COALESCE(item.quantity, 0)) as quantity, 
+            SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)) as revenue, 
+            COUNT(DISTINCT orders.id) as orders_count 
+        FROM orders 
+        LEFT JOIN shops ON shops.id = orders.shop_id 
+        JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
+            product_name VARCHAR(255) PATH '$.variation_info.name', 
+            quantity DECIMAL(12,2) PATH '$.quantity', 
+            retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
+        )) AS item 
+        WHERE {$whereSql}
+        GROUP BY orders.shop_id, shops.name, product_name 
+        HAVING revenue > 0 
+        ORDER BY revenue DESC";
+
+        $rows = DB::select($sql, $bindings);
+
+        $byProduct = [];
+        $topPairings = [];
+        $totalSystemRevenue = 0;
+        $totalSystemQuantity = 0;
+
+        foreach ($rows as $row) {
+            $revenue = (float) $row->revenue;
+            $quantity = (float) $row->quantity;
+            $ordersCount = (int) $row->orders_count;
+            $shopName = $row->shop_name ?? ('Cửa hàng #' . $row->shop_id);
+            $pName = $row->product_name;
+
+            $totalSystemRevenue += $revenue;
+            $totalSystemQuantity += $quantity;
+
+            if (!isset($byProduct[$pName])) {
+                $byProduct[$pName] = [
+                    'product_name' => $pName,
+                    'total_revenue' => 0,
+                    'total_quantity' => 0,
+                    'total_orders' => 0,
+                    'shops' => [],
+                ];
+            }
+
+            $byProduct[$pName]['total_revenue'] += $revenue;
+            $byProduct[$pName]['total_quantity'] += $quantity;
+            $byProduct[$pName]['total_orders'] += $ordersCount;
+            $byProduct[$pName]['shops'][] = [
+                'shop_id' => $row->shop_id,
+                'shop_name' => $shopName,
+                'revenue' => round($revenue),
+                'quantity' => floor($quantity) === $quantity ? (int) $quantity : round($quantity, 2),
+                'orders_count' => $ordersCount,
+            ];
+
+            if (count($topPairings) < 15) {
+                $topPairings[] = [
+                    'shop_id' => $row->shop_id,
+                    'shop_name' => $shopName,
+                    'product_name' => $pName,
+                    'revenue' => round($revenue),
+                    'quantity' => floor($quantity) === $quantity ? (int) $quantity : round($quantity, 2),
+                    'orders_count' => $ordersCount,
+                ];
+            }
+        }
+
+        $products = [];
+        foreach ($byProduct as $product) {
+            usort($product['shops'], fn ($a, $b) => $b['revenue'] <=> $a['revenue']);
+            $productRevenue = $product['total_revenue'];
+            foreach ($product['shops'] as &$shop) {
+                $shop['share_percent'] = $productRevenue > 0 ? round(($shop['revenue'] / $productRevenue) * 100, 1) : 0;
+            }
+            unset($shop);
+
+            $topShop = $product['shops'][0] ?? null;
+
+            $products[] = [
+                'product_name' => $product['product_name'],
+                'total_revenue' => round($productRevenue),
+                'total_quantity' => floor($product['total_quantity']) === $product['total_quantity'] ? (int) $product['total_quantity'] : round($product['total_quantity'], 2),
+                'total_orders' => $product['total_orders'],
+                'top_shop' => $topShop,
+                'shops' => $product['shops'],
+            ];
+        }
+
+        usort($products, fn ($a, $b) => $b['total_revenue'] <=> $a['total_revenue']);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'from' => $start->toDateString(),
+                'to' => $end->toDateString(),
+                'total_revenue' => round($totalSystemRevenue),
+                'total_quantity' => floor($totalSystemQuantity) === $totalSystemQuantity ? (int) $totalSystemQuantity : round($totalSystemQuantity, 2),
+                'total_products' => count($products),
+                'top_pairings' => $topPairings,
+                'products' => $products,
+            ],
+        ]);
     }
 }

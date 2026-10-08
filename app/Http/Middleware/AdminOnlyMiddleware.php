@@ -33,7 +33,12 @@ class AdminOnlyMiddleware
             ], 401);
         }
 
-        if ($user->role?->slug !== 'admin') {
+        $allowedSlugs = ['admin'];
+        if ($mode === 'allow-director' || $mode === 'report-query') {
+            $allowedSlugs[] = 'director';
+        }
+
+        if (!in_array($user->role?->slug, $allowedSlugs, true)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Bạn không có quyền.',

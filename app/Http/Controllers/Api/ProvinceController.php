@@ -24,7 +24,7 @@ class ProvinceController extends Controller implements HasMiddleware
     public static function middleware(): array
     {
         return [
-            new Middleware(AdminOnlyMiddleware::class, only: ['index']),
+            new Middleware(AdminOnlyMiddleware::class . ':allow-director', only: ['index']),
         ];
     }
 

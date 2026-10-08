@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\OrderSourceController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\PermissionGroupController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\ProductReportController;
 use App\Http\Controllers\Api\ProvinceController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\RolePermissionController;
@@ -93,6 +94,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
         ->middleware(PermissionCheckMiddleware::class.':view-chance,strict');
     Route::get('order-sources', [OrderSourceController::class, 'index']);
     Route::get('order-pages', [OrderPageController::class, 'index']);
+    Route::get('orders/sales-chart-data', [OrderController::class, 'salesChartData']);
     Route::apiResource('orders', OrderController::class);
 
     Route::post('webhook-monitor/cleanup', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'cleanup'])->middleware(AdminOnlyMiddleware::class);
@@ -114,6 +116,12 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('customers', CustomerController::class);
     Route::get('customers/{pancake_customer_id}/orders', [CustomerController::class, 'getOrder']);
 
+    Route::get('products/sales', [ProductReportController::class, 'index'])
+        ->middleware(AdminOnlyMiddleware::class.':allow-director');
+    Route::get('products/period-report', [ProductReportController::class, 'periodReport'])
+        ->middleware(AdminOnlyMiddleware::class.':allow-director');
+    Route::get('products/monthly-quantities', [ProductReportController::class, 'monthlyQuantities'])
+        ->middleware(AdminOnlyMiddleware::class.':allow-director');
     Route::apiResource('products', ProductController::class);
 
     Route::get('users/weekly-revenue', [UserController::class, 'weeklyRevenue']);
@@ -133,12 +141,13 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::apiResource('customer-cares', CustomerCareController::class);
 
     Route::get('provinces/charts', [ProvinceController::class, 'charts'])
-        ->middleware(AdminOnlyMiddleware::class);
+        ->middleware(AdminOnlyMiddleware::class.':allow-director');
     Route::get('provinces/report', [ProvinceController::class, 'report'])
-        ->middleware(AdminOnlyMiddleware::class);
+        ->middleware(AdminOnlyMiddleware::class.':allow-director');
     Route::apiResource('provinces', ProvinceController::class);
 
-    Route::post('settings', [SettingController::class, 'store']);
+    Route::post('settings', [SettingController::class, 'store'])
+        ->middleware(AdminOnlyMiddleware::class);
     Route::get('overview', [CustomerCareController::class, 'overview']);
 
     Route::get('loyalty-tiers/customers/pendding-upgrade-list', [LoyaltyTierController::class, 'getCustomerPenddingUpgradeList']);

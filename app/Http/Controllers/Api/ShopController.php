@@ -30,8 +30,8 @@ class ShopController extends Controller implements HasMiddleware
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
             new Middleware(AdminOnlyMiddleware::class, only: ['store', 'getDataPancake', 'updateEmployeeFromPancake']),
-            new Middleware(PermissionCheckMiddleware::class . ':delete-shop', only: ['destroy']),
-            new Middleware(PermissionCheckMiddleware::class . ':update-shop', only: ['update']),
+            new Middleware(PermissionCheckMiddleware::class . ':delete-shop,strict', only: ['destroy']),
+            new Middleware(PermissionCheckMiddleware::class . ':update-shop,strict', only: ['update']),
             // new Middleware(PermissionCheckMiddleware::class . ':list-shop', only: ['index']),
         ];
     }
@@ -47,7 +47,7 @@ class ShopController extends Controller implements HasMiddleware
             $user = $request->user() ?? auth()->user();
             if ($request->query('view') === 'summary') {
                 $shops = Shop::query()->select(['shops.id', 'shops.name']);
-                if (! $user->isAdmin()) {
+                if (! $user->isAdmin() && ! $user->isDirector()) {
                     $shops->whereHas('users', function ($userQuery) use ($user): void {
                         $userQuery->where('users.id', $user->getKey());
                     });
@@ -93,7 +93,7 @@ class ShopController extends Controller implements HasMiddleware
                     $q->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
                 }
             }]);
-            if (!$user->isAdmin()) {
+            if (!$user->isAdmin() && !$user->isDirector()) {
                 $shops->whereHas('users', function ($userQuery) {
                     $userQuery->where('users.id', auth()->id());
                 });

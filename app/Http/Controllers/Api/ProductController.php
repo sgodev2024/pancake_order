@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\Product;
 use App\Services\ShopAccessService;
@@ -21,7 +22,11 @@ class ProductController extends Controller implements HasMiddleware
         return [
             new Middleware(
                 PermissionCheckMiddleware::class.':list-product',
-                only: ['index', 'show', 'store', 'update', 'destroy']
+                only: ['index', 'show']
+            ),
+            new Middleware(
+                AdminOnlyMiddleware::class,
+                only: ['store', 'update', 'destroy']
             ),
         ];
     }

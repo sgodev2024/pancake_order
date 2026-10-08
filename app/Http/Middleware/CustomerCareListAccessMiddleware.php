@@ -19,7 +19,7 @@ class CustomerCareListAccessMiddleware
             ], 401);
         }
 
-        if ($user->isAdmin() || $user->isManagerCskh() || $user->isStaffCskh()) {
+        if ($user->isAdmin() || $user->isManagerCskh() || $user->isStaffCskh() || $user->isDirector()) {
             return $next($request);
         }
 

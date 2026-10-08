@@ -10,16 +10,17 @@ use App\Models\LoyaltyTier;
 use App\Models\Order;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\DB;
 
-class LoyaltyTierController extends Controller
+class LoyaltyTierController extends Controller implements HasMiddleware
 {
     public static function middleware(): array
     {
         return [
-            // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
-            new Middleware(PermissionCheckMiddleware::class . ':create-update-destroy-loyalty-tier', only: ['index', 'store', 'update', 'destroy', 'show'])
+            new Middleware(PermissionCheckMiddleware::class . ':loyalty-report|create-update-destroy-loyalty-tier', only: ['index', 'show']),
+            new Middleware(PermissionCheckMiddleware::class . ':create-update-destroy-loyalty-tier,strict', only: ['store', 'update', 'destroy']),
         ];
     }
 

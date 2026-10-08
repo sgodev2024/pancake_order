@@ -124,7 +124,7 @@ class RoleController extends Controller implements HasMiddleware
         if (!$role) {
             return response()->json(['success' => false, 'message' => 'Không tìm thấy Role'], 404);
         }
-        if ($role->slug == "admin") {
+        if (in_array($role->slug, ['admin', 'director'], true)) {
             return response()->json(['success' => false, 'message' => 'Quyền này không được phép sửa'], 500);
         }
         if ($request->has('name')) {
@@ -152,7 +152,7 @@ class RoleController extends Controller implements HasMiddleware
         if (!$role) {
             return response()->json(['success' => false, 'message' => 'Không tìm thấy Role'], 404);
         }
-        if ($role->slug == "admin") {
+        if (in_array($role->slug, ['admin', 'director'], true)) {
             return response()->json(['success' => false, 'message' => 'Quyền này không được phép xóa'], 500);
         }
 
