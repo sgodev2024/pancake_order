@@ -841,7 +841,7 @@ SQL;
         HAVING revenue > 0 
         ORDER BY revenue DESC";
 
-        $rows = DB::select($sql, $bindings);
+        $rows = \App\Services\OrderItemSql::select($sql, $bindings);
 
         $byProduct = [];
         $topPairings = [];

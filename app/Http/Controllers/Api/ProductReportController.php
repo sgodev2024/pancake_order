@@ -89,7 +89,7 @@ class ProductReportController extends Controller
             $previousQty = $this->deliveredQuantityTotal($shopIds, $previousStart, $previousStart->copy()->addSeconds($elapsed));
             $yearQty = $this->deliveredQuantityTotal($shopIds, $yearStart, $yearStart->copy()->addSeconds($elapsed));
 
-            $rows = DB::select(
+            $rows = \App\Services\OrderItemSql::select(
                 $this->productSql(true, $shopIds, false),
                 $this->bindings($shopIds, $start, $measuredEnd)
             );
@@ -175,7 +175,7 @@ class ProductReportController extends Controller
 
     private function topProducts(?array $shopIds, Carbon $start, Carbon $end): array
     {
-        $rows = DB::select(
+        $rows = \App\Services\OrderItemSql::select(
             $this->productSql(true, $shopIds),
             $this->bindings($shopIds, $start, $end)
         );
@@ -190,7 +190,7 @@ class ProductReportController extends Controller
 
     private function quantityTotal(?array $shopIds, Carbon $start, Carbon $end): array
     {
-        $row = DB::selectOne(
+        $row = \App\Services\OrderItemSql::selectOne(
             $this->productSql(false, $shopIds),
             $this->bindings($shopIds, $start, $end)
         );
@@ -246,7 +246,7 @@ class ProductReportController extends Controller
               AND orders.pancake_full_data IS NOT NULL
               AND orders.created_at BETWEEN ? AND ?
               {$shopSql}
-            GROUP BY {$name}
+            GROUP BY name
             HAVING SUM(COALESCE(item.quantity, 0)) > 0
             ORDER BY quantity DESC, orders_count DESC, name ASC{$limitSql}";
     }
@@ -377,7 +377,7 @@ class ProductReportController extends Controller
                             {$shopSql}
                           GROUP BY period";
             $ordersBindings = array_merge([$fetchStart->toDateTimeString(), $end->toDateTimeString()], $shopIds ?? []);
-            $ordersRows = DB::select($ordersSql, $ordersBindings);
+            $ordersRows = \App\Services\OrderItemSql::select($ordersSql, $ordersBindings);
             $periodOrdersMap = [];
             foreach ($ordersRows as $r) {
                 $periodOrdersMap[$r->period] = (int) $r->orders_count;
@@ -401,9 +401,9 @@ class ProductReportController extends Controller
                       AND orders.pancake_full_data IS NOT NULL
                       AND orders.created_at BETWEEN ? AND ?
                       {$shopSql}
-                    GROUP BY period, {$name}";
+                    GROUP BY period, name";
             $bindings = array_merge([$fetchStart->toDateTimeString(), $end->toDateTimeString()], $shopIds ?? []);
-            $rows = DB::select($sql, $bindings);
+            $rows = \App\Services\OrderItemSql::select($sql, $bindings);
 
             $generatedPeriods = $this->generatePeriods($start, $end, $viewMode);
             $currentPeriodsSet = array_flip($generatedPeriods);
@@ -677,7 +677,7 @@ class ProductReportController extends Controller
                     ORDER BY month ASC";
 
             $bindings = array_merge([$year], $shopIds ?? []);
-            $rows = DB::select($sql, $bindings);
+            $rows = \App\Services\OrderItemSql::select($sql, $bindings);
 
             $monthMap = [];
             $latestMonthWithData = 0;
@@ -762,3 +762,5 @@ class ProductReportController extends Controller
         ]);
     }
 }
+
+

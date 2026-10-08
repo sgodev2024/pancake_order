@@ -23,4 +23,12 @@ yarn-error.log
 /.zed
 /storage/
 pancake_order.sql
-/pancake_frontend_v2/
+
+
+# Frontend source is tracked; build/runtime files are excluded
+/frontend/node_modules/
+/frontend/dist/
+/frontend/dist-ssr/
+/frontend/.env
+/frontend/.env.*
+/frontend/*.local

@@ -1,0 +1,30 @@
+.customer-care-assignment {
+  display: grid;
+  gap: 16px;
+}
+
+.customer-care-assignment__notice {
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+
+.customer-care-assignment__field {
+  display: grid;
+  gap: 7px;
+}
+
+.customer-care-assignment__field label {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.customer-care-assignment__field .ant-select {
+  width: 100%;
+}
+
+.customer-care-assignment__field small {
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}

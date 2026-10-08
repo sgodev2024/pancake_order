@@ -41,7 +41,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 $response['errors'] = $e->errors();
             }
 
-            if (config('app.debug')) {
+            if (config('app.debug') && !$request->is('api/v1/zalo-chat/*')) {
                 $response['debug'] = [
                     'exception' => get_class($e),
                     'message'   => $e->getMessage(),
@@ -53,3 +53,4 @@ return Application::configure(basePath: dirname(__DIR__))
             return response()->json($response, $status);
         });
     })->create();
+

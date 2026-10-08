@@ -1,0 +1,196 @@
+.order-opportunities-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.order-opportunities-card,
+.order-opportunities-state-card {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 5px 18px rgba(23, 35, 61, 0.025);
+}
+
+.order-opportunities-card > .ant-card-head {
+  min-height: 64px;
+  padding-inline: 24px;
+}
+
+.order-opportunities-card > .ant-card-head .ant-card-head-title {
+  font-weight: 700;
+}
+
+.order-opportunities-card > .ant-card-body {
+  min-width: 0;
+  padding: 24px;
+}
+
+.order-opportunities-filters {
+  margin-bottom: 16px;
+}
+
+.order-opportunities-filters__grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.8fr) minmax(210px, 0.9fr) minmax(180px, 0.8fr) minmax(300px, 1.25fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.order-opportunities-field {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.order-opportunities-field label {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.order-opportunities-field .ant-picker,
+.order-opportunities-field > .ant-select,
+.order-opportunities-field .shop-select,
+.order-opportunities-field .shop-select .ant-select {
+  width: 100%;
+}
+
+.order-opportunities-field__error {
+  font-size: 12px;
+}
+
+.order-opportunities-filters__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.order-opportunities-filters__actions .ant-btn {
+  height: var(--filter-control-height, 32px);
+  min-height: var(--filter-control-height, 32px);
+}
+
+.order-opportunities-toolbar {
+  min-height: 40px;
+  margin: 2px 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.order-opportunities-summary {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.order-opportunities-summary strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.order-opportunities-query-alert {
+  margin-bottom: 14px;
+}
+
+.order-opportunities-card .ant-table-wrapper,
+.order-opportunities-card .ant-table-container {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.order-opportunities-card .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.order-opportunities-card .ant-table-cell {
+  vertical-align: middle;
+}
+
+.order-opportunities-card .ant-empty-description small {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+}
+
+.order-opportunities-shop {
+  min-width: 0;
+}
+
+.order-opportunities-shop > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-opportunities-shop__avatar {
+  flex: 0 0 auto;
+  color: #fff;
+  background: #e87500;
+  font-weight: 700;
+}
+
+.order-opportunities-code {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.order-opportunities-source {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-opportunities-address {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .order-opportunities-filters__grid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+
+  .order-opportunities-filters__actions {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 640px) {
+  .order-opportunities-card > .ant-card-head,
+  .order-opportunities-card > .ant-card-body {
+    padding-inline: 16px;
+  }
+
+  .order-opportunities-filters__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .order-opportunities-filters__actions {
+    grid-column: auto;
+  }
+
+  .order-opportunities-filters__actions .ant-btn {
+    flex: 1 1 140px;
+    height: var(--filter-control-height, 32px);
+    min-height: var(--filter-control-height, 32px);
+  }
+
+  .order-opportunities-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .order-opportunities-toolbar .ant-btn {
+    min-height: 44px;
+  }
+
+  .order-opportunities-card .ant-pagination {
+    justify-content: flex-start;
+  }
+}

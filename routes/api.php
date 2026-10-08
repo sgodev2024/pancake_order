@@ -185,3 +185,5 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 Route::prefix('webhook')->group(function () {
     Route::post('/pancake', [WebhookController::class, 'recivePancake']);
 });
+
+require __DIR__.'/zalo-chat.php';

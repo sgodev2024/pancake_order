@@ -1,0 +1,14 @@
+.staff-assignment-tracking-page { padding: 12px 20px 24px; background: #f5f6fa; height: calc(100vh - 64px); overflow: hidden; }
+.staff-assignment-tracking-header { padding: 12px 0 16px; }
+.staff-assignment-tracking-header .ant-typography { margin: 0; color: #1f2937; font-weight: 700; }
+.staff-assignment-tracking-card { overflow: hidden; border: 1px solid #e7e8ee; border-radius: 10px; box-shadow: none; }
+.staff-assignment-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 24px 30px; border-bottom: 1px solid #edf1f7; }
+.staff-assignment-filter--shop {  max-width: 360px; }
+.staff-assignment-summary { padding: 30px 30px 10px; color: #334155; font-size: 16px; }
+.staff-assignment-table { margin: 0 30px 30px; }
+.staff-assignment-table .ant-table-container { border-top: 1px solid #e5e7eb; border-left: 1px solid #e5e7eb; }
+.staff-assignment-table .ant-table-thead > tr > th { background: #fafafa; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; font-weight: 700; }
+.staff-assignment-table .ant-table-tbody > tr > td { border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; }
+.staff-assignment-table .ant-table-body { scrollbar-gutter: stable; }
+.staff-assignment-progress { color: #475569; font-size: 16px; }
+@media (max-width: 768px) { .staff-assignment-toolbar { padding: 16px; align-items: stretch; } .staff-assignment-filter, .staff-assignment-filter--shop { min-width: 100%; max-width: 100%; } .staff-assignment-table { margin: 0 16px 16px; } .staff-assignment-summary { padding: 20px 16px 10px; } }
