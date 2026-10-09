@@ -16,14 +16,14 @@ class ZaloChatController extends Controller {
   return $this->result(['base_url'=>$r?->base_url??'http://zalo-core:8080','enabled'=>$r?->enabled??false,'has_api_key'=>$r!==null,'updated_at'=>$r?->updated_at,'allowed_hosts'=>config('zalo.allowed_hosts')]);
  }
  private function credentials(Request $request):array {
-  $input=$request->validate(['base_url'=>'required|string|max:255','api_key'=>'nullable|string|max:512|regex:#^cpa_[a-f0-9]{8}_[A-Za-z0-9+/]+$#']);
+  $input=$request->validate(['base_url'=>'required|string|max:255','api_key'=>'nullable|string|max:512|regex:#^cpa_[a-f0-9]{8}(?:[a-f0-9]{4})?_[A-Za-z0-9+/]+$#']);
   $input['base_url']=$this->bridge->validateUrl($input['base_url']);
   $input['api_key']=$input['api_key']??ZaloConnection::find(1)?->api_key;
   abort_unless($input['api_key'],422,'Cần nhập API key khi cấu hình lần đầu.');return $input;
  }
  public function save(Request $request){
   $input=$this->credentials($request);$enabled=$request->validate(['enabled'=>'required|boolean'])['enabled'];
-  if($enabled)$this->bridge->request('GET','accounts',[],$input);
+  if($enabled)$this->bridge->probe($input);
   DB::transaction(function()use($input,$enabled){
    $old=ZaloConnection::find(1);
    if($old&&($old->base_url!==$input['base_url']||$old->api_key!==$input['api_key'])){DB::table('zalo_account_grants')->delete();DB::table('zalo_conversation_links')->delete();}
@@ -31,7 +31,21 @@ class ZaloChatController extends Controller {
   });
   Log::info('zalo.connection.updated',['actor_id'=>$request->user()->id,'enabled'=>$enabled]);return $this->configuration();
  }
- public function test(Request $r){$a=$this->bridge->request('GET','accounts',[],$this->credentials($r));return $this->result(['connected'=>true,'account_count'=>count($a),'checked_at'=>now()->toIso8601String()]);}
+ public function test(Request $r){$probe=$this->bridge->probe($this->credentials($r));return $this->result(['connected'=>true]+$probe+['checked_at'=>now()->toIso8601String()]);}
+ public function startExternalQr(Request $r){
+  $input=$r->validate(['displayName'=>'required|string|max:160']);
+  $result=$this->bridge->request('POST','connections',['displayName'=>trim($input['displayName'])]);
+  unset($result['pairingToken']);
+  Log::info('zalo.external_qr.started',['actor_id'=>$r->user()->id,'connection_id'=>$result['connectionId']??null]);
+  return $this->result($result,202);
+ }
+ public function externalQrStatus(string $id){return $this->result($this->bridge->request('GET','connections/'.$id));}
+ public function externalQrImage(string $id){return response($this->bridge->qr($id),200,['Content-Type'=>'image/png','Cache-Control'=>'no-store, private','X-Content-Type-Options'=>'nosniff']);}
+ public function cancelExternalQr(Request $r,string $id){
+  $result=$this->bridge->request('DELETE','connections/'.$id);
+  Log::info('zalo.external_qr.cancelled',['actor_id'=>$r->user()->id,'connection_id'=>$id]);
+  return $this->result($result);
+ }
  public function monitoring(){return $this->result($this->bridge->request('GET','monitoring'));}
  public function accounts(Request $r){
   $rows=$this->bridge->request('GET','accounts');
@@ -80,5 +94,6 @@ class ZaloChatController extends Controller {
   Log::info('zalo.grants.updated',['actor_id'=>$r->user()->id,'account_id'=>$accountId]);return $this->grants($accountId);
  }
 }
+
 
 

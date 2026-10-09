@@ -3,17 +3,12 @@ import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { getMe, login } from '../../api/auth.api.js'
 import { useAuthStore } from '../../auth/auth.store.js'
-import { hasPermission, isAdmin, isManager } from '../../auth/permissions.js'
+
 import { ROUTES } from '../../constants/routes.js'
 import { getApiErrorMessage } from '../../utils/response.js'
 
 const getPostLoginRoute = (user, intendedRoute) => {
   if (intendedRoute) return intendedRoute
-
-  const canOpenOpportunities = hasPermission(user, 'view-chance')
-  if ((isAdmin(user) || isManager(user)) && canOpenOpportunities) {
-    return ROUTES.OPPORTUNITIES
-  }
 
   return ROUTES.HOME
 }
@@ -107,3 +102,4 @@ const LoginPage = () => {
 }
 
 export default LoginPage
+

@@ -320,10 +320,13 @@ const CustomerCarePage = ({ pageType }) => {
     mutationFn: ({ customerCareId, payload }) => reclaimCustomerCare(customerCareId, payload),
     retry: false,
     onSuccess: async (result) => {
-      message.success(result.message || 'Đã thu hồi khách hàng.')
+      message.success(result.message || 'Đã thu hồi CSKH và trả khách hàng về Cơ hội.')
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['customer-cares'] }),
         queryClient.invalidateQueries({ queryKey: ['order-opportunities'] }),
+        queryClient.invalidateQueries({ queryKey: ['imported-opportunities'] }),
+        queryClient.invalidateQueries({ queryKey: ['overview'] }),
+        queryClient.invalidateQueries({ queryKey: ['customer-care-history'] }),
       ])
     },
     onError: async (error) => {
@@ -774,7 +777,7 @@ const CustomerCarePage = ({ pageType }) => {
             actionItems.push({
               key: 'reclaim',
               icon: <RollbackOutlined />,
-              label: 'Thu hồi',
+              label: 'Thu hồi CSKH',
               danger: true,
               disabled: isReclaimingCustomerCare,
               onClick: () => openReclaimConfirmation(record),
@@ -1249,7 +1252,7 @@ const CustomerCarePage = ({ pageType }) => {
       </Modal>
 
       <Modal
-        title="Thu hồi khách hàng?"
+        title="Thu hồi CSKH?"
         open={Boolean(reclaimConfirmation)}
         onCancel={closeReclaimConfirmation}
         onOk={submitReclaim}
@@ -1262,7 +1265,7 @@ const CustomerCarePage = ({ pageType }) => {
         mask={{ closable: !isReclaimingCustomerCare }}
         destroyOnHidden
       >
-        <p>Khách hàng sẽ được đưa về danh sách chờ phân công và có thể giao cho nhân viên khác.</p>
+        <p>Phân công CSKH hiện tại sẽ được thu hồi. Khách hàng trở lại module Cơ hội theo nguồn ban đầu (Theo đơn hàng hoặc Theo import), để có thể phân công lại.</p>
         <label htmlFor="customer-care-reclaim-reason">Lý do thu hồi</label>
         <Input.TextArea
           id="customer-care-reclaim-reason"
@@ -1281,3 +1284,4 @@ const CustomerCarePage = ({ pageType }) => {
 }
 
 export default CustomerCarePage
+
