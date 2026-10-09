@@ -103,20 +103,30 @@ class ProvinceController extends Controller implements HasMiddleware
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date'],
             'week_mode' => ['nullable', 'in:latest'],
+            'month_mode' => ['nullable', 'in:latest'],
         ]);
 
         $hasPrepaid = Schema::hasColumn('orders', 'prepaid_amount');
         $latestOrderAt = $this->waybillOrders($shopIds)->max('created_at');
 
-        if ($request->query('week_mode') === 'latest') {
+        if ($request->query('month_mode') === 'latest') {
             if ($latestOrderAt === null) {
                 return response()->json([
                     'success' => true,
                     'data' => $this->emptyChart(),
                 ]);
             }
-            $start = $this->latestRankableWeek($shopIds, $hasPrepaid)
-                ?? Carbon::parse($latestOrderAt)->startOfWeek(Carbon::MONDAY)->startOfDay();
+            $start = $this->latestRankableMonth($shopIds, $hasPrepaid)
+                ?? Carbon::parse($latestOrderAt)->startOfMonth()->startOfDay();
+            $end = $start->copy()->endOfMonth()->endOfDay();
+        } elseif ($request->query('week_mode') === 'latest' || (! $request->filled('date_from') && ! $request->filled('date_to'))) {
+            if ($latestOrderAt === null) {
+                return response()->json([
+                    'success' => true,
+                    'data' => $this->emptyChart(),
+                ]);
+            }
+            $start = Carbon::now()->startOfWeek(Carbon::MONDAY)->startOfDay();
             $end = $start->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay();
         } elseif ($request->filled('date_from') && $request->filled('date_to')) {
             $start = Carbon::parse($request->query('date_from'))->startOfDay();
@@ -124,7 +134,7 @@ class ProvinceController extends Controller implements HasMiddleware
         } else {
             return response()->json([
                 'success' => false,
-                'message' => 'Cần chọn tuần.',
+                'message' => 'Cần chọn thời gian.',
             ], 422);
         }
 
@@ -136,27 +146,56 @@ class ProvinceController extends Controller implements HasMiddleware
             $truncated = true;
         }
         $elapsed = max($measuredEnd->getTimestamp() - $start->getTimestamp(), 0);
-        $previousStart = $start->copy()->subWeek();
-        $yearStart = $start->copy()->subYear();
+
+        $isMonthMode = $request->query('month_mode') === 'latest';
+        if ($isMonthMode) {
+            $previousStart = $start->copy()->subMonth();
+            $yearStart = $start->copy()->subYear();
+            $isFullMonth = $start->copy()->startOfMonth()->isSameDay($start) && $end->copy()->endOfMonth()->isSameDay($end);
+            if ($isFullMonth && ! $truncated) {
+                $previousEnd = $previousStart->copy()->endOfMonth()->endOfDay();
+                $yearEnd = $yearStart->copy()->endOfMonth()->endOfDay();
+            } else {
+                $previousEnd = $previousStart->copy()->addSeconds($elapsed);
+                $yearEnd = $yearStart->copy()->addSeconds($elapsed);
+            }
+        } else {
+            $previousStart = $start->copy()->subWeek();
+            $previousEnd = $previousStart->copy()->addSeconds($elapsed);
+            $yearStart = $start->copy()->subYear();
+            $yearEnd = $yearStart->copy()->addSeconds($elapsed);
+        }
 
         $totals = $this->regionTotals($shopIds, $hasPrepaid, $start, $measuredEnd);
-        $previous = $this->regionTotals($shopIds, $hasPrepaid, $previousStart, $previousStart->copy()->addSeconds($elapsed));
-        $year = $this->regionTotals($shopIds, $hasPrepaid, $yearStart, $yearStart->copy()->addSeconds($elapsed));
+        $previous = $this->regionTotals($shopIds, $hasPrepaid, $previousStart, $previousEnd);
+        $year = $this->regionTotals($shopIds, $hasPrepaid, $yearStart, $yearEnd);
         $items = $this->regionRows($shopIds, $hasPrepaid, $start, $measuredEnd);
 
-        $trendStart = $start->copy()->startOfWeek(Carbon::MONDAY)->subWeeks(5)->startOfDay();
+        $anchorWeek = ($request->filled('date_from') && $request->filled('date_to'))
+            ? Carbon::parse($request->query('date_to'))->startOfWeek(Carbon::MONDAY)->startOfDay()
+            : $start->copy()->startOfWeek(Carbon::MONDAY)->startOfDay();
+        $trendStart = $anchorWeek->copy()->subWeeks(9)->startOfDay();
+
         $trendOrderValue = $hasPrepaid
             ? 'SUM(CASE WHEN orders.prepaid_amount IS NULL THEN 0 ELSE COALESCE(orders.cod, 0) + orders.prepaid_amount END)'
             : 'NULL';
         $trendCollected = $hasPrepaid
             ? 'SUM(CASE WHEN orders.status = 16 AND orders.prepaid_amount IS NOT NULL THEN COALESCE(orders.cod, 0) + orders.prepaid_amount ELSE 0 END)'
             : 'NULL';
+
         $trendRows = $this->waybillOrders($shopIds)
-            ->whereBetween('orders.created_at', [$trendStart->toDateTimeString(), $measuredEnd->toDateTimeString()])
-            ->selectRaw("DATE(DATE_SUB(orders.created_at, INTERVAL WEEKDAY(orders.created_at) DAY)) as week_start, {$this->deliveredExpression($hasPrepaid)} as delivered_value, {$trendOrderValue} as order_value, {$trendCollected} as collected_value")
+            ->whereBetween('orders.created_at', [$trendStart->toDateTimeString(), $anchorWeek->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay()->toDateTimeString()])
+            ->selectRaw("
+                DATE(DATE_SUB(orders.created_at, INTERVAL WEEKDAY(orders.created_at) DAY)) as week_start,
+                COUNT(DISTINCT CASE WHEN orders.status = 3 THEN orders.id END) as delivered_count,
+                {$this->deliveredExpression($hasPrepaid)} as delivered_value,
+                {$trendOrderValue} as order_value,
+                {$trendCollected} as collected_value
+            ")
             ->groupByRaw('DATE(DATE_SUB(orders.created_at, INTERVAL WEEKDAY(orders.created_at) DAY))')
             ->get()
             ->mapWithKeys(fn ($row) => [Carbon::parse($row->week_start)->toDateString() => [
+                'delivered_count' => (int) ($row->delivered_count ?? 0),
                 'delivered' => (float) ($row->delivered_value ?? 0),
                 'order_value' => (float) ($row->order_value ?? 0),
                 'collected' => (float) ($row->collected_value ?? 0),
@@ -164,11 +203,14 @@ class ProvinceController extends Controller implements HasMiddleware
 
         $labels = [];
         $current = [];
+        $deliveredCounts = [];
         $orderValueTrend = [];
         $collectedTrend = [];
-        for ($week = $trendStart->copy(); $week->lte($start); $week->addWeek()) {
+
+        for ($week = $trendStart->copy(); $week->lte($anchorWeek); $week->addWeek()) {
             $point = $trendRows[$week->toDateString()] ?? null;
             $labels[] = $week->format('d/m');
+            $deliveredCounts[] = (int) ($point['delivered_count'] ?? 0);
             $current[] = (float) ($point['delivered'] ?? 0);
             $orderValueTrend[] = (float) ($point['order_value'] ?? 0);
             $collectedTrend[] = (float) ($point['collected'] ?? 0);
@@ -195,6 +237,7 @@ class ProvinceController extends Controller implements HasMiddleware
                 'trend' => [
                     'labels' => $labels,
                     'current' => $current,
+                    'delivered_count' => $deliveredCounts,
                     'order_value' => $orderValueTrend,
                     'collected' => $collectedTrend,
                 ],
@@ -311,7 +354,7 @@ class ProvinceController extends Controller implements HasMiddleware
             'delivered_vs_previous' => null,
             'delivered_vs_year' => null,
             'items' => [],
-            'trend' => ['labels' => [], 'current' => [], 'order_value' => [], 'collected' => []],
+            'trend' => ['labels' => [], 'current' => [], 'delivered_count' => [], 'order_value' => [], 'collected' => []],
         ];
     }
 
@@ -337,5 +380,29 @@ class ProvinceController extends Controller implements HasMiddleware
             ->value('week_start');
 
         return $weekStart ? Carbon::parse($weekStart)->startOfDay() : null;
+    }
+
+    private function latestRankableMonth(?array $shopIds, bool $hasPrepaid): ?Carbon
+    {
+        if (! $hasPrepaid) {
+            return null;
+        }
+
+        $provinceMonths = $this->waybillOrders($shopIds)
+            ->where('orders.status', 3)
+            ->whereNotNull('orders.prepaid_amount')
+            ->selectRaw("DATE_FORMAT(orders.created_at, '%Y-%m-01') as month_start, orders.province_id")
+            ->groupByRaw("DATE_FORMAT(orders.created_at, '%Y-%m-01'), orders.province_id")
+            ->havingRaw('SUM(COALESCE(orders.cod, 0) + orders.prepaid_amount) > 0');
+
+        $monthStart = DB::query()
+            ->fromSub($provinceMonths, 'province_months')
+            ->select('month_start')
+            ->groupBy('month_start')
+            ->havingRaw('COUNT(*) >= 20')
+            ->orderByDesc('month_start')
+            ->value('month_start');
+
+        return $monthStart ? Carbon::parse($monthStart)->startOfDay() : null;
     }
 }

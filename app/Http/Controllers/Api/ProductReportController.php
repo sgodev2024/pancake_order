@@ -32,6 +32,7 @@ class ProductReportController extends Controller
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date'],
             'week_mode' => ['nullable', 'in:latest'],
+            'month_mode' => ['nullable', 'in:latest'],
         ]);
 
         if ($shopIds === []) {
@@ -43,7 +44,17 @@ class ProductReportController extends Controller
 
         $latestOrderAt = $this->deliveredOrders($shopIds)->max('created_at');
 
-        if ($request->query('week_mode') === 'latest') {
+        $isMonthMode = $request->query('month_mode') === 'latest';
+        if ($isMonthMode) {
+            if ($latestOrderAt === null) {
+                return response()->json([
+                    'success' => true,
+                    'data' => $this->emptyReport(),
+                ]);
+            }
+            $start = Carbon::parse($latestOrderAt)->startOfMonth()->startOfDay();
+            $end = Carbon::parse($latestOrderAt)->endOfMonth()->endOfDay();
+        } elseif ($request->query('week_mode') === 'latest') {
             if ($latestOrderAt === null) {
                 return response()->json([
                     'success' => true,
@@ -74,7 +85,8 @@ class ProductReportController extends Controller
             $truncated = true;
         }
         $elapsed = max($measuredEnd->getTimestamp() - $start->getTimestamp(), 0);
-        $previousStart = $start->copy()->subWeek();
+        $isMonthRange = $start->diffInDays($end) >= 26;
+        $previousStart = ($isMonthMode || $isMonthRange) ? $start->copy()->subMonth() : $start->copy()->subWeek();
         $yearStart = $start->copy()->subYear();
 
         $cacheKey = 'prod_sales_' . md5(json_encode([
@@ -82,6 +94,7 @@ class ProductReportController extends Controller
             $start->toDateString(),
             $end->toDateString(),
             $request->query('week_mode'),
+            $request->query('month_mode'),
             $truncated ? floor($now->timestamp / 120) : null,
         ]));
 
@@ -338,7 +351,7 @@ class ProductReportController extends Controller
             $compare,
         ]));
 
-        $data = Cache::remember($cacheKey, 120, function () use ($shopIds, $start, $end, $viewMode, $compare) {
+        $data = Cache::remember($cacheKey, 600, function () use ($shopIds, $start, $end, $viewMode, $compare) {
             $groupByStr = match ($viewMode) {
                 'day' => "DATE_FORMAT(orders.created_at, '%Y-%m-%d')",
                 'month' => "DATE_FORMAT(orders.created_at, '%Y-%m')",

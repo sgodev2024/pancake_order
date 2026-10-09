@@ -94,6 +94,8 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
         ->middleware(PermissionCheckMiddleware::class.':view-chance,strict');
     Route::get('order-sources', [OrderSourceController::class, 'index']);
     Route::get('order-pages', [OrderPageController::class, 'index']);
+    Route::get('orders/monthly-counts', [OrderController::class, 'monthlyCounts'])
+        ->middleware(AdminOnlyMiddleware::class.':allow-director');
     Route::get('orders/sales-chart-data', [OrderController::class, 'salesChartData']);
     Route::apiResource('orders', OrderController::class);
 

@@ -56,7 +56,7 @@ class DirectorRoleSeeder extends Seeder
             ['email' => 'giamdoc@banmai.vn'],
             [
                 'name' => 'Giám đốc Ban Mai',
-                'password' => Hash::make('12345678'),
+                'password' => Hash::make('123456'),
                 'role_id' => $role->id,
                 'is_first_login' => 0,
             ]

@@ -256,7 +256,7 @@ class UserController extends Controller implements HasMiddleware
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date'],
             'role_id' => ['nullable', 'integer'],
-            'week_mode' => ['nullable', 'in:latest'],
+            'week_mode' => ['nullable', 'in:latest,all'],
         ]);
 
         $latestOrderQuery = Order::query()
@@ -279,6 +279,12 @@ class UserController extends Controller implements HasMiddleware
             $start = $this->latestRankableWeek($shopIds, $request->filled('role_id') ? $request->integer('role_id') : null)
                 ?? Carbon::parse($latestOrderAt)->startOfWeek(Carbon::MONDAY)->startOfDay();
             $end = $start->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay();
+        } elseif ($request->query('week_mode') === 'all') {
+            $earliestOrder = Order::query()
+                ->when($shopIds !== null, fn ($query) => $query->whereIn('shop_id', $shopIds))
+                ->min('created_at');
+            $start = $earliestOrder ? Carbon::parse($earliestOrder)->startOfDay() : Carbon::parse('2020-01-01')->startOfDay();
+            $end = now()->endOfDay();
         } elseif ($request->filled('date_from') && $request->filled('date_to')) {
             $start = Carbon::parse($request->query('date_from'))->startOfDay();
             $end = Carbon::parse($request->query('date_to'))->endOfDay();

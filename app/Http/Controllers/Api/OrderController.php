@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Models\Province;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +40,7 @@ class OrderController extends Controller
             // databases while retaining the existing response by default.
             'include_totals' => ['nullable', 'boolean'],
             'totals_only' => ['nullable', 'boolean'],
+            'month_mode' => ['nullable', 'in:latest'],
         ]);
         $includeTotals = $request->boolean('include_totals', true);
         $totalsOnly = $request->boolean('totals_only');
@@ -60,7 +62,8 @@ class OrderController extends Controller
                 'user_id',
                 'order_source_id',
                 'order_page_id',
-                'cod'
+                'cod',
+                'month_mode'
             );
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
@@ -118,6 +121,15 @@ class OrderController extends Controller
             }
             if (isset($inputs['date_to'])) {
                 $query->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
+            }
+            if (($inputs['month_mode'] ?? null) === 'latest' && !isset($inputs['date_from']) && !isset($inputs['date_to'])) {
+                $latestOrderAt = (clone $query)->max('orders.created_at');
+                if ($latestOrderAt !== null) {
+                    $mStart = Carbon::parse($latestOrderAt)->startOfMonth()->startOfDay();
+                    $mEnd = Carbon::parse($latestOrderAt)->endOfMonth()->endOfDay();
+                    $query->where('orders.created_at', '>=', $mStart->toDateTimeString())
+                        ->where('orders.created_at', '<=', $mEnd->toDateTimeString());
+                }
             }
             // Lọc theo received_at_shop (thường là boolean 0/1)
             if (isset($inputs['received_at_shop']) && $inputs['received_at_shop'] !== '') {
@@ -822,101 +834,100 @@ SQL;
 
         $whereSql = implode(' AND ', $whereClauses);
 
-        $sql = "SELECT 
-            orders.shop_id, 
-            shops.name as shop_name, 
-            COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm') as product_name, 
-            SUM(COALESCE(item.quantity, 0)) as quantity, 
-            SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)) as revenue, 
-            COUNT(DISTINCT orders.id) as orders_count 
-        FROM orders 
-        LEFT JOIN shops ON shops.id = orders.shop_id 
-        JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
-            product_name VARCHAR(255) PATH '$.variation_info.name', 
-            quantity DECIMAL(12,2) PATH '$.quantity', 
-            retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
-        )) AS item 
-        WHERE {$whereSql}
-        GROUP BY orders.shop_id, shops.name, product_name 
-        HAVING revenue > 0 
-        ORDER BY revenue DESC";
+        $cacheKey = 'order_sales_chart_' . md5(json_encode([$whereSql, $bindings]));
+        $data = Cache::remember($cacheKey, 600, function () use ($whereSql, $bindings, $start, $end) {
+            $sql = "SELECT 
+                orders.shop_id, 
+                COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm') as product_name, 
+                SUM(COALESCE(item.quantity, 0)) as quantity, 
+                SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)) as revenue, 
+                COUNT(DISTINCT orders.id) as orders_count 
+            FROM orders 
+            JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
+                product_name VARCHAR(255) PATH '$.variation_info.name', 
+                quantity DECIMAL(12,2) PATH '$.quantity', 
+                retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
+            )) AS item 
+            WHERE {$whereSql}
+            GROUP BY orders.shop_id, product_name 
+            HAVING revenue > 0 
+            ORDER BY revenue DESC";
 
-        $rows = \App\Services\OrderItemSql::select($sql, $bindings);
+            $rows = \App\Services\OrderItemSql::select($sql, $bindings);
+            $shopsMap = \App\Models\Shop::pluck('name', 'id')->all();
 
-        $byProduct = [];
-        $topPairings = [];
-        $totalSystemRevenue = 0;
-        $totalSystemQuantity = 0;
+            $byProduct = [];
+            $topPairings = [];
+            $totalSystemRevenue = 0;
+            $totalSystemQuantity = 0;
 
-        foreach ($rows as $row) {
-            $revenue = (float) $row->revenue;
-            $quantity = (float) $row->quantity;
-            $ordersCount = (int) $row->orders_count;
-            $shopName = $row->shop_name ?? ('Cửa hàng #' . $row->shop_id);
-            $pName = $row->product_name;
+            foreach ($rows as $row) {
+                $revenue = (float) $row->revenue;
+                $quantity = (float) $row->quantity;
+                $ordersCount = (int) $row->orders_count;
+                $shopName = $shopsMap[$row->shop_id] ?? ('Cửa hàng #' . $row->shop_id);
+                $pName = $row->product_name;
 
-            $totalSystemRevenue += $revenue;
-            $totalSystemQuantity += $quantity;
+                $totalSystemRevenue += $revenue;
+                $totalSystemQuantity += $quantity;
 
-            if (!isset($byProduct[$pName])) {
-                $byProduct[$pName] = [
-                    'product_name' => $pName,
-                    'total_revenue' => 0,
-                    'total_quantity' => 0,
-                    'total_orders' => 0,
-                    'shops' => [],
-                ];
-            }
+                if (!isset($byProduct[$pName])) {
+                    $byProduct[$pName] = [
+                        'product_name' => $pName,
+                        'total_revenue' => 0,
+                        'total_quantity' => 0,
+                        'total_orders' => 0,
+                        'shops' => [],
+                    ];
+                }
 
-            $byProduct[$pName]['total_revenue'] += $revenue;
-            $byProduct[$pName]['total_quantity'] += $quantity;
-            $byProduct[$pName]['total_orders'] += $ordersCount;
-            $byProduct[$pName]['shops'][] = [
-                'shop_id' => $row->shop_id,
-                'shop_name' => $shopName,
-                'revenue' => round($revenue),
-                'quantity' => floor($quantity) === $quantity ? (int) $quantity : round($quantity, 2),
-                'orders_count' => $ordersCount,
-            ];
-
-            if (count($topPairings) < 15) {
-                $topPairings[] = [
+                $byProduct[$pName]['total_revenue'] += $revenue;
+                $byProduct[$pName]['total_quantity'] += $quantity;
+                $byProduct[$pName]['total_orders'] += $ordersCount;
+                $byProduct[$pName]['shops'][] = [
                     'shop_id' => $row->shop_id,
                     'shop_name' => $shopName,
-                    'product_name' => $pName,
                     'revenue' => round($revenue),
                     'quantity' => floor($quantity) === $quantity ? (int) $quantity : round($quantity, 2),
                     'orders_count' => $ordersCount,
                 ];
+
+                if (count($topPairings) < 15) {
+                    $topPairings[] = [
+                        'shop_id' => $row->shop_id,
+                        'shop_name' => $shopName,
+                        'product_name' => $pName,
+                        'revenue' => round($revenue),
+                        'quantity' => floor($quantity) === $quantity ? (int) $quantity : round($quantity, 2),
+                        'orders_count' => $ordersCount,
+                    ];
+                }
             }
-        }
 
-        $products = [];
-        foreach ($byProduct as $product) {
-            usort($product['shops'], fn ($a, $b) => $b['revenue'] <=> $a['revenue']);
-            $productRevenue = $product['total_revenue'];
-            foreach ($product['shops'] as &$shop) {
-                $shop['share_percent'] = $productRevenue > 0 ? round(($shop['revenue'] / $productRevenue) * 100, 1) : 0;
+            $products = [];
+            foreach ($byProduct as $product) {
+                usort($product['shops'], fn ($a, $b) => $b['revenue'] <=> $a['revenue']);
+                $productRevenue = $product['total_revenue'];
+                foreach ($product['shops'] as &$shop) {
+                    $shop['share_percent'] = $productRevenue > 0 ? round(($shop['revenue'] / $productRevenue) * 100, 1) : 0;
+                }
+                unset($shop);
+
+                $topShop = $product['shops'][0] ?? null;
+
+                $products[] = [
+                    'product_name' => $product['product_name'],
+                    'total_revenue' => round($productRevenue),
+                    'total_quantity' => floor($product['total_quantity']) === $product['total_quantity'] ? (int) $product['total_quantity'] : round($product['total_quantity'], 2),
+                    'total_orders' => $product['total_orders'],
+                    'top_shop' => $topShop,
+                    'shops' => $product['shops'],
+                ];
             }
-            unset($shop);
 
-            $topShop = $product['shops'][0] ?? null;
+            usort($products, fn ($a, $b) => $b['total_revenue'] <=> $a['total_revenue']);
 
-            $products[] = [
-                'product_name' => $product['product_name'],
-                'total_revenue' => round($productRevenue),
-                'total_quantity' => floor($product['total_quantity']) === $product['total_quantity'] ? (int) $product['total_quantity'] : round($product['total_quantity'], 2),
-                'total_orders' => $product['total_orders'],
-                'top_shop' => $topShop,
-                'shops' => $product['shops'],
-            ];
-        }
-
-        usort($products, fn ($a, $b) => $b['total_revenue'] <=> $a['total_revenue']);
-
-        return response()->json([
-            'success' => true,
-            'data' => [
+            return [
                 'from' => $start->toDateString(),
                 'to' => $end->toDateString(),
                 'total_revenue' => round($totalSystemRevenue),
@@ -924,6 +935,122 @@ SQL;
                 'total_products' => count($products),
                 'top_pairings' => $topPairings,
                 'products' => $products,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     * Bảng thống kê số lượng đơn hàng theo tháng (đầy đủ 12 tháng trong năm).
+     */
+    public function monthlyCounts(Request $request)
+    {
+        $actor = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $actor,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $shopIds = $requestedShopId !== null
+            ? [$requestedShopId]
+            : (! $this->shopAccessService->isGlobal($actor) ? $this->shopAccessService->ids($actor)->all() : null);
+
+        $request->validate([
+            'year' => ['nullable', 'integer', 'min:2020', 'max:2030'],
+            'shop_id' => ['nullable', 'integer'],
+            'status' => ['nullable'],
+        ]);
+
+        $availableYears = Order::query()
+            ->whereNull('deleted_at')
+            ->when($shopIds !== null, fn ($q) => $q->whereIn('shop_id', $shopIds))
+            ->selectRaw('DISTINCT YEAR(created_at) as yr')
+            ->orderByDesc('yr')
+            ->pluck('yr')
+            ->filter()
+            ->map(fn ($y) => (int) $y)
+            ->values()
+            ->all();
+
+        $defaultYear = $availableYears[0] ?? (int) date('Y');
+        $year = $request->integer('year', $defaultYear);
+
+        $query = Order::query()
+            ->whereNull('orders.deleted_at')
+            ->whereYear('orders.created_at', $year)
+            ->when($shopIds !== null, fn ($q) => $q->whereIn('orders.shop_id', $shopIds));
+
+        if ($request->filled('status')) {
+            $status = $request->input('status');
+            if (is_array($status)) {
+                $query->whereIn('orders.status', $status);
+            } else {
+                $query->where('orders.status', $status);
+            }
+        }
+
+        $rows = (clone $query)
+            ->selectRaw("
+                MONTH(orders.created_at) as month,
+                COUNT(DISTINCT orders.id) as total_orders,
+                COUNT(DISTINCT CASE WHEN orders.status IN (3, 16) THEN orders.id END) as success_orders,
+                COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN orders.cod ELSE 0 END), 0) as success_cod,
+                COALESCE(SUM(orders.cod), 0) as total_cod
+            ")
+            ->groupByRaw('MONTH(orders.created_at)')
+            ->orderByRaw('month ASC')
+            ->get()
+            ->keyBy('month');
+
+        $months = [];
+        $totalOrdersYear = 0;
+        $totalSuccessYear = 0;
+        $totalSuccessCodYear = 0.0;
+        $totalCodYear = 0.0;
+
+        for ($m = 1; $m <= 12; $m++) {
+            $row = $rows->get($m);
+            $totalOrders = $row ? (int) $row->total_orders : 0;
+            $successOrders = $row ? (int) $row->success_orders : 0;
+            $successCod = $row ? (float) $row->success_cod : 0.0;
+            $totalCod = $row ? (float) $row->total_cod : 0.0;
+            $successRate = $totalOrders > 0 ? round(($successOrders / $totalOrders) * 100, 1) : 0.0;
+
+            $totalOrdersYear += $totalOrders;
+            $totalSuccessYear += $successOrders;
+            $totalSuccessCodYear += $successCod;
+            $totalCodYear += $totalCod;
+
+            $months[] = [
+                'month' => $m,
+                'label' => "Tháng $m",
+                'short_label' => "T$m",
+                'total_orders' => $totalOrders,
+                'success_orders' => $successOrders,
+                'success_rate' => $successRate,
+                'success_cod' => $successCod,
+                'total_cod' => $totalCod,
+            ];
+        }
+
+        $overallSuccessRate = $totalOrdersYear > 0 ? round(($totalSuccessYear / $totalOrdersYear) * 100, 1) : 0.0;
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'year' => $year,
+                'available_years' => $availableYears,
+                'summary' => [
+                    'total_orders' => $totalOrdersYear,
+                    'success_orders' => $totalSuccessYear,
+                    'success_rate' => $overallSuccessRate,
+                    'success_cod' => $totalSuccessCodYear,
+                    'total_cod' => $totalCodYear,
+                ],
+                'months' => $months,
             ],
         ]);
     }
