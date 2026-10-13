@@ -122,6 +122,15 @@ export const router = createBrowserRouter([
             element: <LazyRoute Page={lazy(() => import('../pages/Orders/OrdersPage.jsx'))} />,
           },
           {
+            path: ROUTES.PANCAKE_ORDERS,
+            element: <LazyRoute Page={lazy(() => import('../pages/PancakeOrders/PancakeOrdersPage.jsx'))} />,
+          },
+          {
+            path: '/pancake',
+            element: <Navigate to={ROUTES.PANCAKE_ORDERS} replace />,
+          },
+
+          {
             path: ROUTES.OPPORTUNITIES,
             element: (
               <LazyRoute Page={lazy(() => import('../pages/Opportunities/OrderOpportunitiesPage.jsx'))} />
@@ -186,7 +195,9 @@ export const router = createBrowserRouter([
               !ADMIN_ONLY_ROUTES.includes(route.path) &&
               route.path !== ROUTES.ZALO_INBOX &&
               route.path !== ROUTES.ORDERS &&
+              route.path !== ROUTES.PANCAKE_ORDERS &&
               route.path !== ROUTES.OPPORTUNITIES &&
+
               route.path !== ROUTES.STAFF_ASSIGNMENTS &&
               route.path !== ROUTES.CUSTOMERS &&
               route.path !== ROUTES.SHOPS &&

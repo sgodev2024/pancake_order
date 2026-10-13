@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\LoyaltyTierController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\OrderPageController;
 use App\Http\Controllers\Api\OrderSourceController;
+use App\Http\Controllers\Api\PancakeOrderController;
+
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\PermissionGroupController;
 use App\Http\Controllers\Api\ProductController;
@@ -98,6 +100,10 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
         ->middleware(AdminOnlyMiddleware::class.':allow-director');
     Route::get('orders/sales-chart-data', [OrderController::class, 'salesChartData']);
     Route::apiResource('orders', OrderController::class);
+
+    Route::get('pancake-orders', [PancakeOrderController::class, 'index']);
+    Route::get('pancake-orders/{id}', [PancakeOrderController::class, 'show']);
+
 
     Route::post('webhook-monitor/cleanup', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'cleanup'])->middleware(AdminOnlyMiddleware::class);
     Route::get('webhook-monitor', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'index'])->middleware(AdminOnlyMiddleware::class);

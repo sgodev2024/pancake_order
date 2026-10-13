@@ -1,7 +1,7 @@
 import { CloseOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Drawer, Layout, Menu } from 'antd'
-import { createElement, useMemo, useState } from 'react'
+import { createElement, useEffect, useMemo, useState } from 'react'
 import { getSetting } from '../api/settings.api.js'
 import { preloadDefaultReport } from '../app/reportPreload.js'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -65,6 +65,13 @@ const SidebarMenu = ({ collapsed = false, onNavigate }) => {
   const navigate = useNavigate()
   const parentKey = findParentMenuKey(location.pathname)
   const [openKeys, setOpenKeys] = useState(() => (parentKey ? [parentKey] : []))
+
+  useEffect(() => {
+    if (parentKey && !openKeys.includes(parentKey)) {
+      setOpenKeys((prev) => Array.from(new Set([...prev, parentKey])))
+    }
+  }, [parentKey])
+
   const visibleMenu = useMemo(() => filterMenuByPermissions(MENU_ITEMS, user), [user])
   const menuItems = toAntMenuItems(visibleMenu, (item) => {
     warmDefaultReport()

@@ -78,11 +78,25 @@ export const MENU_ITEMS = [
     ],
   },
   {
-    key: ROUTES.ORDERS,
+    key: 'orders-group',
     label: 'Đơn hàng',
-    path: ROUTES.ORDERS,
     icon: ShoppingCartOutlined,
+    children: [
+      {
+        key: ROUTES.ORDERS,
+        label: 'Đơn hàng',
+        title: 'Đơn hàng',
+        path: ROUTES.ORDERS,
+      },
+      {
+        key: ROUTES.PANCAKE_ORDERS,
+        label: 'Pancake',
+        title: 'Đơn hàng Pancake',
+        path: ROUTES.PANCAKE_ORDERS,
+      },
+    ],
   },
+
   {
     key: ROUTES.PRODUCTS,
     label: 'Sản phẩm',
