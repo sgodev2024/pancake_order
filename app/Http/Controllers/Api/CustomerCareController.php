@@ -415,8 +415,9 @@ class CustomerCareController extends Controller implements HasMiddleware
         }
 
         if (! $this->shopAccessService->isGlobal($actor)) {
+            // Authorized care readers can see this customer's history in the care's shop,
+            // regardless of which employee created or cared for each Order.
             $ordersQuery->where('shop_id', $customerCare->shop_id);
-            $this->applyOrderReadScope($ordersQuery, $actor);
         }
 
         return response()->json([
@@ -556,18 +557,6 @@ class CustomerCareController extends Controller implements HasMiddleware
                             });
                     });
             });
-        });
-    }
-
-    private function applyOrderReadScope($query, User $actor): void
-    {
-        if ($actor->isAdmin() || $actor->isManagerSale() || $actor->isManagerCskh()) {
-            return;
-        }
-
-        $query->where(function ($scope) use ($actor) {
-            $scope->where('user_creator_id', $actor->pancake_user_id)
-                ->orWhere('user_care_id', $actor->pancake_user_id);
         });
     }
 
