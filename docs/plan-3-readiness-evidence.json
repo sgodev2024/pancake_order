@@ -1,0 +1,211 @@
+{
+  "checked_on": "2026-10-22",
+  "verdict": "READY",
+  "scope": "Technical readiness; activation and production backup require separate approval. No main DB mutation performed.",
+  "main_unchanged": {
+    "database": true,
+    "warehouse": true,
+    "order_count": true,
+    "queued_count": true,
+    "sample": true,
+    "orders_columns": true,
+    "orders_indexes": true,
+    "migrations": true,
+    "warehouse_permissions": true,
+    "access_fingerprints": true
+  },
+  "main_state": {
+    "database": "pancake_order",
+    "server": {
+      "version": "8.4.11",
+      "session_timezone": "SYSTEM",
+      "global_timezone": "SYSTEM",
+      "system_timezone": "+07",
+      "binlog_enabled": 1
+    },
+    "app_timezone": "Asia/Ho_Chi_Minh",
+    "config_cached": false,
+    "warehouse": {
+      "enabled": false,
+      "activated_at": null,
+      "configuration_valid": true
+    },
+    "queue": "database",
+    "order_count": 90577,
+    "queued_count": 0,
+    "sample": {
+      "id": 349305,
+      "shop_id": 13,
+      "origin": "local_pos",
+      "created_at": "2026-10-21 15:07:39",
+      "updated_at": "2026-10-21 15:07:39",
+      "warehouse_status": "waiting_packing",
+      "warehouse_queued_at": null,
+      "cash": "200000.00",
+      "cod": "6320000.00"
+    },
+    "warehouse_permissions": [],
+    "access_fingerprints": {
+      "users": {
+        "count": 243,
+        "sha256": "4a8453c34a931c490cf8ad66ca499325fb19761951f4b9b85fde5bd3419cfb15"
+      },
+      "roles": {
+        "count": 6,
+        "sha256": "29655a18347049462c1f3c779e932adfe5f354013940ad7f9a4663e80c3db7ec"
+      },
+      "permissions": {
+        "count": 32,
+        "sha256": "95abea115539b7b0acc322c209461f9dc1b5d229a63a4ef5786d7c5230db0edb"
+      },
+      "role_permissions": {
+        "count": 89,
+        "sha256": "0a7450ac4d75c37ddf6339fb05ea6300a1199f53debe3a3c08c5bb1c759d93df"
+      },
+      "shop_users": {
+        "count": 538,
+        "sha256": "272dc7cef25d190b4dc3ded0cf151907ace5d66247902143840bb8204c2acaae"
+      }
+    },
+    "database_summary": {
+      "table_count": 37,
+      "estimated_bytes": "3206529024"
+    },
+    "non_innodb_tables": [],
+    "queued_jobs": [
+      {
+        "queue": "get-customer-chunk",
+        "count": 1
+      },
+      {
+        "queue": "get-employee",
+        "count": 1
+      },
+      {
+        "queue": "get-product-chunk",
+        "count": 2
+      }
+    ],
+    "recovery_config": {
+      "binlog_expire_logs_seconds": 2592000,
+      "gtid_mode": "OFF"
+    }
+  },
+  "main_plan3_columns_present": [],
+  "main_plan3_migrated": false,
+  "synthetic_mysql_migration_and_api": {
+    "pass": true,
+    "database": "pancake_warehouse_readiness_test_20261022",
+    "synthetic_order_count": 90577,
+    "historical_sha256_before": "e916f39176c742859a66f559416b60d92340811ffe60492d0d01c51a4e03ff18",
+    "historical_sha256_after": "e916f39176c742859a66f559416b60d92340811ffe60492d0d01c51a4e03ff18",
+    "migration_seconds": 0.236,
+    "warehouse_permissions": [
+      "warehouse-view",
+      "warehouse-pack"
+    ],
+    "role_permission_count": 0,
+    "all_new_columns_null": true,
+    "activation_initial_list_status": 200,
+    "activation_initial_list_count": 0,
+    "old_sample_complete_status": 409,
+    "old_sample": {
+      "id": 349305,
+      "created_at": "2026-10-21 15:07:39",
+      "warehouse_status": "waiting_packing",
+      "warehouse_queued_at": null,
+      "cod": "6320000.00",
+      "cash": "200000.00",
+      "packed_at": null
+    },
+    "new_order_count": 1,
+    "complete_status": 200,
+    "repeat_replayed": true,
+    "packed_list_status": 200,
+    "packed_list_count": 1,
+    "wrong_shop_status": 403,
+    "shop_options_status": 200,
+    "shop_option_count": 1,
+    "packed_audit_count": 1,
+    "money_unchanged": true
+  },
+  "synthetic_mysql_backup_restore": {
+    "pass": true,
+    "source_database": "pancake_warehouse_readiness_test_20261022",
+    "restored_database": "pancake_warehouse_restore_test_20261022",
+    "dump_bytes": 31272278,
+    "dump_sha256": "3c40f277f230d7cfef44ea153e5562b51275029e404e5d6936eb6e9be4a36a36",
+    "dump_seconds": 0.213,
+    "restore_seconds": 2.838,
+    "checks": {
+      "orders": {
+        "source_count": 90578,
+        "restored_count": 90578,
+        "sha256_match": true
+      },
+      "activity_logs": {
+        "source_count": 2,
+        "restored_count": 2,
+        "sha256_match": true
+      },
+      "users": {
+        "source_count": 1,
+        "restored_count": 1,
+        "sha256_match": true
+      },
+      "roles": {
+        "source_count": 1,
+        "restored_count": 1,
+        "sha256_match": true
+      },
+      "role_permissions": {
+        "source_count": 2,
+        "restored_count": 2,
+        "sha256_match": true
+      },
+      "shop_users": {
+        "source_count": 1,
+        "restored_count": 1,
+        "sha256_match": true
+      },
+      "permissions": {
+        "source_count": 2,
+        "restored_count": 2,
+        "sha256_match": true
+      },
+      "permission_groups": {
+        "source_count": 1,
+        "restored_count": 1,
+        "sha256_match": true
+      }
+    }
+  },
+  "tests": {
+    "warehouse": {
+      "passed": 17,
+      "assertions": 118
+    },
+    "related_backend": {
+      "passed": 86,
+      "assertions": 572
+    },
+    "backend_full": {
+      "passed": 456,
+      "failed": 5,
+      "assertions": 3246,
+      "same_failures_as_baseline": true
+    },
+    "frontend_full": {
+      "passed": 73,
+      "failed": 7,
+      "same_failures_as_baseline": true
+    },
+    "warehouse_frontend": {
+      "passed": 7,
+      "failed": 0
+    },
+    "production_build": "PASS",
+    "lint": "PASS; 17 existing warnings"
+  },
+  "migration_sha256": "f74b32b8e078a23ddff61dd14aed05fd011f7380ec3fb54b2000cbd90cc46aac"
+}
