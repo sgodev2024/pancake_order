@@ -9,10 +9,26 @@ class Order extends Model
 {
     use SoftDeletes;
 
+    public const WAREHOUSE_WAITING = 'waiting_packing';
+
+    public const WAREHOUSE_PACKED = 'packed';
+
     protected $table = 'orders';
 
     protected $fillable = [
         'shop_id',
+        'customer_id',
+        'created_by_user_id',
+        'origin',
+        'idempotency_key',
+        'request_hash',
+        'warehouse_status',
+        'warehouse_queued_at',
+        'source_created_at',
+        'first_synced_at',
+        'source_creator_name',
+        'packed_by_user_id',
+        'packed_at',
         'province_id',
         'pancake_order_id',
         'pancake_order_source_id',
@@ -40,7 +56,28 @@ class Order extends Model
 
     protected $casts = [
         'pancake_full_data' => 'array',
+        'warehouse_queued_at' => 'datetime',
+        'source_created_at' => 'datetime',
+        'first_synced_at' => 'datetime',
+        'packed_at' => 'datetime',
     ];
+
+    protected $hidden = ['request_hash', 'idempotency_key'];
+
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    public function packedBy()
+    {
+        return $this->belongsTo(User::class, 'packed_by_user_id')->select('id', 'name');
+    }
+
+    public function packingLog()
+    {
+        return $this->hasOne(ActivityLog::class, 'subject_id')->where('subject_type', 'order')->where('action', 'warehouse.packed');
+    }
 
     public function shop()
     {
