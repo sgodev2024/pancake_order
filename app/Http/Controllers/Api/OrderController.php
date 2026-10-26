@@ -3,15 +3,29 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\Province;
+use App\Services\OrderService;
 use App\Services\ShopAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
-class OrderController extends Controller
+class OrderController extends Controller implements HasMiddleware
 {
+    public static function middleware(): array
+    {
+        return [
+            new Middleware(PermissionCheckMiddleware::class.':list-product,strict', only: ['store']),
+            new Middleware(PermissionCheckMiddleware::class.':list-customer,strict', only: ['store']),
+        ];
+    }
+
     private ShopAccessService $shopAccessService;
 
     public function __construct(?ShopAccessService $shopAccessService = null)
@@ -134,6 +148,11 @@ class OrderController extends Controller
                         ->orWhere('orders.customer_phone', 'like', $searchTerm)
                         ->orWhere('orders.customer_name', 'like', $searchTerm)
                         ->orWhere('orders.pancake_order_id', $inputs['search']);
+                    if (preg_match('/^POS-(\d+)$/i', $inputs['search'], $match)) {
+                        $q->orWhere(function ($local) use ($match) {
+                            $local->where('orders.origin', 'local_pos')->where('orders.id', $match[1]);
+                        });
+                    }
                 });
             }
             // 2. Select các trường cụ thể cần lấy để tối ưu performance
@@ -142,6 +161,8 @@ class OrderController extends Controller
                 $query->select([
                     'id',
                     'pancake_order_id',
+                    'pancake_full_data->origin as order_origin',
+                    'pancake_full_data->pos_totals->total_amount as pos_total_amount',
                     'created_at',
                     'status',
                     'status_vtp',
@@ -195,7 +216,9 @@ class OrderController extends Controller
             }
 
             $prepaidColumn = $query->getQuery()->getGrammar()->wrap('orders.pancake_full_data->prepaid');
-            $revenueExpression = "COALESCE(SUM(COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0)), 0)";
+            $posTotalColumn = $query->getQuery()->getGrammar()->wrap('orders.pancake_full_data->pos_totals->total_amount');
+            $orderValueExpression = "COALESCE({$posTotalColumn}, COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0))";
+            $revenueExpression = "COALESCE(SUM({$orderValueExpression}), 0)";
 
             if ($isSummaryView) {
                 $pageNumber = max((int) ($inputs['page'] ?? 1), 1);
@@ -243,7 +266,7 @@ class OrderController extends Controller
             } else {
                 $pageNumber = $inputs['page'] ?? 1;
                 $pageSize = $inputs['page_size'] ?? 30;
-                $totalRevenue = (clone $query)->sum(DB::raw("COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0)"));
+                $totalRevenue = (clone $query)->sum(DB::raw($orderValueExpression));
                 $orders = $query->latest('created_at')->paginate($pageSize, ['*'], 'page', $pageNumber);
                 $orderItems = $orders->items();
                 $pageNumber = $orders->currentPage();
@@ -272,6 +295,72 @@ class OrderController extends Controller
                 'message' => 'Đã có lỗi xảy ra: '.$th->getMessage(),
             ], 500);
         }
+    }
+
+    public function store(Request $request, OrderService $service)
+    {
+        $user = $request->user();
+        // Custom sales roles must opt in explicitly; read permissions alone never allow POS.
+        if (! $user->isAdmin() && ! $user->isStaffSale() && ! $user->isManagerSale()
+            && ! can_access('pos-create')) {
+            throw new AuthorizationException('Bạn không có quyền tạo đơn POS.');
+        }
+        $money = ['numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'];
+        $data = $request->validate([
+            'idempotency_key' => ['required', 'uuid'],
+            'shop_id' => ['required', 'integer', Rule::exists('shops', 'id')->whereNull('deleted_at')],
+            'customer_id' => ['nullable', 'integer', 'prohibits:customer'],
+            'customer' => ['required_without:customer_id', 'array:name,phone', 'prohibits:customer_id'],
+            'customer.name' => ['required_with:customer', 'string', 'max:255'],
+            'customer.phone' => ['required_with:customer', 'string', 'regex:/^(0\d{9,10}|\+84\d{9,10})$/'],
+            'shipping_address' => ['required', 'string', 'max:1000'],
+            'items' => ['required', 'array', 'min:1', 'max:200'],
+            'items.*' => ['required', 'array:product_id,quantity,unit_price'],
+            'items.*.product_id' => ['required', 'integer', 'distinct'],
+            // This is only a numeric safety bound, unrelated to displayed/physical stock.
+            'items.*.quantity' => ['required', 'integer', 'min:1', 'max:1000000'],
+            'items.*.unit_price' => ['sometimes', 'required', ...$money],
+            'discount_amount' => ['sometimes', 'required', ...$money],
+            'shipping_fee' => ['sometimes', 'required', ...$money],
+            'surcharge' => ['sometimes', 'required', ...$money],
+            'paid_amount' => ['sometimes', 'required', ...$money],
+            'payment_method' => ['sometimes', 'required', Rule::in(['cash', 'bank_transfer'])],
+            'cod_mode' => ['sometimes', 'required', Rule::in(['remaining', 'none'])],
+            'note' => ['nullable', 'string', 'max:5000'],
+        ]);
+        $order = $service->createLocalOrder($user, $data);
+
+        return response()->json([
+            'success' => true, 'message' => 'Tạo đơn hàng thành công.',
+            'replayed' => ! $order->wasRecentlyCreated,
+            'data' => $this->orderDetailData($order),
+        ], $order->wasRecentlyCreated ? 201 : 200);
+    }
+
+    public function show(Request $request, Order $order)
+    {
+        $actor = $request->user();
+        if (! $this->shopAccessService->canAccessShop($actor, (int) $order->shop_id)) {
+            throw new AuthorizationException('Bạn không có quyền xem đơn hàng thuộc shop này.');
+        }
+        if (! $actor->isAdmin() && ! $actor->isManagerSale() && ! $actor->isManagerCskh()
+            && (string) $order->user_creator_id !== (string) $actor->pancake_user_id
+            && (string) $order->user_care_id !== (string) $actor->pancake_user_id) {
+            throw new AuthorizationException('Bạn không có quyền xem đơn hàng này.');
+        }
+
+        return response()->json(['success' => true, 'data' => $this->orderDetailData($order)]);
+    }
+
+    private function orderDetailData(Order $order): array
+    {
+        $payload = $order->pancake_full_data ?? [];
+
+        return array_merge($order->load('shop:id,name', 'user_creator')->toArray(), [
+            'reference' => $order->origin === 'local_pos' ? 'POS-'.$order->id : $order->pancake_order_id,
+            'totals' => $payload['pos_totals'] ?? null,
+            'items' => $payload['items'] ?? [], 'payments' => $payload['payments'] ?? [],
+        ]);
     }
 
     /**
@@ -403,7 +492,9 @@ class OrderController extends Controller
                 ->orderByDesc('id');
 
             $customerId = $order->pancake_customer_id;
-            if ($customerId === null || trim((string) $customerId) === '') {
+            if ($order->customer_id !== null) {
+                $historyQuery->where('customer_id', $order->customer_id)->where('shop_id', $order->shop_id);
+            } elseif ($customerId === null || trim((string) $customerId) === '') {
                 // Never use whereNull here: a blank customer identity is not a safe grouping key.
                 $historyQuery->whereKey($order->getKey());
             } else {

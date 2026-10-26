@@ -31,13 +31,16 @@ class CustomerController extends Controller implements HasMiddleware
     {
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
-            new Middleware(PermissionCheckMiddleware::class . ':list-customer', except: ['getOrder']),
-            new Middleware(PermissionCheckMiddleware::class . ':list-customer,strict', only: ['getOrder']),
+            new Middleware(PermissionCheckMiddleware::class.':list-customer,strict', except: ['getOrder']),
+            new Middleware(PermissionCheckMiddleware::class.':list-customer,strict', only: ['getOrder']),
         ];
     }
 
     public function index(Request $request)
     {
+        if ($request->query('view') === 'pos') {
+            return $this->posOptions($request);
+        }
         $user = $request->user();
         $journeyFilters = $request->validate([
             'journey_action' => ['nullable', 'string', 'in:'.implode(',', CustomerJourneyService::ACTIONS)],
@@ -56,29 +59,29 @@ class CustomerController extends Controller implements HasMiddleware
 
         try {
             $inputs = $request->only(
-                "page",
-                "page_size",
-                "shop_id",
-                "date_from",
-                "date_to",
-                "search",
-                "loyalty_tier_id"
+                'page',
+                'page_size',
+                'shop_id',
+                'date_from',
+                'date_to',
+                'search',
+                'loyalty_tier_id'
             );
             // 1. Khởi tạo query từ relationship
             $query = Customer::query();
             if ($requestedShopId !== null) {
-                $query->where("shop_id", $requestedShopId);
+                $query->where('shop_id', $requestedShopId);
             } elseif (! $this->shopAccessService->isGlobal($user)) {
-                $query->whereIn("shop_id", $this->shopAccessService->ids($user));
+                $query->whereIn('shop_id', $this->shopAccessService->ids($user));
             }
-            if (isset($inputs["loyalty_tier_id"])) {
-                $query->where("loyalty_tier_id", $inputs["loyalty_tier_id"]);
+            if (isset($inputs['loyalty_tier_id'])) {
+                $query->where('loyalty_tier_id', $inputs['loyalty_tier_id']);
             }
             $query->with([
-                "shop" => function ($q) {
-                    $q->select("shops.id", "shops.name");
+                'shop' => function ($q) {
+                    $q->select('shops.id', 'shops.name');
                 },
-                "loyalty_tier"
+                'loyalty_tier',
             ]);
             // 2. Select các trường cụ thể cần lấy để tối ưu performance
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
@@ -86,13 +89,13 @@ class CustomerController extends Controller implements HasMiddleware
                 'id',
                 'purchased_amount',
                 'shop_id',
-                'name', 
+                'name',
                 'phone_numbers',
                 'pancake_customer_id',
                 'pancake_full_data',
                 'created_at',
                 'loyalty_tier_id',
-                'order_count'
+                'order_count',
             ]);
             // $query->withCount("orders");
 
@@ -103,30 +106,30 @@ class CustomerController extends Controller implements HasMiddleware
                 $q->where(function ($sub) use ($search) {
                     $sub->where(function ($q_sub) use ($search) {
                         $q_sub->where('name', 'like', "{$search}%")
-                              ->orWhere('phone_numbers', 'like', "{$search}%");
+                            ->orWhere('phone_numbers', 'like', "{$search}%");
                     });
                 });
             });
-            if (isset($inputs["date_from"])) {
-                $query->where("created_at", ">=", $inputs["date_from"] . " 00:00:00");
+            if (isset($inputs['date_from'])) {
+                $query->where('created_at', '>=', $inputs['date_from'].' 00:00:00');
             }
-            if (isset($inputs["date_to"])) {
-                $query->where("created_at", "<=", $inputs["date_to"] . " 23:59:59");
+            if (isset($inputs['date_to'])) {
+                $query->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
             }
             if (! $this->shopAccessService->isGlobal($user)) {
                 $this->customerReadAccessService->applyRecordScope($query, $user, 'assigned_user_id');
             }
             $this->customerJourneyFilterService->apply($query, $journeyFilters);
-            $pageNumber = $inputs["page"];
-            $page_size  = $inputs["page_size"] ?? 30;
+            $pageNumber = $inputs['page'];
+            $page_size = $inputs['page_size'] ?? 30;
             // 4. Sắp xếp và Phân trang (Lấy 30 records mỗi trang)
             $customers = $query->latest()->paginate($page_size, ['*'], 'page', $pageNumber);
 
             // 5. Trả về Response
             return response()->json([
                 'success' => true,
-                'data'    => [
-                    "customers" => $customers->items(),
+                'data' => [
+                    'customers' => $customers->items(),
                     'current_page' => $customers->currentPage(),
                     'per_page' => $customers->perPage(),
                     'total_items' => $customers->total(),
@@ -136,9 +139,42 @@ class CustomerController extends Controller implements HasMiddleware
         } catch (\Throwable $th) {
             return response()->json([
                 'success' => false,
-                'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
+                'message' => 'Đã có lỗi xảy ra: '.$th->getMessage(),
             ], 500);
         }
+    }
+
+    private function posOptions(Request $request)
+    {
+        abort_unless(can_access('list-customer'), 403, 'Bạn không có quyền xem khách hàng.');
+        $data = $request->validate([
+            'shop_id' => ['required', 'integer', 'min:1'],
+            'search' => ['nullable', 'string', 'max:255'],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $this->shopAccessService->authorizeRequestedShopId($request->user(), $data['shop_id']);
+        $query = Customer::where('shop_id', $data['shop_id']);
+        $this->customerReadAccessService->applyRecordScope($query, $request->user());
+        if (! empty($data['search'])) {
+            $query->where(function ($q) use ($data) {
+                $q->where('name', 'like', '%'.$data['search'].'%')
+                    ->orWhere('phone_numbers', 'like', '%'.$data['search'].'%');
+            });
+        }
+        $rows = $query->orderBy('name')->paginate(20, ['id', 'name', 'phone_numbers', 'pancake_full_data'], 'page', $data['page'] ?? 1);
+
+        return response()->json(['success' => true, 'data' => [
+            'customers' => collect($rows->items())->map(function ($customer) {
+                $address = data_get($customer->pancake_full_data, 'address')
+                    ?? data_get($customer->pancake_full_data, 'addresses.0.full_address');
+
+                return [
+                    'id' => $customer->id, 'name' => $customer->name, 'phone' => $customer->phone_numbers,
+                    'address' => is_string($address) ? $address : '',
+                ];
+            })->values(),
+            'total_items' => $rows->total(),
+        ]]);
     }
 
     /** @param array<string, mixed> $filters */
@@ -227,7 +263,7 @@ class CustomerController extends Controller implements HasMiddleware
         } catch (\Throwable $th) {
             return response()->json([
                 'success' => false,
-                'message' => 'Đã có lỗi xảy ra: ' . $th->getMessage()
+                'message' => 'Đã có lỗi xảy ra: '.$th->getMessage(),
             ], 500);
         }
     }
