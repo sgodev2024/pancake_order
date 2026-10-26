@@ -4,8 +4,10 @@ namespace App\Jobs;
 
 use App\Models\Customer;
 use App\Models\Order;
+use App\Models\Shop;
 use App\Services\OrderCreatedEventWriter;
 use App\Services\OrderService;
+use App\Services\WarehouseService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
@@ -46,12 +48,28 @@ class GetOrderByShopJob implements ShouldQueue
                 $shopId = (int) $this->shop_id;
                 $insertData = [];
                 $storedOrderIds = [];
+                $sourcePayloads = [];
                 $orderService = new OrderService;
+                $warehouse = app(WarehouseService::class);
+                if ($warehouse->enabled()) {
+                    Shop::whereKey($shopId)->lockForUpdate()->firstOrFail();
+                }
 
                 foreach ($this->datas as $dataItem) {
+                    if ($warehouse->enabled() && ! empty($dataItem['id'])) {
+                        $existing = Order::withTrashed()->where('shop_id', $shopId)
+                            ->where('pancake_order_id', $dataItem['id'].'_'.$shopId)->lockForUpdate()->first();
+                        if ($existing) {
+                            if (! $existing->trashed()) {
+                                $warehouse->synchronize($existing, $dataItem, false);
+                            }
+
+                            continue;
+                        }
+                    }
                     // Preserve the existing bulk business filter: only VTP
                     // partner orders enter the local orders table.
-                    if (empty($dataItem['partner']['order_number_vtp'])) {
+                    if (empty($dataItem['partner']['order_number_vtp']) && ! $warehouse->canImportWithoutTracking($dataItem)) {
                         continue;
                     }
 
@@ -69,6 +87,7 @@ class GetOrderByShopJob implements ShouldQueue
                     }
 
                     $storedOrderIds[$storedOrderId] = true;
+                    $sourcePayloads[$storedOrderId] = $dataItem;
                     $insertData[] = $orderData;
                 }
 
@@ -116,6 +135,7 @@ class GetOrderByShopJob implements ShouldQueue
                     }
 
                     $customer = $customersByPancakeId->get((string) $order->pancake_customer_id);
+                    $warehouse->synchronize($order, $sourcePayloads[$storedOrderId], true);
                     $eventWriter->write(
                         $order,
                         'pancake_bulk_sync',
