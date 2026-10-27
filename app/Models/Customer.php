@@ -17,12 +17,14 @@ class Customer extends Model
         "name",
         "phone_numbers",
         "pancake_full_data",
+        "last_order_at",
         "assigned_user_id",
         "purchased_amount"
     ];
 
     protected $casts = [
-        'pancake_full_data'  => 'array'
+        'pancake_full_data' => 'array',
+        'last_order_at' => 'datetime',
     ];
 
     public function shop()

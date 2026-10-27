@@ -88,6 +88,11 @@ class User extends Authenticatable
         return in_array($this->role?->slug, ['admin']);
     }
 
+    public function isDirector(): bool
+    {
+        return in_array($this->role?->slug, ['director']);
+    }
+
     public function isManagerSale(): bool
     {
         return in_array($this->role?->slug, ['manager-sale']);

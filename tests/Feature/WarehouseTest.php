@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\GetOrderByShopJob;
 use App\Jobs\GetOrderFromWebhookJob;
 use App\Models\ActivityLog;
+use App\Models\Customer;
 use App\Models\Order;
 use App\Models\Permission;
 use App\Models\PermissionGroup;
@@ -351,6 +352,44 @@ class WarehouseTest extends TestCase
         $this->getJson('/api/v1/warehouse/orders/349305')->assertNotFound();
         $this->postJson('/api/v1/warehouse/orders/349305/complete')->assertStatus(409);
         $this->assertSame($before, $sample->fresh()->getRawOriginal());
+    }
+
+    public function test_main_payment_and_customer_recency_sync_preserve_warehouse_snapshots(): void
+    {
+        (require database_path('migrations/2026_05_23_160750_create_loyalty_tiers_table.php'))->up();
+        Schema::table('orders', function (Blueprint $table) {
+            $table->decimal('prepaid_amount', 20, 2)->default(0);
+        });
+        Schema::table('customers', function (Blueprint $table) {
+            $table->dateTime('last_order_at')->nullable();
+            $table->unsignedBigInteger('loyalty_tier_id')->nullable();
+        });
+        $customer = Customer::create([
+            'shop_id' => $this->shop->id, 'pancake_customer_id' => 'merge-customer',
+            'name' => 'Merge customer', 'last_order_at' => '2026-10-19 02:00:00',
+        ]);
+        $source = $this->source('merge-payment', [
+            'prepaid' => 50000,
+            'partner' => ['order_number_vtp' => 'merge-tracking'],
+            'customer' => [
+                'customer_id' => 'merge-customer', 'last_order_at' => '2026-10-21T02:00:00Z',
+                'order_count' => 1, 'purchased_amount' => 0,
+            ],
+        ]);
+        $this->bulk([$source]);
+        $order = Order::sole();
+        $this->assertEquals(50000, $order->prepaid_amount);
+        $this->assertNotNull($order->warehouse_queued_at);
+        $this->assertSame('2026-10-21 09:00:00', $customer->fresh()->last_order_at->format('Y-m-d H:i:s'));
+
+        $this->webhook(array_replace($source, ['prepaid' => 70000]));
+        $this->assertEquals(70000, $order->fresh()->prepaid_amount);
+        // A status-only webhook must retain both the indexed payment and JSON snapshot.
+        $this->webhook(['id' => $source['id'], 'shop_id' => $source['shop_id'], 'status' => 1]);
+        $this->assertEquals(70000, $order->fresh()->prepaid_amount);
+        $this->assertEquals(70000, $order->fresh()->pancake_full_data['prepaid']);
+        $this->assertNotNull($order->fresh()->warehouse_queued_at);
+        Http::assertNothingSent();
     }
 
     private function createLocal(): int

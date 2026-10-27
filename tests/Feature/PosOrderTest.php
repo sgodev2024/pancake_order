@@ -284,6 +284,24 @@ class PosOrderTest extends TestCase
         $this->assertDatabaseCount('activity_logs', 3);
     }
 
+    public function test_pos_payment_and_total_remain_correct_in_the_main_overview(): void
+    {
+        Schema::table('orders', function (Blueprint $table) {
+            $table->decimal('prepaid_amount', 20, 2)->default(0);
+        });
+        $id = $this->postJson('/api/v1/orders', $this->payload([
+            'cod_mode' => 'none', 'paid_amount' => 100000,
+        ]))->assertCreated()->json('data.id');
+
+        $this->assertEquals(100000, Order::findOrFail($id)->prepaid_amount);
+        $this->getJson('/api/v1/orders?view=summary&totals_only=1')->assertOk()
+            ->assertJsonPath('data.total_revenue', 500000)
+            ->assertJsonPath('data.total_prepaid_amount', 100000)
+            ->assertJsonPath('data.total_items', 1)
+            ->assertJsonCount(0, 'data.orders');
+        Http::assertNothingSent();
+    }
+
     public function test_one_order_can_mix_local_and_pancake_products(): void
     {
         $this->postJson('/api/v1/orders', $this->payload(['items' => [

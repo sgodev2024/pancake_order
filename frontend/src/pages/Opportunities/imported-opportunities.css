@@ -1,0 +1,86 @@
+.imported-opportunities-page {
+  display: grid;
+  min-width: 0;
+}
+
+.imported-opportunities-card {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.imported-opportunities-card > .ant-card-body {
+  padding: 0 18px 18px;
+}
+
+.imported-opportunities-toolbar {
+  padding: 14px 0;
+  border-bottom: 1px solid #f1f3f5;
+}
+
+.imported-opportunities-toolbar .shop-select,
+.imported-opportunities-toolbar .shop-select .ant-select {
+  width: 180px;
+}
+
+.imported-opportunities-summary {
+  padding: 16px 0 10px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.imported-opportunities-summary strong {
+  color: var(--color-text);
+}
+
+.imported-opportunities-alert {
+  margin-bottom: 12px;
+}
+
+.imported-opportunities-import-error {
+  margin-bottom: 0 !important;
+  white-space: pre-line;
+}
+
+.imported-opportunities-table .ant-table-container {
+  overflow: hidden;
+  border: 1px solid #edf0f3;
+  border-radius: 8px;
+}
+
+.imported-opportunities-table .ant-table-thead > tr > th {
+  background: #fafafa;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.imported-opportunities-table .ant-table-tbody > tr > td {
+  padding-block: 12px;
+}
+
+.imported-opportunities-shop-avatar {
+  color: #fff;
+  background: #e87500;
+}
+
+.imported-opportunities-card > .ant-card-body > .ant-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+@media (max-width: 760px) {
+  .imported-opportunities-card > .ant-card-body {
+    padding-inline: 12px;
+  }
+
+  .imported-opportunities-toolbar .ant-space {
+    width: 100%;
+  }
+
+  .imported-opportunities-toolbar .shop-select,
+  .imported-opportunities-toolbar .shop-select .ant-select,
+  .imported-opportunities-toolbar .ant-picker {
+    width: 100%;
+  }
+}

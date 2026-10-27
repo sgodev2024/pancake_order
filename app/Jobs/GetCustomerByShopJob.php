@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class GetCustomerByShopJob implements ShouldQueue
 {
@@ -46,6 +47,7 @@ class GetCustomerByShopJob implements ShouldQueue
                 $newExternalIds = [];
                 $occurredAtByExternalId = [];
                 $acquisitionChannelByExternalId = [];
+                $hasLastOrderAt = Schema::hasColumn('customers', 'last_order_at');
 
                 foreach ($this->datas as $dataItem) {
                     $externalId = (string) $dataItem['customer_id'];
@@ -55,14 +57,18 @@ class GetCustomerByShopJob implements ShouldQueue
                         ->first();
 
                     if ($customer !== null) {
-                        $customer->update([
+                        $updates = [
                             'order_count' => $dataItem['order_count'] ?? 0,
                             'purchased_amount' => $dataItem['purchased_amount'] ?? 0,
                             'pancake_full_data' => $dataItem,
                             'phone_numbers' => ! empty($dataItem['phone_numbers'])
                                 ? implode(',', $dataItem['phone_numbers'])
                                 : null,
-                        ]);
+                        ];
+                        if ($hasLastOrderAt) {
+                            $updates['last_order_at'] = $this->parseLastOrderAt($dataItem['last_order_at'] ?? null);
+                        }
+                        $customer->update($updates);
 
                         continue;
                     }
@@ -81,7 +87,7 @@ class GetCustomerByShopJob implements ShouldQueue
                     }
 
                     $occurredAt = $this->parseInsertedAt($dataItem['inserted_at']);
-                    $insertData[] = [
+                    $customerData = [
                         'order_count' => $dataItem['order_count'] ?? 0,
                         'shop_id' => $shopId,
                         'assigned_user_id' => $dataItem['assigned_user_id'] ?? null,
@@ -97,6 +103,10 @@ class GetCustomerByShopJob implements ShouldQueue
                         'created_at' => $occurredAt->format('Y-m-d H:i:s'),
                         'updated_at' => $occurredAt->format('Y-m-d H:i:s'),
                     ];
+                    if ($hasLastOrderAt) {
+                        $customerData['last_order_at'] = $this->parseLastOrderAt($dataItem['last_order_at'] ?? null)?->format('Y-m-d H:i:s');
+                    }
+                    $insertData[] = $customerData;
                     $newExternalIds[] = $externalId;
                     $occurredAtByExternalId[$externalId] = $occurredAt;
                     $acquisitionChannelByExternalId[$externalId] = $this->acquisitionChannel($dataItem);
@@ -151,6 +161,16 @@ class GetCustomerByShopJob implements ShouldQueue
     private function parseInsertedAt(mixed $insertedAt): CarbonImmutable
     {
         return CarbonImmutable::parse((string) $insertedAt, 'UTC')
+            ->setTimezone(config('app.timezone'));
+    }
+
+    private function parseLastOrderAt(mixed $lastOrderAt): ?CarbonImmutable
+    {
+        if (! is_string($lastOrderAt) || trim($lastOrderAt) === '') {
+            return null;
+        }
+
+        return CarbonImmutable::parse($lastOrderAt, 'UTC')
             ->setTimezone(config('app.timezone'));
     }
 

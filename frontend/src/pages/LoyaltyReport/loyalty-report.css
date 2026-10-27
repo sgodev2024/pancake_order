@@ -1,0 +1,9 @@
+.loyalty-report-page { min-width: 0; height: calc(100vh - 64px); overflow: hidden; }
+.loyalty-report-card { border: 1px solid #e4e8ef; border-radius: 12px; box-shadow: 0 4px 14px rgba(15, 23, 42, .04); }
+.loyalty-report-card > .ant-card-head { min-height: 58px; border-bottom: 1px solid #e9edf3; }
+.loyalty-report-card > .ant-card-head-title { font-weight: 700; color: #1f2937; }
+.loyalty-report-card .ant-table-container { border-top: 1px solid #e5e7eb; border-left: 1px solid #e5e7eb; }
+.loyalty-report-card .ant-table-thead > tr > th { background: #fafafa; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; font-weight: 700; }
+.loyalty-report-card .ant-table-tbody > tr > td { border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; }
+.loyalty-report-card .ant-table-body { scrollbar-gutter: stable; }
+.loyalty-report-summary { margin: 0; color: #334155; }

@@ -17,7 +17,7 @@ class ShopAccessService
      */
     public function isGlobal(User $user): bool
     {
-        return $user->isAdmin();
+        return $user->isAdmin() || $user->isDirector();
     }
 
     /**

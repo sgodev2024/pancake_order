@@ -38,6 +38,7 @@ class Order extends Model
         'order_number_vtp',
         'total_quantity',
         'cod',
+        'prepaid_amount',
         'discount_percent',
         'cash',
         'note',

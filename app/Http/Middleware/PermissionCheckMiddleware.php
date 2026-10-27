@@ -15,7 +15,16 @@ class PermissionCheckMiddleware
      */
     public function handle(Request $request, Closure $next, $pms_param, $mode = null): Response
     {
-        if (can_access($pms_param)) {
+        $params = explode('|', (string) $pms_param);
+        $allowed = false;
+        foreach ($params as $param) {
+            if (can_access($param)) {
+                $allowed = true;
+                break;
+            }
+        }
+
+        if ($allowed) {
             return $next($request);
         }
         $response = response()->json([

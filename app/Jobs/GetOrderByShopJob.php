@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class GetOrderByShopJob implements ShouldQueue
 {
@@ -54,6 +55,7 @@ class GetOrderByShopJob implements ShouldQueue
                 if ($warehouse->enabled()) {
                     Shop::whereKey($shopId)->lockForUpdate()->firstOrFail();
                 }
+                $hasPrepaidAmount = Schema::hasColumn('orders', 'prepaid_amount');
 
                 foreach ($this->datas as $dataItem) {
                     if ($warehouse->enabled() && ! empty($dataItem['id'])) {
@@ -74,6 +76,9 @@ class GetOrderByShopJob implements ShouldQueue
                     }
 
                     $orderData = $orderService->getOrderItem($dataItem, $shopId);
+                    if ($hasPrepaidAmount) {
+                        $orderData['prepaid_amount'] = $dataItem['prepaid'] ?? 0;
+                    }
                     $storedOrderId = (string) $orderData['pancake_order_id'];
 
                     // The persisted identity is external Pancake ID + local
@@ -117,12 +122,17 @@ class GetOrderByShopJob implements ShouldQueue
                     ->map(fn ($id): string => (string) $id)
                     ->unique()
                     ->values();
+                $customerColumns = ['id', 'shop_id', 'pancake_customer_id'];
+                $hasLastOrderAt = Schema::hasColumn('customers', 'last_order_at');
+                if ($hasLastOrderAt) {
+                    $customerColumns[] = 'last_order_at';
+                }
                 $customersByPancakeId = $customerIds->isEmpty()
                     ? collect()
                     : Customer::query()
                         ->where('shop_id', $shopId)
                         ->whereIn('pancake_customer_id', $customerIds)
-                        ->get(['id', 'shop_id', 'pancake_customer_id'])
+                        ->get($customerColumns)
                         ->keyBy(fn (Customer $customer): string => (string) $customer->pancake_customer_id);
 
                 foreach (array_keys($storedOrderIds) as $storedOrderId) {
@@ -136,6 +146,15 @@ class GetOrderByShopJob implements ShouldQueue
 
                     $customer = $customersByPancakeId->get((string) $order->pancake_customer_id);
                     $warehouse->synchronize($order, $sourcePayloads[$storedOrderId], true);
+                    if (
+                        $hasLastOrderAt
+                        &&
+                        $customer instanceof Customer
+                        && $order->created_at !== null
+                        && ($customer->last_order_at === null || $order->created_at->greaterThan($customer->last_order_at))
+                    ) {
+                        $customer->updateQuietly(['last_order_at' => $order->created_at]);
+                    }
                     $eventWriter->write(
                         $order,
                         'pancake_bulk_sync',

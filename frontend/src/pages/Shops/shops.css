@@ -1,0 +1,24 @@
+.shops-page { min-width: 0; }
+.shops-card { border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: 0 5px 18px rgba(23, 35, 61, .025); }
+.shops-card > .ant-card-head, .shops-card > .ant-card-body { padding-inline: 24px; }
+.shops-card > .ant-card-head { min-height: 64px; }
+.shops-alert { margin-bottom: 16px; }
+.shops-filters { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(260px, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 16px; }
+.shops-field { display: grid; gap: 7px; min-width: 0; }
+.shops-field label { color: var(--color-text); font-size: 13px; font-weight: 600; }
+.shops-field .ant-input, .shops-field .ant-picker { width: 100%; }
+.shops-summary { margin: 4px 0 10px; color: var(--color-text-secondary); font-size: 13px; }
+.shops-summary strong { color: var(--color-text); }
+.shops-avatar { color: #fff; background: #e87500; font-weight: 700; }
+.shops-table { max-width: 100%; min-width: 0; }
+.shops-table .shops-action-column { padding-inline: 6px !important; text-align: center; }
+.shops-table .shops-action-column .ant-btn { min-width: 32px; }
+.shops-table .ant-table-container { border: 1px solid #edf0f3; border-radius: 8px; overflow: visible; }
+.shops-table .ant-table-content { overflow-x: auto !important; }
+.shops-table .ant-table-thead > tr > th { background: #fafafa; color: var(--color-text); font-weight: 700; white-space: nowrap; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; }
+.shops-table .ant-table-tbody > tr > td { white-space: nowrap; vertical-align: middle; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; }
+.shops-table .ant-table-body { overflow-y: auto !important; scrollbar-width: thin; }
+.shops-table .ant-pagination { margin: 16px 0 0; justify-content: flex-end; }
+.shops-table .ant-pagination-item, .shops-table .ant-pagination-prev, .shops-table .ant-pagination-next { min-width: 32px; height: 32px; line-height: 30px; }
+.shops-modal { width: min(520px, calc(100vw - 32px)) !important; }
+@media (max-width: 760px) { .shops-filters { grid-template-columns: 1fr; } .shops-card > .ant-card-head, .shops-card > .ant-card-body { padding-inline: 16px; } .shops-table .ant-pagination { justify-content: flex-start; } }

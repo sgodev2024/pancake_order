@@ -1,0 +1,199 @@
+
+.general-settings-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 5px 18px rgba(23, 35, 61, 0.025);
+}
+
+.general-settings-card__hint {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.general-settings-alert {
+  margin-bottom: 20px;
+}
+
+.general-settings-loading {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+}
+
+.general-settings-content > form + form {
+  margin-top: 30px;
+  padding-top: 30px;
+  border-top: 1px solid var(--color-border);
+}
+
+.general-settings-section {
+  padding: 4px 0 8px;
+}
+
+.general-settings-section h2 {
+  margin: 0 0 18px;
+  color: var(--color-text);
+  font-size: 17px;
+}
+
+.general-settings-section > p {
+  margin: 0 0 22px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.general-settings-smtp {
+  padding-bottom: 0;
+}
+
+.general-settings-logo {
+  height: 100%;
+  padding: 4px 0 12px;
+}
+
+.general-settings-logo__dropzone {
+  min-height: 154px;
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  background: #fbfcfe;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.general-settings-logo__dropzone:hover {
+  border-color: #1677ff;
+  background: #f5f9ff;
+}
+
+.general-settings-logo__dropzone strong {
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.general-settings-logo__dropzone span {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.general-settings-logo__icon {
+  padding: 10px;
+  color: #1677ff;
+  font-size: 24px;
+  background: #eaf4ff;
+  border-radius: 50%;
+}
+
+.general-settings-logo__choose {
+  display: none;
+}
+
+.general-settings-logo__file {
+  position: relative;
+  min-width: 0;
+  min-height: 54px;
+  margin-top: 8px;
+  padding: 7px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+}
+
+.general-settings-logo__file .ant-btn {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.general-settings-logo__file .ant-btn:hover {
+  color: #ff4d4f;
+  background: transparent;
+}
+
+.general-settings-logo__file img {
+  width: 42px;
+  height: 36px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.general-settings-logo__file span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #1677ff;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.general-settings-logo__preview {
+  width: 100%;
+  min-height: 150px;
+  margin-bottom: 16px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  background: #f8fafc;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+}
+
+.general-settings-logo__preview img {
+  max-width: 90%;
+  max-height: 145px;
+  object-fit: contain;
+}
+
+.general-settings-actions {
+  margin-top: 14px;
+  padding-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--color-border);
+}
+
+.general-settings-page .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.general-settings-page .ant-form-item-label > label {
+  font-size: 12px;
+}
+
+.general-settings-page .ant-form-item-required::before {
+  color: #ff4d4f !important;
+}
+
+.general-settings-page .ant-input,
+.general-settings-page .ant-input-affix-wrapper {
+  min-height: 38px;
+  border-radius: 7px;
+}
+
+.general-settings-page .ant-input-textarea textarea {
+  min-height: 88px;
+  padding-top: 10px;
+  border-radius: 7px;
+}
+
+@media (max-width: 991px) {
+  .general-settings-logo {
+    padding-left: 0;
+  }
+}

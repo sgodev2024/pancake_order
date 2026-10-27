@@ -1,0 +1,225 @@
+.activity-page {
+  display: grid;
+  gap: 16px;
+}
+
+.activity-page__intro h1 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: clamp(22px, 2.4vw, 28px);
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+
+.activity-page__intro p {
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.activity-card,
+.activity-state-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 5px 18px rgba(23, 35, 61, 0.025);
+}
+
+.activity-card > .ant-card-head {
+  min-height: 64px;
+  padding-inline: 24px;
+}
+
+.activity-card > .ant-card-head .ant-card-head-title {
+  font-weight: 700;
+}
+
+.activity-card > .ant-card-body {
+  padding: 24px;
+}
+
+.activity-filters {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.activity-filters__grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.4fr) minmax(260px, 1.2fr) minmax(180px, 0.8fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.activity-filters__advanced {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.activity-field {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.activity-field label {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.activity-field .ant-input-affix-wrapper,
+.activity-field .ant-picker,
+.activity-field .ant-select,
+.activity-field .shop-select,
+.activity-field .shop-select .ant-select {
+  width: 100%;
+}
+
+.activity-advanced-toggle {
+  width: fit-content;
+  min-height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-primary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.activity-advanced-toggle:hover {
+  color: #0958d9;
+}
+
+.activity-advanced-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.activity-filters__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.activity-filters__actions .ant-btn {
+  height: var(--filter-control-height, 32px);
+  min-height: var(--filter-control-height, 32px);
+}
+
+.activity-filter-alert,
+.activity-query-alert {
+  margin-top: 2px;
+}
+
+.activity-table-summary {
+  margin: 4px 0 10px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.activity-table-summary strong {
+  color: var(--color-text);
+}
+
+.activity-card .ant-table-wrapper {
+  max-width: 100%;
+}
+
+.activity-card .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.activity-card .ant-table-cell {
+  vertical-align: middle;
+}
+
+.activity-card .activity-action-column {
+  padding-inline: 6px !important;
+  text-align: center;
+}
+
+.activity-card .activity-action-column .ant-btn {
+  min-width: 32px;
+}
+
+.activity-card .ant-empty-description small {
+  margin-top: 4px;
+  display: block;
+  color: var(--color-text-secondary);
+}
+
+.activity-shop-avatar {
+  flex: 0 0 auto;
+  color: #fff;
+  background: #e87500;
+  font-weight: 700;
+}
+
+.activity-detail {
+  display: grid;
+  gap: 16px;
+}
+
+.activity-detail-section {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-bg, #fff);
+}
+
+.activity-detail-section h3 {
+  margin: 0 0 8px;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.activity-detail-section .ant-descriptions {
+  margin: 0;
+}
+
+@media (max-width: 1280px) {
+  .activity-filters__grid,
+  .activity-filters__advanced {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .activity-card > .ant-card-head,
+  .activity-card > .ant-card-body {
+    padding-inline: 16px;
+  }
+
+  .activity-filters__grid,
+  .activity-filters__advanced {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .activity-filters__advanced {
+    padding: 12px;
+  }
+
+  .activity-filters__actions .ant-btn {
+    flex: 1 1 140px;
+    height: var(--filter-control-height, 32px);
+    min-height: var(--filter-control-height, 32px);
+  }
+
+  .activity-card .ant-pagination {
+    justify-content: flex-start;
+  }
+}

@@ -1,0 +1,189 @@
+
+.loyalty-card {
+  min-height: calc(100vh - 120px);
+}
+
+.loyalty-card .ant-card-head {
+  min-height: 90px;
+  padding: 0 30px;
+}
+
+.loyalty-card .ant-card-head-title {
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.loyalty-card .ant-card-body {
+  padding: 30px;
+}
+
+.loyalty-table .ant-table-container {
+  border: 1px solid #edf0f3;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.loyalty-table {
+  max-width: 100%;
+}
+
+.loyalty-table .ant-table-body {
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+}
+
+.loyalty-table .ant-table-thead > tr > th {
+  background: #fafafa;
+  color: #17233d;
+  font-size: 16px;
+  font-weight: 600;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.loyalty-table .ant-table-tbody > tr > td {
+  font-size: 16px;
+  padding: 20px;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.loyalty-table .ant-btn {
+  min-width: 40px;
+}
+
+.loyalty-table .loyalty-action-column {
+  text-align: center;
+}
+
+.loyalty-table .loyalty-action-column .ant-btn {
+  min-width: 32px;
+}
+
+.loyalty-tier-modal {
+  width: min(650px, calc(100vw - 32px)) !important;
+}
+
+.loyalty-tier-modal .ant-modal-content {
+  padding: 28px 30px 24px;
+  border-radius: 12px;
+}
+
+.loyalty-tier-modal .ant-modal-header {
+  margin-bottom: 24px;
+  padding: 0;
+  background: transparent;
+}
+
+.loyalty-tier-modal .ant-modal-title {
+  color: #202124;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.loyalty-tier-modal .ant-modal-close {
+  top: 22px;
+  inset-inline-end: 24px;
+  color: #8c8c8c;
+}
+
+.loyalty-tier-modal .ant-modal-body {
+  padding: 0;
+}
+
+.loyalty-tier-modal .ant-form-item {
+  margin-bottom: 26px;
+}
+
+.loyalty-tier-modal .ant-form-item:last-child {
+  margin-bottom: 8px;
+}
+
+.loyalty-tier-modal .ant-form-item-label {
+  padding-bottom: 8px;
+}
+
+.loyalty-tier-modal .ant-form-item-label > label {
+  color: #333;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.loyalty-tier-modal .ant-input,
+.loyalty-tier-modal .ant-input-number,
+.loyalty-tier-modal .ant-input-number-input {
+  min-height: 40px;
+  font-size: 16px;
+}
+
+.loyalty-tier-modal .ant-input,
+.loyalty-tier-modal .ant-input-number {
+  border-radius: 8px;
+}
+
+.loyalty-tier-modal .ant-input-number {
+  width: 100%;
+}
+
+.loyalty-tier-modal .loyalty-tier-number-input .ant-input-number-input {
+  height: 38px;
+}
+
+.loyalty-tier-modal .ant-input-number-input {
+  width: 100%;
+}
+
+.loyalty-tier-modal .ant-input::placeholder,
+.loyalty-tier-modal .ant-input-number-input::placeholder {
+  color: #b7b7b7;
+}
+
+.loyalty-tier-modal .ant-form-item-explain-error {
+  margin-top: 4px;
+}
+
+.loyalty-tier-modal .ant-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 0;
+}
+
+.loyalty-tier-modal .ant-modal-footer .ant-btn {
+  min-width: 72px;
+  height: 40px;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.loyalty-tier-modal .ant-modal-footer .ant-btn-primary {
+  min-width: 96px;
+}
+
+@media (max-width: 768px) {
+  .loyalty-page {
+    padding: 12px;
+  }
+
+  .loyalty-card .ant-card-head {
+    padding: 0 16px;
+  }
+
+  .loyalty-card .ant-card-body {
+    padding: 16px;
+  }
+
+  .loyalty-card .ant-card-extra .ant-btn {
+    padding-inline: 10px;
+  }
+
+  .loyalty-tier-modal .ant-modal-content {
+    padding: 22px 18px 18px;
+  }
+
+  .loyalty-tier-modal .ant-form-item {
+    margin-bottom: 20px;
+  }
+}

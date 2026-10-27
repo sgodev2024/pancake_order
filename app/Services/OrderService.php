@@ -10,6 +10,7 @@ use App\Models\Shop;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class OrderService
@@ -123,7 +124,7 @@ class OrderService
                 'total_amount' => self::moneyString($total), 'paid_amount' => self::moneyString($paid),
                 'remaining_amount' => self::moneyString($remaining), 'expected_cod' => self::moneyString($cod),
             ];
-            $order = Order::create([
+            $orderData = [
                 'shop_id' => $input['shop_id'], 'origin' => 'local_pos',
                 'customer_id' => $customer->id, 'pancake_customer_id' => $customer->pancake_customer_id,
                 'pancake_order_id' => null, 'order_number_vtp' => null,
@@ -146,7 +147,11 @@ class OrderService
                         'status' => 'valid', 'recorded_by_user_id' => $actor->id, 'recorded_at' => now()->toIso8601String(),
                     ]],
                 ],
-            ]);
+            ];
+            if (Schema::hasColumn('orders', 'prepaid_amount')) {
+                $orderData['prepaid_amount'] = self::moneyString($paid);
+            }
+            $order = Order::create($orderData);
             app(WarehouseService::class)->initializeLocal($order);
             foreach ($items as $line) {
                 $product = $products->get($line['product_id']);

@@ -1,0 +1,99 @@
+.customer-journey {
+  min-width: 0;
+}
+
+.customer-journey-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.customer-journey-summary .ant-statistic {
+  min-width: 0;
+}
+
+.customer-journey-summary .ant-statistic-title {
+  min-height: 36px;
+  font-size: 13px;
+}
+
+.customer-journey-timeline {
+  margin-top: 8px;
+}
+
+.customer-journey-timeline .ant-timeline-item-content {
+  min-width: 0;
+}
+
+.customer-journey-event {
+  min-width: 0;
+  padding-bottom: 18px;
+}
+
+.customer-journey-event__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.customer-journey-event__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.customer-journey-event__header .ant-tag {
+  flex: 0 0 auto;
+  margin-inline-end: 0;
+}
+
+.customer-journey-event .ant-typography {
+  margin: 5px 0 0;
+}
+
+.customer-journey-event__time {
+  display: block;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.customer-journey-event__order-details,
+.customer-journey-event__items {
+  display: grid;
+  gap: 4px;
+  margin-top: 7px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.customer-journey-event__item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-journey-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 0 0 16px;
+}
+
+.customer-journey-loading {
+  padding-top: 8px;
+}
+
+@media (max-width: 480px) {
+  .customer-journey-summary {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .customer-journey-summary .ant-statistic-title {
+    min-height: auto;
+  }
+
+  .customer-journey-event__header {
+    flex-wrap: wrap;
+  }
+}

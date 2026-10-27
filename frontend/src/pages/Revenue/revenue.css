@@ -1,0 +1,35 @@
+.revenue-page { padding: 12px 20px 24px; height: calc(100vh - 64px); overflow: auto; background: #f5f6fa; }
+.revenue-card { border: 1px solid #e7e8ee; border-radius: 10px; }
+.revenue-filters { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px 12px; }
+.revenue-field { min-width: 160px; flex: 0 1 180px; }
+.revenue-field--date { min-width: 260px; flex: 0 1 280px; }
+.revenue-actions { margin-left: auto; }
+.revenue-field label { display: block; margin-bottom: 6px; color: #334155; font-size: 13px; }
+.revenue-field .ant-select, .revenue-field .ant-picker, .revenue-field .ant-input { width: 100%; }
+.revenue-actions { padding-bottom: 0; }
+.revenue-ranking { margin-top: 16px; padding: 14px 16px; border: 1px solid #e7e8ee; border-radius: 12px; background: #fff; }
+.revenue-ranking__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.revenue-ranking__head h3 { margin: 0; color: #1f2937; font-size: 16px; }
+.revenue-ranking__head p { margin: 4px 0 0; color: #667085; font-size: 13px; }
+.revenue-ranking__list { display: grid; gap: 2px; margin: 10px 0 0; padding: 0; list-style: none; }
+.revenue-ranking__list li { display: grid; grid-template-columns: 28px 28px minmax(120px, 200px) minmax(80px, 1fr) max-content; align-items: center; gap: 10px; min-height: 34px; }
+.revenue-ranking__rank { color: #1677ff; font-weight: 700; text-align: center; }
+.revenue-ranking__name { overflow: hidden; color: #1f2937; text-overflow: ellipsis; white-space: nowrap; }
+.revenue-ranking__list .ant-progress { margin: 0; line-height: 1; }
+.revenue-ranking__metrics { display: flex; align-items: baseline; justify-content: flex-end; gap: 8px; white-space: nowrap; }
+.revenue-ranking__metrics b { color: #1f2937; font-variant-numeric: tabular-nums; }
+.revenue-ranking__metrics span { color: #667085; font-size: 12px; }
+.revenue-ranking__loading { margin-top: 12px; color: #667085; }
+.revenue-summary { margin: 18px 0 12px; color: #334155; }
+.revenue-card .ant-table-container { border-top: 1px solid #e5e7eb; border-left: 1px solid #e5e7eb; }
+.revenue-card .ant-table-thead > tr > th, .revenue-card .ant-table-tbody > tr > td { border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; }
+.revenue-card .ant-table-thead > tr > th { background: #fafafa; font-weight: 700; }
+.revenue-card .ant-table-body { scrollbar-gutter: stable; }
+.revenue-avatar { background: #ef7d00; }
+@media (max-width: 768px) {
+  .revenue-page { padding: 12px; }
+  .revenue-field, .revenue-field--date { min-width: 100%; flex-basis: 100%; }
+  .revenue-ranking__list li { grid-template-columns: 28px 28px minmax(0, 1fr); }
+  .revenue-ranking__list .ant-progress { grid-column: 1 / -1; }
+  .revenue-ranking__metrics { grid-column: 3; justify-content: flex-start; }
+}

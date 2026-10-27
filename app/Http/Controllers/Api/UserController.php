@@ -10,6 +10,7 @@ use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\ShopAccessService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -31,9 +32,9 @@ class UserController extends Controller implements HasMiddleware
     {
         return [
             // Khai báo lần lượt từng middleware và chỉ định áp dụng cho method 'store'
-            new Middleware(AdminOnlyMiddleware::class . ':report-query', only: ['index']),
+            new Middleware(AdminOnlyMiddleware::class . ':report-query', only: ['index', 'weeklyRevenue']),
             new Middleware(AdminOnlyMiddleware::class, only: ['store', 'update', 'destroy']),
-            new Middleware(PermissionCheckMiddleware::class . ':list-staff', only: ['index']),
+            new Middleware(PermissionCheckMiddleware::class . ':list-staff', only: ['index', 'weeklyRevenue']),
             new Middleware(PermissionCheckMiddleware::class . ':list-staff,strict', only: ['show']),
         ];
     }
@@ -58,7 +59,6 @@ class UserController extends Controller implements HasMiddleware
         try {
             $inputs = $request->only("role_id", "date", "date_from", "date_to", "page", "search", "is_all", "page_name", "shop_id");
             $inputs['shop_id'] = $requestedShopId;
-            // Sử dụng paginate để phân trang thay vì get() tất cả nếu dữ liệu lớn
             $queries = User::with([
                             "shops" => function ($q) use ($inputs) {
                                 if (isset($inputs["shop_id"])) {
@@ -236,6 +236,111 @@ class UserController extends Controller implements HasMiddleware
                 'message' => $th->getMessage()
             ], 500);
         }
+    }
+
+    public function weeklyRevenue(Request $request)
+    {
+        $actor = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $actor,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $effectiveShopIds = $requestedShopId !== null
+            ? collect([$requestedShopId])
+            : (! $this->shopAccessService->isGlobal($actor)
+                ? $this->shopAccessService->ids($actor)
+                : null);
+        $shopIds = $effectiveShopIds?->all();
+
+        $request->validate([
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+            'role_id' => ['nullable', 'integer'],
+            'week_mode' => ['nullable', 'in:latest'],
+        ]);
+
+        $latestOrderQuery = Order::query()
+            ->when($shopIds !== null, fn ($query) => $query->whereIn('shop_id', $shopIds));
+        if ($request->filled('role_id')) {
+            $latestOrderQuery->whereIn(
+                'user_creator_id',
+                User::query()->where('role_id', $request->integer('role_id'))->pluck('pancake_user_id')
+            );
+        }
+        $latestOrderAt = $latestOrderQuery->max('created_at');
+
+        if ($request->query('week_mode') === 'latest') {
+            if ($latestOrderAt === null) {
+                return response()->json([
+                    'success' => true,
+                    'data' => ['from' => null, 'to' => null, 'latest_order_at' => null, 'items' => []],
+                ]);
+            }
+            $start = $this->latestRankableWeek($shopIds, $request->filled('role_id') ? $request->integer('role_id') : null)
+                ?? Carbon::parse($latestOrderAt)->startOfWeek(Carbon::MONDAY)->startOfDay();
+            $end = $start->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay();
+        } elseif ($request->filled('date_from') && $request->filled('date_to')) {
+            $start = Carbon::parse($request->query('date_from'))->startOfDay();
+            $end = Carbon::parse($request->query('date_to'))->endOfDay();
+        } else {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cần chọn tuần.',
+            ], 422);
+        }
+
+        $items = Order::query()
+            ->join('users', 'users.pancake_user_id', '=', 'orders.user_creator_id')
+            ->whereBetween('orders.created_at', [$start->toDateTimeString(), $end->toDateTimeString()])
+            ->when($shopIds !== null, function ($query) use ($shopIds) {
+                $query->whereIn('orders.shop_id', $shopIds)
+                    ->whereExists(function ($subquery) use ($shopIds) {
+                        $subquery->selectRaw('1')
+                            ->from('shop_users')
+                            ->whereColumn('shop_users.user_id', 'users.id')
+                            ->whereIn('shop_users.shop_id', $shopIds);
+                    });
+            })
+            ->when($request->filled('role_id'), fn ($query) => $query->where('users.role_id', $request->integer('role_id')))
+            ->groupBy('users.id', 'users.name')
+            ->selectRaw('users.id, users.name, COUNT(orders.id) as orders_count, COALESCE(SUM(orders.cod), 0) as revenue')
+            ->havingRaw('COALESCE(SUM(orders.cod), 0) > 0')
+            ->orderByDesc('revenue')
+            ->orderByDesc('orders_count')
+            ->orderBy('users.name')
+            ->limit(10)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'from' => $start->toDateString(),
+                'to' => $end->toDateString(),
+                'latest_order_at' => $latestOrderAt,
+                'items' => $items,
+            ],
+        ]);
+    }
+
+    private function latestRankableWeek(?array $shopIds, ?int $roleId): ?Carbon
+    {
+        $staffWeeks = Order::query()
+            ->join('users', 'users.pancake_user_id', '=', 'orders.user_creator_id')
+            ->when($shopIds !== null, fn ($query) => $query->whereIn('orders.shop_id', $shopIds))
+            ->when($roleId !== null, fn ($query) => $query->where('users.role_id', $roleId))
+            ->selectRaw('DATE(DATE_SUB(orders.created_at, INTERVAL WEEKDAY(orders.created_at) DAY)) as week_start, users.id')
+            ->groupByRaw('DATE(DATE_SUB(orders.created_at, INTERVAL WEEKDAY(orders.created_at) DAY)), users.id')
+            ->havingRaw('SUM(orders.cod) > 0');
+
+        $weekStart = DB::query()
+            ->fromSub($staffWeeks, 'staff_weeks')
+            ->select('week_start')
+            ->groupBy('week_start')
+            ->havingRaw('COUNT(*) >= 5')
+            ->orderByDesc('week_start')
+            ->value('week_start');
+
+        return $weekStart ? Carbon::parse($weekStart)->startOfDay() : null;
     }
 
     /**
