@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { developmentApi } from './developmentApi.js'
 import { API_ROUTES, ROUTES } from '../constants/routes.js'
 import { ApiBusinessError, assertSuccessfulResponse, getResponseMessage } from '../utils/response.js'
 
@@ -22,7 +23,7 @@ const isJsonPayload = (data) => {
 const isLoginRequest = (config) => config?.url?.endsWith(API_ROUTES.LOGIN)
 
 const apiClient = axios.create({
-  baseURL: import.meta.env?.VITE_API_URL,
+  baseURL: (import.meta.env?.DEV && developmentApi(import.meta.env?.VITE_API_URL)?.baseURL) || import.meta.env?.VITE_API_URL,
   headers: {
     Accept: 'application/json',
   },
@@ -31,7 +32,7 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use((config) => {
   const token = authHandlers.getToken()
 
-  if (token) {
+  if (token && !config.headers.has('Authorization')) {
     config.headers.set('Authorization', `Bearer ${token}`)
   }
 

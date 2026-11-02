@@ -35,7 +35,7 @@ const revenueSlices = (items, totalRevenue) => {
   const leaders = [...items].sort((left, right) => Number(right.revenue || 0) - Number(left.revenue || 0)).slice(0, 5)
   const other = Math.max(0, totalRevenue - leaders.reduce((sum, item) => sum + (Number(item.revenue) || 0), 0))
   return [
-    ...leaders.map((item) => ({ key: item.name, label: item.name, value: Number(item.revenue) || 0 })),
+    ...leaders.map((item, index) => ({ key: `product-${index}-${item.name}`, label: item.name, value: Number(item.revenue) || 0 })),
     ...(other > 0 ? [{ key: 'other', label: 'Sản phẩm khác', value: other }] : []),
   ].filter((slice) => slice.value > 0)
 }
@@ -125,8 +125,8 @@ const RevenueBars = ({ items }) => {
   const max = Math.max(...items.map((item) => Number(item.revenue) || 0), 1)
   return (
     <div className="ov-bars">
-      {items.map((item) => (
-        <div key={item.name}>
+      {items.map((item, index) => (
+        <div key={`product-${index}-${item.name}`}>
           <span title={item.name}>{item.name}</span>
           <span className="ov-bars__track">
             <span style={{ width: `${((Number(item.revenue) || 0) / max) * 100}%` }} />
@@ -171,12 +171,12 @@ const ReportsOverviewPage = () => {
   const careQuery = useQuery({ queryKey: ['overview'], queryFn: getOverview, ...queryOptions })
   const productQuery = useQuery({
     queryKey: ['product-sales', LATEST_WEEK],
-    queryFn: () => getProductSales(LATEST_WEEK),
+    queryFn: ({ signal }) => getProductSales(LATEST_WEEK, { signal }),
     ...queryOptions,
   })
   const monthlyQtyQuery = useQuery({
     queryKey: ['product-monthly-quantities'],
-    queryFn: () => getProductMonthlyQuantities(),
+    queryFn: ({ signal }) => getProductMonthlyQuantities({}, { signal }),
     ...queryOptions,
   })
 

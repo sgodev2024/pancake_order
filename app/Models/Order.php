@@ -2,12 +2,44 @@
 
 namespace App\Models;
 
+use App\Services\OrderSummaryService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Order extends Model
 {
-    use SoftDeletes;
+    use SoftDeletes {
+        performDeleteOnModel as private performSoftDelete;
+    }
+
+    protected function performInsert(Builder $query)
+    {
+        return $this->writeAndProject(fn () => parent::performInsert($query));
+    }
+
+    protected function performUpdate(Builder $query)
+    {
+        return $this->writeAndProject(fn () => parent::performUpdate($query));
+    }
+
+    protected function performDeleteOnModel()
+    {
+        return $this->writeAndProject(fn () => $this->performSoftDelete());
+    }
+
+    private function writeAndProject(callable $write): mixed
+    {
+        return OrderSummaryService::trackSourceWrite(function () use ($write) {
+            $result = $write();
+            if ($result !== false && $this->getKey() !== null) {
+                // This also covers saveQuietly/updateQuietly/withoutEvents.
+                OrderSummaryService::queueOrder((int) $this->getKey());
+            }
+
+            return $result;
+        });
+    }
 
     protected $table = 'orders';
 

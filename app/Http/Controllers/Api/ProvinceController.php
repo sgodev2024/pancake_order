@@ -7,11 +7,13 @@ use App\Http\Middleware\AdminOnlyMiddleware;
 use App\Models\Order;
 use App\Models\Province;
 use App\Models\Shop;
+use App\Services\ReportDataVersion;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -106,25 +108,53 @@ class ProvinceController extends Controller implements HasMiddleware
             'month_mode' => ['nullable', 'in:latest'],
         ]);
 
+        $scope = $shopIds;
+        if ($scope !== null) {
+            sort($scope, SORT_NUMERIC);
+        }
+        $cacheKey = 'province-charts:v2:'.hash('sha256', json_encode([
+            'user' => $actor->getKey(),
+            'role' => $actor->role_id,
+            'shops' => $scope,
+            'date_from' => $request->filled('date_from') ? Carbon::parse($request->query('date_from'))->toDateString() : null,
+            'date_to' => $request->filled('date_to') ? Carbon::parse($request->query('date_to'))->toDateString() : null,
+            'week_mode' => $request->query('week_mode'),
+            'month_mode' => $request->query('month_mode'),
+            'timezone' => config('app.timezone'),
+            // Partial-period comparisons depend on elapsed time as well as
+            // source changes; never keep them beyond this freshness window.
+            'minute' => now()->format('Y-m-d H:i'),
+            'versions' => [ReportDataVersion::key('orders'), ReportDataVersion::key('users')],
+        ]));
+        if (($cached = Cache::get($cacheKey)) !== null) {
+            return response()->json($cached);
+        }
+
         $hasPrepaid = Schema::hasColumn('orders', 'prepaid_amount');
         $latestOrderAt = $this->waybillOrders($shopIds)->max('created_at');
 
         if ($request->query('month_mode') === 'latest') {
             if ($latestOrderAt === null) {
-                return response()->json([
+                $response = [
                     'success' => true,
                     'data' => $this->emptyChart(),
-                ]);
+                ];
+                Cache::put($cacheKey, $response, 60);
+
+                return response()->json($response);
             }
             $start = $this->latestRankableMonth($shopIds, $hasPrepaid)
                 ?? Carbon::parse($latestOrderAt)->startOfMonth()->startOfDay();
             $end = $start->copy()->endOfMonth()->endOfDay();
         } elseif ($request->query('week_mode') === 'latest' || (! $request->filled('date_from') && ! $request->filled('date_to'))) {
             if ($latestOrderAt === null) {
-                return response()->json([
+                $response = [
                     'success' => true,
                     'data' => $this->emptyChart(),
-                ]);
+                ];
+                Cache::put($cacheKey, $response, 60);
+
+                return response()->json($response);
             }
             $start = Carbon::now()->startOfWeek(Carbon::MONDAY)->startOfDay();
             $end = $start->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay();
@@ -216,7 +246,7 @@ class ProvinceController extends Controller implements HasMiddleware
             $collectedTrend[] = (float) ($point['collected'] ?? 0);
         }
 
-        return response()->json([
+        $response = [
             'success' => true,
             'data' => [
                 'from' => $start->toDateString(),
@@ -242,7 +272,10 @@ class ProvinceController extends Controller implements HasMiddleware
                     'collected' => $collectedTrend,
                 ],
             ],
-        ]);
+        ];
+        Cache::put($cacheKey, $response, 60);
+
+        return response()->json($response);
     }
 
     private function waybillOrders(?array $shopIds)

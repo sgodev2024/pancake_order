@@ -7,12 +7,16 @@ use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\Province;
+use App\Models\Shop;
+use App\Services\OrderItemSql;
+use App\Services\OrderSummaryService;
+use App\Services\ReportDataVersion;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class OrderController extends Controller
 {
@@ -65,6 +69,14 @@ class OrderController extends Controller
                 'cod',
                 'month_mode'
             );
+            $summaryShopIds = $requestedShopId !== null
+                ? [$requestedShopId]
+                : ($this->shopAccessService->isGlobal($user) ? null : $this->shopAccessService->ids($user)->all());
+            $useOrderSummary = $isSummaryView && $totalsOnly
+                && ! in_array(0, $summaryShopIds ?? [], true)
+                && $this->canUseOrderSummary($user, $inputs)
+                && OrderSummaryService::isReady();
+            $summaryInputs = $inputs;
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
             if ($isSummaryView) {
@@ -113,24 +125,10 @@ class OrderController extends Controller
                     $query->where('orders.status', $inputs['status']);
                 }
             }
-            // Snapshot before the date window so the trend can compare the
-            // previous period and the same period last year in one pass.
+            $latestMonthBase = clone $query;
+            // Preserve the existing comparison scope independently of the
+            // later list filters and selected date window.
             $trendBase = clone $query;
-            if (isset($inputs['date_from'])) {
-                $query->where('created_at', '>=', $inputs['date_from'].' 00:00:00');
-            }
-            if (isset($inputs['date_to'])) {
-                $query->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
-            }
-            if (($inputs['month_mode'] ?? null) === 'latest' && !isset($inputs['date_from']) && !isset($inputs['date_to'])) {
-                $latestOrderAt = (clone $query)->max('orders.created_at');
-                if ($latestOrderAt !== null) {
-                    $mStart = Carbon::parse($latestOrderAt)->startOfMonth()->startOfDay();
-                    $mEnd = Carbon::parse($latestOrderAt)->endOfMonth()->endOfDay();
-                    $query->where('orders.created_at', '>=', $mStart->toDateTimeString())
-                        ->where('orders.created_at', '<=', $mEnd->toDateTimeString());
-                }
-            }
             // Lọc theo received_at_shop (thường là boolean 0/1)
             if (isset($inputs['received_at_shop']) && $inputs['received_at_shop'] !== '') {
                 $query->where('orders.received_at_shop', $inputs['received_at_shop']);
@@ -153,6 +151,27 @@ class OrderController extends Controller
                         ->orWhere('orders.customer_name', 'like', $searchTerm)
                         ->orWhere('orders.pancake_order_id', $inputs['search']);
                 });
+            }
+            if (isset($inputs['date_from'])) {
+                $query->where('created_at', '>=', $inputs['date_from'].' 00:00:00');
+            }
+            if (isset($inputs['date_to'])) {
+                $query->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
+            }
+            if (($inputs['month_mode'] ?? null) === 'latest' && ! isset($inputs['date_from']) && ! isset($inputs['date_to'])) {
+                // Only the month is needed here, so a verified daily summary
+                // has exactly the same latest-month boundary as source orders.
+                $latestOrderAt = $useOrderSummary
+                    ? $this->dailyOrderSummaryQuery($summaryShopIds)->where('total_items', '>', 0)->max('report_date')
+                    : $latestMonthBase->max('orders.created_at');
+                if ($latestOrderAt !== null) {
+                    $mStart = Carbon::parse($latestOrderAt)->startOfMonth()->startOfDay();
+                    $mEnd = Carbon::parse($latestOrderAt)->endOfMonth()->endOfDay();
+                    $query->where('orders.created_at', '>=', $mStart->toDateTimeString())
+                        ->where('orders.created_at', '<=', $mEnd->toDateTimeString());
+                    $summaryInputs['date_from'] = $mStart->toDateString();
+                    $summaryInputs['date_to'] = $mEnd->toDateString();
+                }
             }
             // 2. Select các trường cụ thể cần lấy để tối ưu performance
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
@@ -246,17 +265,40 @@ SQL;
                 $summaryTotals = null;
 
                 if ($includeTotals || $totalsOnly) {
-                    // The overview request must stay on real columns. Parsing
-                    // prepaid out of pancake_full_data does not finish on the
-                    // full order table, so that sum stays on the smaller path.
-                    $revenueSelect = $totalsOnly
-                        ? 'COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_revenue'
-                        : "{$revenueExpression} AS total_revenue";
-                    $summaryTotals = (clone $query)->toBase()
-                        ->cloneWithout(['columns', 'orders'])
-                        ->cloneWithoutBindings(['select', 'order'])
-                        ->selectRaw("COUNT(*) AS total_items, {$revenueSelect}, {$overviewExpression}, {$prepaidAmountExpression} AS total_prepaid_amount")
-                        ->first();
+                    if ($useOrderSummary) {
+                        $sumQuery = $this->dailyOrderSummaryQuery($summaryShopIds);
+                        $this->applySummaryDates($sumQuery, $summaryInputs);
+
+                        $summaryTotals = $sumQuery->selectRaw('
+                            COALESCE(SUM(total_items), 0) AS total_items,
+                            COALESCE(SUM(total_revenue), 0) AS total_revenue,
+                            COALESCE(SUM(total_prepaid_amount), 0) AS total_prepaid_amount,
+                            COALESCE(SUM(shipping_count), 0) AS shipping_count,
+                            COALESCE(SUM(shipping_amount), 0) AS shipping_amount,
+                            COALESCE(SUM(success_count), 0) AS success_count,
+                            COALESCE(SUM(success_amount), 0) AS success_amount,
+                            COALESCE(SUM(cancel_count), 0) AS cancel_count,
+                            COALESCE(SUM(cancel_amount), 0) AS cancel_amount,
+                            COALESCE(SUM(return_count), 0) AS return_count,
+                            COALESCE(SUM(return_amount), 0) AS return_amount,
+                            COALESCE(SUM(pending_count), 0) AS pending_count,
+                            COALESCE(SUM(pending_amount), 0) AS pending_amount
+                        ')->first();
+                    }
+
+                    if ($summaryTotals === null) {
+                        // The overview request must stay on real columns. Parsing
+                        // prepaid out of pancake_full_data does not finish on the
+                        // full order table, so that sum stays on the smaller path.
+                        $revenueSelect = $totalsOnly
+                            ? 'COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_revenue'
+                            : "{$revenueExpression} AS total_revenue";
+                        $summaryTotals = (clone $query)->toBase()
+                            ->cloneWithout(['columns', 'orders'])
+                            ->cloneWithoutBindings(['select', 'order'])
+                            ->selectRaw("COUNT(*) AS total_items, {$revenueSelect}, {$overviewExpression}, {$prepaidAmountExpression} AS total_prepaid_amount")
+                            ->first();
+                    }
                 }
 
                 if ($totalsOnly && $summaryTotals !== null) {
@@ -265,7 +307,7 @@ SQL;
                     $successAmount = $summaryTotals->success_amount;
                     $totalPrepaidAmount = $summaryTotals->total_prepaid_amount;
                     $overdueCustomerCount = $this->overdueCustomerCount($requestedShopId, $user);
-                    $trend = $this->deliveryTrend($trendBase, $inputs);
+                    $trend = $this->deliveryTrend($trendBase, $inputs, $summaryShopIds, $useOrderSummary);
                     $trendPayload = $trend['series'];
                     $comparePayload = $trend['compare'];
                 }
@@ -600,11 +642,65 @@ SQL;
         }
     }
 
+    /** Daily totals do not contain record-level or exact-status dimensions. */
+    private function canUseOrderSummary($user, array $inputs): bool
+    {
+        if (! $this->shopAccessService->isGlobal($user) && ! $user->isManagerSale() && ! $user->isManagerCskh()) {
+            return false;
+        }
+
+        // Unlike the other optional filters, the source user filter also
+        // applies to an explicitly supplied empty string.
+        if (isset($inputs['user_id'])) {
+            return false;
+        }
+
+        foreach (['date_from', 'date_to'] as $dateFilter) {
+            if (! isset($inputs[$dateFilter])) {
+                continue;
+            }
+            $date = $inputs[$dateFilter];
+            if (! is_string($date) || ! preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $parts)
+                || ! checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1])) {
+                return false;
+            }
+        }
+
+        foreach (['search', 'order_page_id', 'status', 'order_source_id', 'received_at_shop', 'cod'] as $filter) {
+            if (isset($inputs[$filter]) && $inputs[$filter] !== '') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function dailyOrderSummaryQuery(?array $shopIds)
+    {
+        $query = DB::table('daily_order_summaries');
+
+        return $shopIds === null
+            ? $query->where('shop_id', 0)
+            : $query->whereIn('shop_id', $shopIds);
+    }
+
+    private function applySummaryDates($query, array $inputs): void
+    {
+        $from = isset($inputs['date_from']) && $inputs['date_from'] !== '' ? Carbon::parse($inputs['date_from'])->toDateString() : null;
+        $to = isset($inputs['date_to']) && $inputs['date_to'] !== '' ? Carbon::parse($inputs['date_to'])->toDateString() : null;
+        if ($from !== null) {
+            $query->where('report_date', '>=', $from);
+        }
+        if ($to !== null) {
+            $query->where('report_date', '<=', $to);
+        }
+    }
+
     /**
      * Successful-delivery value split into 30 equal slices of the selected
      * window, plus the previous window and the same window last year.
      */
-    private function deliveryTrend($baseQuery, array $inputs): array
+    private function deliveryTrend($baseQuery, array $inputs, ?array $shopIds, bool $useSummaryTable): array
     {
         $hasRange = isset($inputs['date_from'], $inputs['date_to'])
             && $inputs['date_from'] !== ''
@@ -635,13 +731,26 @@ SQL;
                 ->where('orders.created_at', '<=', $currentEnd->copy()->endOfDay()->toDateTimeString());
         }
 
-        $rows = $trendQuery
-            ->toBase()
-            ->cloneWithout(['columns', 'orders'])
-            ->cloneWithoutBindings(['select', 'order'])
-            ->selectRaw("DATE(orders.created_at) AS day, COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS success_amount, COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_cod")
-            ->groupByRaw('DATE(orders.created_at)')
-            ->get();
+        if ($useSummaryTable) {
+            $sumQuery = $this->dailyOrderSummaryQuery($shopIds);
+            if ($hasRange) {
+                $sumQuery->where('report_date', '>=', $fetchStart->toDateString())
+                    ->where('report_date', '<=', $currentEnd->toDateString());
+            }
+
+            $rows = $sumQuery
+                ->selectRaw('report_date AS day, COALESCE(SUM(success_amount), 0) AS success_amount, COALESCE(SUM(total_revenue), 0) AS total_cod')
+                ->groupBy('report_date')
+                ->get();
+        } else {
+            $rows = $trendQuery
+                ->toBase()
+                ->cloneWithout(['columns', 'orders'])
+                ->cloneWithoutBindings(['select', 'order'])
+                ->selectRaw('DATE(orders.created_at) AS day, COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS success_amount, COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_cod')
+                ->groupByRaw('DATE(orders.created_at)')
+                ->get();
+        }
 
         $byDay = [];
         foreach ($rows as $row) {
@@ -766,6 +875,21 @@ SQL;
             'search' => ['nullable', 'string'],
         ]);
 
+        $summaryReady = OrderSummaryService::isReady();
+        $cacheKey = 'order_sales_chart_v2_'.md5(json_encode([
+            $shopIds,
+            $request->only(['date_from', 'date_to', 'status', 'order_page_id', 'search']),
+            $summaryReady,
+            ReportDataVersion::key('orders'),
+            ReportDataVersion::key('users'),
+        ]));
+        // Resolve the cached response before looking up the default date or
+        // inspecting order JSON. Cache hits must not scan source orders.
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return response()->json(['success' => true, 'data' => $cached]);
+        }
+
         if ($request->filled('date_from') && $request->filled('date_to')) {
             $start = Carbon::parse($request->query('date_from'))->startOfDay();
             $end = Carbon::parse($request->query('date_to'))->endOfDay();
@@ -773,7 +897,9 @@ SQL;
                 [$start, $end] = [$end->copy()->startOfDay(), $start->copy()->endOfDay()];
             }
         } else {
-            $latestOrderAt = Order::query()->max('created_at');
+            $latestOrderAt = $summaryReady
+                ? OrderSummaryService::latestOrderAt(null, false)
+                : Order::query()->max('created_at');
             if ($latestOrderAt === null) {
                 return response()->json([
                     'success' => true,
@@ -824,7 +950,7 @@ SQL;
         }
 
         if ($request->filled('search')) {
-            $searchTerm = $request->input('search') . '%';
+            $searchTerm = $request->input('search').'%';
             $whereClauses[] = '(orders.order_number_vtp LIKE ? OR orders.customer_phone LIKE ? OR orders.customer_name LIKE ? OR orders.pancake_order_id = ?)';
             $bindings[] = $searchTerm;
             $bindings[] = $searchTerm;
@@ -834,8 +960,10 @@ SQL;
 
         $whereSql = implode(' AND ', $whereClauses);
 
-        $cacheKey = 'order_sales_chart_' . md5(json_encode([$whereSql, $bindings]));
         $data = Cache::remember($cacheKey, 600, function () use ($whereSql, $bindings, $start, $end) {
+            // This chart groups by name, while product summaries keep
+            // identities separate. Summing their order counts would count
+            // one order twice when it contains two same-named products.
             $sql = "SELECT 
                 orders.shop_id, 
                 COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm') as product_name, 
@@ -853,8 +981,8 @@ SQL;
             HAVING revenue > 0 
             ORDER BY revenue DESC";
 
-            $rows = \App\Services\OrderItemSql::select($sql, $bindings);
-            $shopsMap = \App\Models\Shop::pluck('name', 'id')->all();
+            $rows = $this->salesChartRows($sql, $bindings);
+            $shopsMap = Shop::pluck('name', 'id')->all();
 
             $byProduct = [];
             $topPairings = [];
@@ -865,13 +993,13 @@ SQL;
                 $revenue = (float) $row->revenue;
                 $quantity = (float) $row->quantity;
                 $ordersCount = (int) $row->orders_count;
-                $shopName = $shopsMap[$row->shop_id] ?? ('Cửa hàng #' . $row->shop_id);
+                $shopName = $shopsMap[$row->shop_id] ?? ('Cửa hàng #'.$row->shop_id);
                 $pName = $row->product_name;
 
                 $totalSystemRevenue += $revenue;
                 $totalSystemQuantity += $quantity;
 
-                if (!isset($byProduct[$pName])) {
+                if (! isset($byProduct[$pName])) {
                     $byProduct[$pName] = [
                         'product_name' => $pName,
                         'total_revenue' => 0,
@@ -944,6 +1072,11 @@ SQL;
         ]);
     }
 
+    protected function salesChartRows(string $sql, array $bindings): array
+    {
+        return OrderItemSql::select($sql, $bindings);
+    }
+
     /**
      * Bảng thống kê số lượng đơn hàng theo tháng (đầy đủ 12 tháng trong năm).
      */
@@ -964,10 +1097,14 @@ SQL;
             'status' => ['nullable'],
         ]);
 
-        $availableYears = Order::query()
-            ->whereNull('deleted_at')
-            ->when($shopIds !== null, fn ($q) => $q->whereIn('shop_id', $shopIds))
-            ->selectRaw('DISTINCT YEAR(created_at) as yr')
+        $summaryReady = OrderSummaryService::isReady();
+        $summaryReady = $summaryReady && ! in_array(0, $shopIds ?? [], true);
+        $yearsQuery = $summaryReady
+            ? $this->dailyOrderSummaryQuery($shopIds)->where('total_items', '>', 0)
+            : Order::query()->when($shopIds !== null, fn ($q) => $q->whereIn('shop_id', $shopIds));
+        $yearColumn = $summaryReady ? 'report_date' : 'created_at';
+        $availableYears = $yearsQuery
+            ->selectRaw("DISTINCT YEAR({$yearColumn}) as yr")
             ->orderByDesc('yr')
             ->pluck('yr')
             ->filter()
@@ -978,32 +1115,40 @@ SQL;
         $defaultYear = $availableYears[0] ?? (int) date('Y');
         $year = $request->integer('year', $defaultYear);
 
-        $query = Order::query()
-            ->whereNull('orders.deleted_at')
-            ->whereYear('orders.created_at', $year)
-            ->when($shopIds !== null, fn ($q) => $q->whereIn('orders.shop_id', $shopIds));
+        if ($summaryReady && ! $request->filled('status')) {
+            $rows = $this->dailyOrderSummaryQuery($shopIds)
+                ->where('report_date', '>=', sprintf('%04d-01-01', $year))
+                ->where('report_date', '<', sprintf('%04d-01-01', $year + 1))
+                ->selectRaw('MONTH(report_date) as month, SUM(total_items) as total_orders, SUM(success_count) as success_orders, SUM(success_amount) as success_cod, SUM(total_revenue) as total_cod')
+                ->groupByRaw('MONTH(report_date)')
+                ->get()->keyBy('month');
+        } else {
+            // Coarse delivery buckets cannot represent an arbitrary exact
+            // status subset, so keep the source query for those filters.
+            $query = Order::query()
+                ->where('orders.created_at', '>=', sprintf('%04d-01-01 00:00:00', $year))
+                ->where('orders.created_at', '<', sprintf('%04d-01-01 00:00:00', $year + 1))
+                ->when($shopIds !== null, fn ($q) => $q->whereIn('orders.shop_id', $shopIds));
 
-        if ($request->filled('status')) {
-            $status = $request->input('status');
-            if (is_array($status)) {
-                $query->whereIn('orders.status', $status);
-            } else {
-                $query->where('orders.status', $status);
+            if ($request->filled('status')) {
+                $status = $request->input('status');
+                if (is_array($status)) {
+                    $query->whereIn('orders.status', $status);
+                } else {
+                    $query->where('orders.status', $status);
+                }
             }
-        }
 
-        $rows = (clone $query)
-            ->selectRaw("
-                MONTH(orders.created_at) as month,
-                COUNT(DISTINCT orders.id) as total_orders,
-                COUNT(DISTINCT CASE WHEN orders.status IN (3, 16) THEN orders.id END) as success_orders,
-                COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN orders.cod ELSE 0 END), 0) as success_cod,
-                COALESCE(SUM(orders.cod), 0) as total_cod
-            ")
-            ->groupByRaw('MONTH(orders.created_at)')
-            ->orderByRaw('month ASC')
-            ->get()
-            ->keyBy('month');
+            $rows = $query->selectRaw('
+                    MONTH(orders.created_at) as month,
+                    COUNT(DISTINCT orders.id) as total_orders,
+                    COUNT(DISTINCT CASE WHEN orders.status IN (3, 16) THEN orders.id END) as success_orders,
+                    COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN orders.cod ELSE 0 END), 0) as success_cod,
+                    COALESCE(SUM(orders.cod), 0) as total_cod
+                ')
+                ->groupByRaw('MONTH(orders.created_at)')
+                ->get()->keyBy('month');
+        }
 
         $months = [];
         $totalOrdersYear = 0;

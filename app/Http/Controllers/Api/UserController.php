@@ -9,6 +9,7 @@ use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\User;
+use App\Services\ReportDataVersion;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -17,6 +18,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller implements HasMiddleware
@@ -259,6 +261,28 @@ class UserController extends Controller implements HasMiddleware
             'week_mode' => ['nullable', 'in:latest,all'],
         ]);
 
+        // Resolve authorization before reading cache, but defer all order scans
+        // (including latest-week discovery) until a cache miss.
+        $scope = $shopIds;
+        if ($scope !== null) {
+            sort($scope, SORT_NUMERIC);
+        }
+        $cacheKey = 'staff-weekly-revenue:v2:'.hash('sha256', json_encode([
+            'user' => $actor->getKey(),
+            'role' => $actor->role_id,
+            'shops' => $scope,
+            'date_from' => $request->filled('date_from') ? Carbon::parse($request->query('date_from'))->toDateString() : null,
+            'date_to' => $request->filled('date_to') ? Carbon::parse($request->query('date_to'))->toDateString() : null,
+            'role_id' => $request->filled('role_id') ? $request->integer('role_id') : null,
+            'week_mode' => $request->query('week_mode'),
+            'timezone' => config('app.timezone'),
+            'minute' => now()->format('Y-m-d H:i'),
+            'versions' => [ReportDataVersion::key('orders'), ReportDataVersion::key('users')],
+        ]));
+        if (($cached = Cache::get($cacheKey)) !== null) {
+            return response()->json($cached);
+        }
+
         $latestOrderQuery = Order::query()
             ->when($shopIds !== null, fn ($query) => $query->whereIn('shop_id', $shopIds));
         if ($request->filled('role_id')) {
@@ -271,10 +295,13 @@ class UserController extends Controller implements HasMiddleware
 
         if ($request->query('week_mode') === 'latest') {
             if ($latestOrderAt === null) {
-                return response()->json([
+                $response = [
                     'success' => true,
                     'data' => ['from' => null, 'to' => null, 'latest_order_at' => null, 'items' => []],
-                ]);
+                ];
+                Cache::put($cacheKey, $response, 60);
+
+                return response()->json($response);
             }
             $start = $this->latestRankableWeek($shopIds, $request->filled('role_id') ? $request->integer('role_id') : null)
                 ?? Carbon::parse($latestOrderAt)->startOfWeek(Carbon::MONDAY)->startOfDay();
@@ -317,7 +344,7 @@ class UserController extends Controller implements HasMiddleware
             ->limit(10)
             ->get();
 
-        return response()->json([
+        $response = [
             'success' => true,
             'data' => [
                 'from' => $start->toDateString(),
@@ -325,7 +352,10 @@ class UserController extends Controller implements HasMiddleware
                 'latest_order_at' => $latestOrderAt,
                 'items' => $items,
             ],
-        ]);
+        ];
+        Cache::put($cacheKey, $response, 60);
+
+        return response()->json($response);
     }
 
     private function latestRankableWeek(?array $shopIds, ?int $roleId): ?Carbon

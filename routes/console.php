@@ -9,6 +9,8 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
+Schedule::command('orders:sync-summaries --pending')->everyMinute()->withoutOverlapping(10);
+
 Schedule::command('customer-care:reclaim-stale', [
     '--execute',
     '--limit' => config('customer_care.auto_reclaim.limit'),

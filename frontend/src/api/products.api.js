@@ -6,9 +6,10 @@ const removeEmptyParams = (params = {}) =>
     Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
   )
 
-export const getProducts = async (params = {}) => {
+export const getProducts = async (params = {}, { signal } = {}) => {
   const response = await apiClient.get(API_ROUTES.PRODUCTS, {
     params: removeEmptyParams(params),
+    ...(signal ? { signal } : {}),
   })
 
   return response.data.data ?? {
@@ -20,9 +21,10 @@ export const getProducts = async (params = {}) => {
   }
 }
 
-export const getProductSales = async (params = {}) => {
+export const getProductSales = async (params = {}, { signal } = {}) => {
   const response = await apiClient.get(API_ROUTES.PRODUCT_SALES, {
     params: removeEmptyParams(params),
+    ...(signal ? { signal } : {}),
   })
 
   return response.data.data ?? {
@@ -35,9 +37,10 @@ export const getProductSales = async (params = {}) => {
   }
 }
 
-export const getProductPeriodReport = async (params = {}) => {
+export const getProductPeriodReport = async (params = {}, { signal } = {}) => {
   const response = await apiClient.get(API_ROUTES.PRODUCT_PERIOD_REPORT, {
     params: removeEmptyParams(params),
+    ...(signal ? { signal } : {}),
   })
 
   return response.data.data ?? {
@@ -51,9 +54,10 @@ export const getProductPeriodReport = async (params = {}) => {
   }
 }
 
-export const getProductMonthlyQuantities = async (params = {}) => {
+export const getProductMonthlyQuantities = async (params = {}, { signal } = {}) => {
   const response = await apiClient.get(API_ROUTES.PRODUCT_MONTHLY_QUANTITIES, {
     params: removeEmptyParams(params),
+    ...(signal ? { signal } : {}),
   })
 
   return response.data.data ?? {

@@ -8,7 +8,9 @@ use App\Models\Shop;
 use App\Services\CustomerEnteredSystemEventWriter;
 use App\Services\OrderCreatedEventWriter;
 use App\Services\OrderService;
+use App\Services\WebhookMonitor;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -38,7 +40,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
     ): void {
         try {
             if (empty($this->data['shop_id'])) {
-                \App\Services\WebhookMonitor::record('skipped', null, 'Thiếu shop_id');
+                WebhookMonitor::record('skipped', null, 'Thiếu shop_id');
                 Log::channel('pancake-webhook-error')->info('=================not found shop_id==============');
                 Log::channel('pancake-webhook-error')->info($this->data);
 
@@ -50,9 +52,14 @@ class GetOrderFromWebhookJob implements ShouldQueue
                 $shop = Shop::where('pancake_shop_id', $pancakeShopId)->first();
 
                 if (! $shop) {
-                    \App\Services\WebhookMonitor::record('skipped', $pancakeShopId, 'Shop chưa được cấu hình');
+                    WebhookMonitor::record('skipped', $pancakeShopId, 'Shop chưa được cấu hình');
+
                     return false;
                 }
+
+                // Both import paths lock the same existing shop row before
+                // looking up external identities, preventing concurrent inserts.
+                Shop::whereKey($shop->id)->lockForUpdate()->first();
 
                 $orderService = new OrderService;
                 $result = $orderService->getOrderItem($this->data, $shop->id);
@@ -61,7 +68,8 @@ class GetOrderFromWebhookJob implements ShouldQueue
                 }
 
                 if (empty($result['order_number_vtp'])) {
-                    \App\Services\WebhookMonitor::record('skipped', $pancakeShopId, 'Đơn không có mã vận đơn VTP');
+                    WebhookMonitor::record('skipped', $pancakeShopId, 'Đơn không có mã vận đơn VTP');
+
                     return false;
                 }
 
@@ -141,7 +149,12 @@ class GetOrderFromWebhookJob implements ShouldQueue
                 $isNewOrder = $order === null;
                 if ($order) {
                     unset($result['pancake_order_id']);
-                    $order->update($result);
+                    $order->fill($result);
+                    // Identical webhook retries must not write updated_at,
+                    // invalidate every report, or enqueue projection work.
+                    if ($order->isDirty()) {
+                        $order->save();
+                    }
                 } else {
                     $order = Order::create($result);
                     $orderCreatedEventWriter->write(
@@ -178,16 +191,19 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $order->user_assigning_seller_id
                     )->onQueue('add-customer-care')->afterCommit();
                 }
+
                 return true;
             });
-            if ($saved) \App\Services\WebhookMonitor::record('processed', $this->data['shop_id']);
+            if ($saved) {
+                WebhookMonitor::record('processed', $this->data['shop_id']);
+            }
 
             Log::channel('pancake-webhook-success')->info('=================Thành công GetOrderFromWebhookJob==============');
 
             return;
         } catch (\Throwable $th) {
-            $reason = $th instanceof \Illuminate\Database\QueryException ? 'Lỗi cơ sở dữ liệu' : (str_starts_with($th->getMessage(), 'Undefined array key') ? $th->getMessage() : 'Xử lý thất bại: '.get_class($th));
-            \App\Services\WebhookMonitor::record('error', $this->data['shop_id'] ?? null, $reason);
+            $reason = $th instanceof QueryException ? 'Lỗi cơ sở dữ liệu' : (str_starts_with($th->getMessage(), 'Undefined array key') ? $th->getMessage() : 'Xử lý thất bại: '.get_class($th));
+            WebhookMonitor::record('error', $this->data['shop_id'] ?? null, $reason);
             Log::channel('pancake-webhook-error')->info('=================Lỗi GetOrderFromWebhookJob==============');
             Log::channel('pancake-webhook-error')->info($th->getMessage());
             Log::channel('pancake-webhook-error')->info($this->data);

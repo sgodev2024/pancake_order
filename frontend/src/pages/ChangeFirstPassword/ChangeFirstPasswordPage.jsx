@@ -1,7 +1,7 @@
 import { App, Button, Form, Input } from 'antd'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { changeFirstPassword, getMe } from '../../api/auth.api.js'
+import { changeFirstPassword } from '../../api/auth.api.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import { ROUTES } from '../../constants/routes.js'
 import { getApiErrorMessage } from '../../utils/response.js'
@@ -10,7 +10,7 @@ const ChangeFirstPasswordPage = () => {
   const [submitting, setSubmitting] = useState(false)
   const { message } = App.useApp()
   const navigate = useNavigate()
-  const setSession = useAuthStore((state) => state.setSession)
+  const completeSession = useAuthStore((state) => state.completeSession)
   const clearSession = useAuthStore((state) => state.clearSession)
 
   const handleSubmit = async (values) => {
@@ -26,9 +26,7 @@ const ChangeFirstPasswordPage = () => {
 
       if (!result.access_token) throw new Error('Phản hồi đổi mật khẩu không có access token mới.')
 
-      setSession({ token: result.access_token, user: result.user, requirePasswordChange: false })
-      const user = await getMe()
-      setSession({ token: result.access_token, user, requirePasswordChange: false })
+      await completeSession({ ...result, require_password_change: false })
       message.success(result.message || 'Đổi mật khẩu thành công.')
       navigate(ROUTES.HOME, { replace: true })
     } catch (error) {

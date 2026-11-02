@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Order;
+use App\Services\OrderSummaryService;
+use App\Services\ProductSalesQuery;
+use App\Services\ReportDataVersion;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -13,9 +16,7 @@ use Illuminate\Support\Facades\Schema;
 
 class ProductReportController extends Controller
 {
-    public function __construct(private readonly ShopAccessService $shopAccessService)
-    {
-    }
+    public function __construct(private readonly ShopAccessService $shopAccessService) {}
 
     public function index(Request $request)
     {
@@ -42,7 +43,22 @@ class ProductReportController extends Controller
             ]);
         }
 
-        $latestOrderAt = $this->deliveredOrders($shopIds)->max('created_at');
+        // Resolve a cached response before discovering latest dates/rankable weeks.
+        $summariesReady = OrderSummaryService::isReady();
+        $cacheKey = 'prod_sales_v3_'.md5(json_encode([
+            $actor?->getAuthIdentifier(), $actor?->role_id, $shopIds,
+            $request->only(['date_from', 'date_to', 'week_mode', 'month_mode']),
+            ReportDataVersion::key('orders'), ReportDataVersion::key('users'),
+            $summariesReady,
+            (int) floor(now()->timestamp / 120),
+        ]));
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return response()->json(['success' => true, 'data' => $cached]);
+        }
+        $latestOrderAt = $summariesReady
+            ? OrderSummaryService::latestOrderAt($shopIds, true)
+            : $this->deliveredOrders($shopIds)->max('created_at');
 
         $isMonthMode = $request->query('month_mode') === 'latest';
         if ($isMonthMode) {
@@ -89,23 +105,11 @@ class ProductReportController extends Controller
         $previousStart = ($isMonthMode || $isMonthRange) ? $start->copy()->subMonth() : $start->copy()->subWeek();
         $yearStart = $start->copy()->subYear();
 
-        $cacheKey = 'prod_sales_' . md5(json_encode([
-            $shopIds,
-            $start->toDateString(),
-            $end->toDateString(),
-            $request->query('week_mode'),
-            $request->query('month_mode'),
-            $truncated ? floor($now->timestamp / 120) : null,
-        ]));
-
         $data = Cache::remember($cacheKey, 120, function () use ($shopIds, $start, $measuredEnd, $latestOrderAt, $truncated, $previousStart, $yearStart, $elapsed) {
             $previousQty = $this->deliveredQuantityTotal($shopIds, $previousStart, $previousStart->copy()->addSeconds($elapsed));
             $yearQty = $this->deliveredQuantityTotal($shopIds, $yearStart, $yearStart->copy()->addSeconds($elapsed));
 
-            $rows = \App\Services\OrderItemSql::select(
-                $this->productSql(true, $shopIds, false),
-                $this->bindings($shopIds, $start, $measuredEnd)
-            );
+            $rows = ProductSalesQuery::rows($shopIds, $start, $measuredEnd);
 
             $totalQuantity = 0;
             $totalRevenue = 0;
@@ -114,9 +118,7 @@ class ProductReportController extends Controller
                 $totalRevenue += (float) ($row->revenue ?? 0);
             }
 
-            $totalOrders = (int) $this->deliveredOrders($shopIds)
-                ->whereBetween('orders.created_at', [$start->toDateTimeString(), $measuredEnd->toDateTimeString()])
-                ->count();
+            $totalOrders = (int) ProductSalesQuery::deliveredValue($shopIds, $start, $measuredEnd);
 
             $items = array_map(fn ($row) => [
                 'name' => $row->name,
@@ -156,11 +158,7 @@ class ProductReportController extends Controller
 
     private function deliveredQuantityTotal(?array $shopIds, Carbon $start, Carbon $end): float|int
     {
-        $val = $this->deliveredOrders($shopIds)
-            ->whereBetween('orders.created_at', [$start->toDateTimeString(), $end->toDateTimeString()])
-            ->sum('orders.total_quantity');
-
-        return $this->quantity($val ?? 0);
+        return $this->quantity(ProductSalesQuery::deliveredValue($shopIds, $start, $end, 'quantity'));
     }
 
     private function latestRankableWeek(?array $shopIds): ?Carbon
@@ -186,95 +184,10 @@ class ProductReportController extends Controller
         return $weekStart ? Carbon::parse($weekStart)->startOfDay() : null;
     }
 
-    private function topProducts(?array $shopIds, Carbon $start, Carbon $end): array
-    {
-        $rows = \App\Services\OrderItemSql::select(
-            $this->productSql(true, $shopIds),
-            $this->bindings($shopIds, $start, $end)
-        );
-
-        return array_map(fn ($row) => [
-            'name' => $row->name,
-            'quantity' => $this->quantity($row->quantity),
-            'revenue' => round((float) ($row->revenue ?? 0)),
-            'orders_count' => (int) $row->orders_count,
-        ], $rows);
-    }
-
-    private function quantityTotal(?array $shopIds, Carbon $start, Carbon $end): array
-    {
-        $row = \App\Services\OrderItemSql::selectOne(
-            $this->productSql(false, $shopIds),
-            $this->bindings($shopIds, $start, $end)
-        );
-
-        return [
-            'quantity' => $this->quantity($row->quantity ?? 0),
-            'revenue' => round((float) ($row->revenue ?? 0)),
-            'orders_count' => (int) ($row->orders_count ?? 0),
-        ];
-    }
-
-    private function productSql(bool $grouped, ?array $shopIds, bool $limit = true): string
-    {
-        $shopSql = $shopIds === null
-            ? ''
-            : ' AND orders.shop_id IN ('.implode(',', array_fill(0, count($shopIds), '?')).')';
-        $name = "COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm')";
-        $limitSql = $limit ? ' LIMIT 10' : '';
-
-        if (! $grouped) {
-            return "SELECT COALESCE(SUM(item.quantity), 0) AS quantity,
-                    COALESCE(SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)), 0) AS revenue,
-                    COUNT(DISTINCT orders.id) AS orders_count
-                FROM orders
-                JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
-                    product_name VARCHAR(255) PATH '$.variation_info.name',
-                    quantity DECIMAL(12,2) PATH '$.quantity',
-                    retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
-                )) AS item
-                WHERE orders.deleted_at IS NULL
-                  AND orders.status = 3
-                  AND orders.order_number_vtp IS NOT NULL
-                  AND orders.order_number_vtp <> ''
-                  AND orders.pancake_full_data IS NOT NULL
-                  AND orders.created_at BETWEEN ? AND ?
-                  {$shopSql}";
-        }
-
-        return "SELECT {$name} AS name,
-                SUM(COALESCE(item.quantity, 0)) AS quantity,
-                SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)) AS revenue,
-                COUNT(DISTINCT orders.id) AS orders_count
-            FROM orders
-            JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
-                product_name VARCHAR(255) PATH '$.variation_info.name',
-                quantity DECIMAL(12,2) PATH '$.quantity',
-                retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
-            )) AS item
-            WHERE orders.deleted_at IS NULL
-              AND orders.status = 3
-              AND orders.order_number_vtp IS NOT NULL
-              AND orders.order_number_vtp <> ''
-              AND orders.pancake_full_data IS NOT NULL
-              AND orders.created_at BETWEEN ? AND ?
-              {$shopSql}
-            GROUP BY name
-            HAVING SUM(COALESCE(item.quantity, 0)) > 0
-            ORDER BY quantity DESC, orders_count DESC, name ASC{$limitSql}";
-    }
-
-    private function bindings(?array $shopIds, Carbon $start, Carbon $end): array
-    {
-        return array_merge(
-            [$start->toDateTimeString(), $end->toDateTimeString()],
-            $shopIds ?? []
-        );
-    }
-
     private function quantity(mixed $value): float|int
     {
         $number = (float) $value;
+
         return floor($number) === $number ? (int) $number : round($number, 2);
     }
 
@@ -302,6 +215,7 @@ class ProductReportController extends Controller
             'items' => [],
         ];
     }
+
     public function periodReport(Request $request)
     {
         $actor = $request->user();
@@ -343,7 +257,10 @@ class ProductReportController extends Controller
         $viewMode = $request->query('view_mode');
         $compare = $request->query('compare');
 
-        $cacheKey = 'prod_period_' . md5(json_encode([
+        $cacheKey = 'prod_period_v3_'.md5(json_encode([
+            $actor?->getAuthIdentifier(), $actor?->role_id,
+            ReportDataVersion::key('orders'), ReportDataVersion::key('users'),
+            OrderSummaryService::isReady(),
             $shopIds,
             $start->toDateString(),
             $end->toDateString(),
@@ -352,71 +269,36 @@ class ProductReportController extends Controller
         ]));
 
         $data = Cache::remember($cacheKey, 600, function () use ($shopIds, $start, $end, $viewMode, $compare) {
-            $groupByStr = match ($viewMode) {
-                'day' => "DATE_FORMAT(orders.created_at, '%Y-%m-%d')",
-                'month' => "DATE_FORMAT(orders.created_at, '%Y-%m')",
-                'quarter' => "CONCAT(YEAR(orders.created_at), '-Q', QUARTER(orders.created_at))",
-                'year' => "DATE_FORMAT(orders.created_at, '%Y')",
-            };
-
             $fetchStart = $start->copy();
             $prevStart = $start->copy();
             $prevEnd = $end->copy();
 
             if ($compare === 'mom') {
-                if ($viewMode === 'day') { $fetchStart->subDay(); $prevStart->subDay(); $prevEnd->subDay(); }
-                elseif ($viewMode === 'month') { $fetchStart->subMonth(); $prevStart->subMonth(); $prevEnd->subMonth(); }
-                elseif ($viewMode === 'quarter') { $fetchStart->subQuarter(); $prevStart->subQuarter(); $prevEnd->subQuarter(); }
-                elseif ($viewMode === 'year') { $fetchStart->subYear(); $prevStart->subYear(); $prevEnd->subYear(); }
+                if ($viewMode === 'day') {
+                    $fetchStart->subDay();
+                    $prevStart->subDay();
+                    $prevEnd->subDay();
+                } elseif ($viewMode === 'month') {
+                    $fetchStart->subMonth();
+                    $prevStart->subMonth();
+                    $prevEnd->subMonth();
+                } elseif ($viewMode === 'quarter') {
+                    $fetchStart->subQuarter();
+                    $prevStart->subQuarter();
+                    $prevEnd->subQuarter();
+                } elseif ($viewMode === 'year') {
+                    $fetchStart->subYear();
+                    $prevStart->subYear();
+                    $prevEnd->subYear();
+                }
             } elseif ($compare === 'yoy') {
                 $fetchStart->subYear();
                 $prevStart->subYear();
                 $prevEnd->subYear();
             }
 
-            $shopSql = $shopIds === null
-                ? ''
-                : ' AND orders.shop_id IN ('.implode(',', array_fill(0, count($shopIds), '?')).')';
-            $name = "COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm')";
-
-            // 1. Fast orders count per period (~50ms)
-            $ordersSql = "SELECT {$groupByStr} AS period, COUNT(*) as orders_count
-                          FROM orders
-                          WHERE orders.deleted_at IS NULL
-                            AND orders.status = 3
-                            AND orders.order_number_vtp IS NOT NULL
-                            AND orders.order_number_vtp <> ''
-                            AND orders.created_at BETWEEN ? AND ?
-                            {$shopSql}
-                          GROUP BY period";
-            $ordersBindings = array_merge([$fetchStart->toDateTimeString(), $end->toDateTimeString()], $shopIds ?? []);
-            $ordersRows = \App\Services\OrderItemSql::select($ordersSql, $ordersBindings);
-            $periodOrdersMap = [];
-            foreach ($ordersRows as $r) {
-                $periodOrdersMap[$r->period] = (int) $r->orders_count;
-            }
-
-            // 2. Single JSON_TABLE query grouping by period + name
-            $sql = "SELECT {$groupByStr} AS period,
-                        {$name} AS name,
-                        SUM(COALESCE(item.quantity, 0)) AS quantity,
-                        SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)) AS revenue
-                    FROM orders
-                    JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
-                        product_name VARCHAR(255) PATH '$.variation_info.name',
-                        quantity DECIMAL(12,2) PATH '$.quantity',
-                        retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
-                    )) AS item
-                    WHERE orders.deleted_at IS NULL
-                      AND orders.status = 3
-                      AND orders.order_number_vtp IS NOT NULL
-                      AND orders.order_number_vtp <> ''
-                      AND orders.pancake_full_data IS NOT NULL
-                      AND orders.created_at BETWEEN ? AND ?
-                      {$shopSql}
-                    GROUP BY period, name";
-            $bindings = array_merge([$fetchStart->toDateTimeString(), $end->toDateTimeString()], $shopIds ?? []);
-            $rows = \App\Services\OrderItemSql::select($sql, $bindings);
+            $periodOrdersMap = ProductSalesQuery::orderCountsByPeriod($shopIds, $fetchStart, $end, $viewMode);
+            $rows = ProductSalesQuery::rows($shopIds, $fetchStart, $end, $viewMode);
 
             $generatedPeriods = $this->generatePeriods($start, $end, $viewMode);
             $currentPeriodsSet = array_flip($generatedPeriods);
@@ -436,6 +318,7 @@ class ProductReportController extends Controller
             foreach ($rows as $r) {
                 $p = $r->period;
                 $n = $r->name;
+                $productKey = $r->product_key;
                 $rev = (float) $r->revenue;
                 $qty = (float) $r->quantity;
 
@@ -446,18 +329,18 @@ class ProductReportController extends Controller
                 $periodTotals[$p]['quantity'] += $qty;
 
                 if (isset($currentPeriodsSet[$p])) {
-                    if (! isset($currentProductsMap[$n])) {
-                        $currentProductsMap[$n] = ['quantity' => 0, 'revenue' => 0];
+                    if (! isset($currentProductsMap[$productKey])) {
+                        $currentProductsMap[$productKey] = ['name' => $n, 'quantity' => 0, 'revenue' => 0];
                     }
-                    $currentProductsMap[$n]['quantity'] += $qty;
-                    $currentProductsMap[$n]['revenue'] += $rev;
+                    $currentProductsMap[$productKey]['quantity'] += $qty;
+                    $currentProductsMap[$productKey]['revenue'] += $rev;
                 }
 
                 if (isset($prevPeriodsSet[$p])) {
-                    if (! isset($prevProductsMap[$n])) {
-                        $prevProductsMap[$n] = ['revenue' => 0];
+                    if (! isset($prevProductsMap[$productKey])) {
+                        $prevProductsMap[$productKey] = ['revenue' => 0];
                     }
-                    $prevProductsMap[$n]['revenue'] += $rev;
+                    $prevProductsMap[$productKey]['revenue'] += $rev;
                 }
             }
 
@@ -507,17 +390,17 @@ class ProductReportController extends Controller
 
             $products = [];
             $rank = 1;
-            foreach ($top50 as $n => $data) {
+            foreach ($top50 as $productKey => $data) {
                 $rev = round($data['revenue']);
                 $qty = $this->quantity($data['quantity']);
                 $pRev = null;
                 if ($compare !== 'none') {
-                    $pRev = isset($prevProductsMap[$n]) ? round($prevProductsMap[$n]['revenue']) : 0;
+                    $pRev = isset($prevProductsMap[$productKey]) ? round($prevProductsMap[$productKey]['revenue']) : 0;
                 }
 
                 $products[] = [
                     'rank' => $rank++,
-                    'name' => $n,
+                    'name' => $data['name'],
                     'quantity' => $qty,
                     'revenue' => $rev,
                     'previous_revenue' => $pRev,
@@ -565,53 +448,68 @@ class ProductReportController extends Controller
                 $periods[] = $current->format('Y-m');
                 $current->addMonth()->startOfMonth();
             } elseif ($viewMode === 'quarter') {
-                $periods[] = $current->year . '-Q' . $current->quarter;
+                $periods[] = $current->year.'-Q'.$current->quarter;
                 $current->addQuarter()->startOfQuarter();
             } elseif ($viewMode === 'year') {
                 $periods[] = $current->format('Y');
                 $current->addYear()->startOfYear();
             }
         }
+
         return array_unique($periods);
     }
 
     private function getPreviousPeriodString(string $period, string $viewMode, string $compare): ?string
     {
-        if ($compare === 'none') return null;
+        if ($compare === 'none') {
+            return null;
+        }
         if ($viewMode === 'day') {
             $date = Carbon::createFromFormat('Y-m-d', $period);
+
             return ($compare === 'mom' ? $date->subDay() : $date->subYear())->format('Y-m-d');
         } elseif ($viewMode === 'month') {
             $date = Carbon::createFromFormat('Y-m', $period)->startOfMonth();
+
             return ($compare === 'mom' ? $date->subMonth() : $date->subYear())->format('Y-m');
         } elseif ($viewMode === 'quarter') {
             [$year, $q] = explode('-Q', $period);
-            $year = (int)$year;
-            $q = (int)$q;
+            $year = (int) $year;
+            $q = (int) $q;
             if ($compare === 'mom') {
                 $q--;
-                if ($q < 1) { $q = 4; $year--; }
+                if ($q < 1) {
+                    $q = 4;
+                    $year--;
+                }
+
                 return "{$year}-Q{$q}";
             } else {
-                return ($year - 1) . "-Q{$q}";
+                return ($year - 1)."-Q{$q}";
             }
         } elseif ($viewMode === 'year') {
             if ($compare === 'mom' || $compare === 'yoy') {
-                return ((int)$period - 1) . "";
+                return ((int) $period - 1).'';
             }
         }
+
         return null;
     }
 
     private function formatPeriodLabel(string $period, string $viewMode): string
     {
-        if ($viewMode === 'day') return Carbon::createFromFormat('Y-m-d', $period)->format('d/m/Y');
-        elseif ($viewMode === 'month') return 'T' . Carbon::createFromFormat('Y-m', $period)->format('n/Y');
-        elseif ($viewMode === 'quarter') {
+        if ($viewMode === 'day') {
+            return Carbon::createFromFormat('Y-m-d', $period)->format('d/m/Y');
+        } elseif ($viewMode === 'month') {
+            return 'T'.Carbon::createFromFormat('Y-m', $period)->format('n/Y');
+        } elseif ($viewMode === 'quarter') {
             [$year, $q] = explode('-Q', $period);
+
             return "Q{$q}/{$year}";
+        } elseif ($viewMode === 'year') {
+            return $period;
         }
-        elseif ($viewMode === 'year') return $period;
+
         return $period;
     }
 
@@ -619,18 +517,23 @@ class ProductReportController extends Controller
     {
         if ($viewMode === 'day') {
             $date = Carbon::createFromFormat('Y-m-d', $period);
+
             return [$date->toDateString(), $date->toDateString()];
         } elseif ($viewMode === 'month') {
             $date = Carbon::createFromFormat('Y-m', $period);
+
             return [$date->copy()->startOfMonth()->toDateString(), $date->copy()->endOfMonth()->toDateString()];
         } elseif ($viewMode === 'quarter') {
             [$year, $q] = explode('-Q', $period);
-            $date = Carbon::create((int)$year, ((int)$q - 1) * 3 + 1, 1);
+            $date = Carbon::create((int) $year, ((int) $q - 1) * 3 + 1, 1);
+
             return [$date->copy()->startOfQuarter()->toDateString(), $date->copy()->endOfQuarter()->toDateString()];
         } elseif ($viewMode === 'year') {
             $date = Carbon::createFromFormat('Y', $period);
+
             return [$date->copy()->startOfYear()->toDateString(), $date->copy()->endOfYear()->toDateString()];
         }
+
         return [$period, $period];
     }
 
@@ -650,47 +553,22 @@ class ProductReportController extends Controller
         ]);
 
         $year = $request->integer('year', (int) date('Y'));
-        $hasOrdersInYear = Order::query()
-            ->where('status', 3)
-            ->whereNotNull('order_number_vtp')
-            ->where('order_number_vtp', '<>', '')
-            ->whereYear('created_at', $year)
-            ->when($shopIds !== null, fn ($q) => $q->whereIn('shop_id', $shopIds))
-            ->exists();
-
-        if (! $hasOrdersInYear) {
-            $latestYear = Order::query()
-                ->where('status', 3)
-                ->whereNotNull('order_number_vtp')
-                ->where('order_number_vtp', '<>', '')
-                ->when($shopIds !== null, fn ($q) => $q->whereIn('shop_id', $shopIds))
-                ->selectRaw('YEAR(MAX(created_at)) as yr')
-                ->value('yr');
-            if ($latestYear) {
-                $year = (int) $latestYear;
-            }
-        }
-
-        $cacheKey = 'prod_mq_' . md5(json_encode([$shopIds, $year]));
+        $cacheKey = 'prod_mq_v3_'.md5(json_encode([
+            $actor?->getAuthIdentifier(), $actor?->role_id, $shopIds, $year,
+            ReportDataVersion::key('orders'), ReportDataVersion::key('users'),
+            OrderSummaryService::isReady(),
+        ]));
 
         $data = Cache::remember($cacheKey, 120, function () use ($shopIds, $year) {
-            $shopSql = $shopIds === null
-                ? ''
-                : ' AND orders.shop_id IN ('.implode(',', array_fill(0, count($shopIds), '?')).')';
-
-            $sql = "SELECT MONTH(orders.created_at) as month, SUM(COALESCE(orders.total_quantity, 0)) as total_qty
-                    FROM orders
-                    WHERE orders.deleted_at IS NULL
-                      AND orders.status = 3
-                      AND orders.order_number_vtp IS NOT NULL
-                      AND orders.order_number_vtp <> ''
-                      AND YEAR(orders.created_at) = ?
-                      {$shopSql}
-                    GROUP BY MONTH(orders.created_at)
-                    ORDER BY month ASC";
-
-            $bindings = array_merge([$year], $shopIds ?? []);
-            $rows = \App\Services\OrderItemSql::select($sql, $bindings);
+            if (! ProductSalesQuery::hasDeliveredInYear($shopIds, $year)) {
+                $latest = OrderSummaryService::isReady()
+                    ? OrderSummaryService::latestOrderAt($shopIds, true)
+                    : $this->deliveredOrders($shopIds)->max('created_at');
+                if ($latest !== null) {
+                    $year = Carbon::parse($latest)->year;
+                }
+            }
+            $rows = ProductSalesQuery::monthlyQuantities($shopIds, $year);
 
             $monthMap = [];
             $latestMonthWithData = 0;
@@ -775,5 +653,3 @@ class ProductReportController extends Controller
         ]);
     }
 }
-
-

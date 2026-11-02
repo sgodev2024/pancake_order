@@ -4,8 +4,10 @@ namespace App\Jobs;
 
 use App\Models\Customer;
 use App\Models\Order;
+use App\Models\Shop;
 use App\Services\OrderCreatedEventWriter;
 use App\Services\OrderService;
+use App\Services\OrderSummaryService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
@@ -45,6 +47,7 @@ class GetOrderByShopJob implements ShouldQueue
         try {
             DB::transaction(function () use ($eventWriter): void {
                 $shopId = (int) $this->shop_id;
+                Shop::whereKey($shopId)->lockForUpdate()->first();
                 $insertData = [];
                 $storedOrderIds = [];
                 $orderService = new OrderService;
@@ -81,7 +84,7 @@ class GetOrderByShopJob implements ShouldQueue
                     return;
                 }
 
-                Order::insert($insertData);
+                OrderSummaryService::trackSourceWrite(fn () => Order::insert($insertData));
 
                 $insertedOrders = Order::query()
                     ->where('shop_id', $shopId)
@@ -124,6 +127,10 @@ class GetOrderByShopJob implements ShouldQueue
                             'Could not resolve a newly inserted order for journey logging.'
                         );
                     }
+
+                    // insert() bypasses model events; persist projection work
+                    // within the same transaction as the inserted source rows.
+                    OrderSummaryService::queueOrder((int) $order->id);
 
                     $customer = $customersByPancakeId->get((string) $order->pancake_customer_id);
                     if (

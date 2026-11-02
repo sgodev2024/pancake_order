@@ -15,6 +15,7 @@ use App\Services\CustomerCareListQuery;
 use App\Services\CustomerCareOrderSourceService;
 use App\Services\CustomerCareReclaimService;
 use App\Services\CustomerCareWriteAccessService;
+use App\Services\ReportDataVersion;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use DomainException;
@@ -23,6 +24,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -606,6 +608,24 @@ class CustomerCareController extends Controller implements HasMiddleware
             $endOfWeek = Carbon::now()->endOfWeek()->format('Y-m-d');
             $user = auth()->user();
             $shop_ids = $user->shops()->pluck('shops.id');
+            $scope = $shop_ids->map(fn ($id) => (int) $id)->sort()->values()->all();
+            $cacheKey = 'care-overview:v2:'.hash('sha256', json_encode([
+                'user' => $user->getKey(),
+                'pancake_user' => $user->pancake_user_id,
+                'role' => $user->role_id,
+                'access' => [$user->isAdmin(), $user->isManagerSale(), $user->isManagerCskh()],
+                'shops' => $scope,
+                'date' => $today,
+                'week' => [$startOfWeek, $endOfWeek],
+                'timezone' => config('app.timezone'),
+                'minute' => now()->format('Y-m-d H:i'),
+                'versions' => [ReportDataVersion::key('cares'), ReportDataVersion::key('orders'), ReportDataVersion::key('users')],
+            ]));
+
+            if (($cached = Cache::get($cacheKey)) !== null) {
+                return response()->json($cached);
+            }
+
             $taskBaseQuery = CustomerCare::query();
             $this->applyOverviewAccessScope($taskBaseQuery, $user, $shop_ids, true);
             $totalCustomerCare = (clone $taskBaseQuery)->count();
@@ -685,7 +705,7 @@ class CustomerCareController extends Controller implements HasMiddleware
                             ')
                 ->first();
 
-            return response()->json([
+            $response = [
                 'success' => true,
                 'data' => [
                     'total_customer_care' => $totalCustomerCare,
@@ -702,7 +722,10 @@ class CustomerCareController extends Controller implements HasMiddleware
                     'total_order_today' => $query->total_order_today,
                     'total_revenue' => $query->total_revenue,
                 ],
-            ]);
+            ];
+            Cache::put($cacheKey, $response, 60);
+
+            return response()->json($response);
         } catch (\Throwable $th) {
             return response()->json([
                 'success' => false,
