@@ -94,6 +94,3 @@ class ZaloChatController extends Controller {
   Log::info('zalo.grants.updated',['actor_id'=>$r->user()->id,'account_id'=>$accountId]);return $this->grants($accountId);
  }
 }
-
-
-

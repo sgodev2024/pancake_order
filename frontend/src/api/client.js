@@ -21,6 +21,11 @@ const isJsonPayload = (data) => {
 }
 
 const isLoginRequest = (config) => config?.url?.endsWith(API_ROUTES.LOGIN)
+const usesCurrentSession = (config) => {
+  const authorization = config?.headers?.get?.('Authorization') ?? config?.headers?.Authorization ?? config?.headers?.authorization
+  const token = authHandlers.getToken()
+  return Boolean(token && typeof authorization === 'string' && authorization.replace(/^Bearer\s+/i, '') === token)
+}
 
 const apiClient = axios.create({
   baseURL: (import.meta.env?.DEV && developmentApi(import.meta.env?.VITE_API_URL)?.baseURL) || import.meta.env?.VITE_API_URL,
@@ -49,10 +54,10 @@ apiClient.interceptors.response.use(
     return response
   },
   (error) => {
-    if (error.response?.status === 401 && !isLoginRequest(error.config)) {
+    if (error.response?.status === 401 && !isLoginRequest(error.config) && usesCurrentSession(error.config)) {
       authHandlers.onUnauthorized()
 
-      if (window.location.pathname !== ROUTES.LOGIN) {
+      if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
         window.location.replace(ROUTES.LOGIN)
       }
     }

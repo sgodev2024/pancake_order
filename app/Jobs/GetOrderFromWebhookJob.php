@@ -8,10 +8,12 @@ use App\Models\Shop;
 use App\Services\CustomerEnteredSystemEventWriter;
 use App\Services\OrderCreatedEventWriter;
 use App\Services\OrderService;
+use App\Services\WarehouseService;
 use App\Services\WebhookMonitor;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -49,7 +51,9 @@ class GetOrderFromWebhookJob implements ShouldQueue
 
             $saved = DB::transaction(function () use ($eventWriter, $orderCreatedEventWriter) {
                 $pancakeShopId = $this->data['shop_id'];
-                $shop = Shop::where('pancake_shop_id', $pancakeShopId)->first();
+                $warehouse = app(WarehouseService::class);
+                $shop = Shop::where('pancake_shop_id', $pancakeShopId)
+                    ->lockForUpdate()->first();
 
                 if (! $shop) {
                     WebhookMonitor::record('skipped', $pancakeShopId, 'Shop chưa được cấu hình');
@@ -57,20 +61,10 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     return false;
                 }
 
-                // Both import paths lock the same existing shop row before
-                // looking up external identities, preventing concurrent inserts.
-                Shop::whereKey($shop->id)->lockForUpdate()->first();
-
                 $orderService = new OrderService;
                 $result = $orderService->getOrderItem($this->data, $shop->id);
                 if (Schema::hasColumn('orders', 'prepaid_amount')) {
                     $result['prepaid_amount'] = $this->data['prepaid'] ?? 0;
-                }
-
-                if (empty($result['order_number_vtp'])) {
-                    WebhookMonitor::record('skipped', $pancakeShopId, 'Đơn không có mã vận đơn VTP');
-
-                    return false;
                 }
 
                 $result['pancake_full_data'] = json_decode($result['pancake_full_data'], true); // format lại vì dùng create/update
@@ -80,7 +74,18 @@ class GetOrderFromWebhookJob implements ShouldQueue
                 $order = Order::query()
                     ->where('shop_id', $shop->id)
                     ->where('pancake_order_id', $result['pancake_order_id'])
-                    ->first();
+                    ->when($warehouse->enabled(), fn ($query) => $query->lockForUpdate())->first();
+                $warehouseOnly = empty($result['order_number_vtp']);
+                if ($warehouseOnly && ! $warehouse->canImportWithoutTracking($this->data)
+                    && (! $warehouse->enabled() || ! $order?->warehouse_queued_at)) {
+                    WebhookMonitor::record('skipped', $pancakeShopId, 'Đơn không có vận đơn và không đủ điều kiện Kho');
+
+                    return false;
+                }
+                if ($warehouse->enabled() && $order === null && Order::onlyTrashed()->where('shop_id', $shop->id)
+                    ->where('pancake_order_id', $result['pancake_order_id'])->exists()) {
+                    return false;
+                }
                 $customer = $this->data['customer'] ?? [];
                 $customerId = $customer['customer_id'] ?? null;
                 $hasLastOrderAt = Schema::hasColumn('customers', 'last_order_at');
@@ -101,7 +106,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         ->where('pancake_customer_id', $customerId)
                         ->first();
 
-                if (! $customerExist && $customerId !== null) {
+                if (! $warehouseOnly && ! $customerExist && $customerId !== null) {
                     $acquisitionChannel = $this->acquisitionChannel($customer);
                     $newCustomerData = [
                         'order_count' => $customer['order_count'] ?? 0,
@@ -129,7 +134,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $acquisitionChannel
                     );
                     $customerExist = $newCustomer;
-                } elseif ($customerExist) {
+                } elseif (! $warehouseOnly && $customerExist) {
                     $customerUpdates = [
                         'order_count' => $customer['order_count'] ?? $customerExist->order_count,
                         'assigned_user_id' => $customer['assigned_user_id'] ?? null,
@@ -149,14 +154,50 @@ class GetOrderFromWebhookJob implements ShouldQueue
                 $isNewOrder = $order === null;
                 if ($order) {
                     unset($result['pancake_order_id']);
+                    if ($warehouse->enabled() && ! empty($order->user_creator_id)) {
+                        unset($result['user_creator_id']);
+                    }
+                    if ($warehouse->enabled() && $order->warehouse_queued_at) {
+                        // Status-only webhooks must not erase the enrolled order snapshot.
+                        unset($result['created_at']);
+                        foreach ([
+                            'cod' => 'cod', 'cash' => 'cash', 'prepaid_amount' => 'prepaid', 'note' => 'note',
+                            'total_quantity' => 'items', 'customer_phone' => 'bill_phone_number',
+                            'customer_address' => 'shipping_address.full_address', 'province_id' => 'shipping_address.province_id',
+                            'order_number_vtp' => 'partner.order_number_vtp', 'pancake_customer_id' => 'customer.customer_id',
+                            'user_care_id' => 'assigning_care.id', 'user_assigning_seller_id' => 'assigning_seller.id',
+                            'pancake_order_source_id' => 'order_sources', 'pancake_order_source_name' => 'order_sources_name',
+                            'updated_at' => 'updated_at',
+                        ] as $column => $sourceKey) {
+                            if (! Arr::has($this->data, $sourceKey)) {
+                                unset($result[$column]);
+                            }
+                        }
+                        if (! Arr::hasAny($this->data, ['page_id', 'page.id', 'account'])) {
+                            unset($result['pancake_order_page_id']);
+                        }
+                        if (! Arr::hasAny($this->data, ['page.name', 'account_name'])) {
+                            unset($result['pancake_order_page_name']);
+                        }
+                        $result['pancake_full_data'] = array_replace($order->pancake_full_data ?? [], $this->data);
+                        foreach (['shipping_address', 'customer', 'partner'] as $key) {
+                            if (is_array($this->data[$key] ?? null)) {
+                                $result['pancake_full_data'][$key] = array_replace(
+                                    $order->pancake_full_data[$key] ?? [], $this->data[$key]
+                                );
+                            }
+                        }
+                    }
                     $order->fill($result);
                     // Identical webhook retries must not write updated_at,
                     // invalidate every report, or enqueue projection work.
                     if ($order->isDirty()) {
                         $order->save();
                     }
+                    $warehouse->synchronize($order, $this->data, false);
                 } else {
                     $order = Order::create($result);
+                    $warehouse->synchronize($order, $this->data, true);
                     $orderCreatedEventWriter->write(
                         $order,
                         'pancake_order_webhook',
@@ -164,7 +205,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                         $customerExist
                     );
 
-                    if (! empty($this->data['bill_phone_number'])) {
+                    if (! $warehouseOnly && ! empty($this->data['bill_phone_number'])) {
                         SendZnsJob::dispatch(
                             $this->data['bill_phone_number'],
                             $customer,
@@ -172,7 +213,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                     }
                 }
 
-                if ($isNewOrder && $order->status != 3) {
+                if (! $warehouseOnly && $isNewOrder && $order->status != 3) {
                     AddCustomerCareJob::dispatch(
                         $shop->id,
                         $shop->care_cycle_days,

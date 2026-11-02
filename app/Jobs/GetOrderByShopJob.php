@@ -8,7 +8,9 @@ use App\Models\Shop;
 use App\Services\OrderCreatedEventWriter;
 use App\Services\OrderService;
 use App\Services\OrderSummaryService;
+use App\Services\WarehouseService;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -47,16 +49,32 @@ class GetOrderByShopJob implements ShouldQueue
         try {
             DB::transaction(function () use ($eventWriter): void {
                 $shopId = (int) $this->shop_id;
-                Shop::whereKey($shopId)->lockForUpdate()->first();
+                $lockedShop = Shop::whereKey($shopId)->lockForUpdate()->first();
                 $insertData = [];
                 $storedOrderIds = [];
+                $sourcePayloads = [];
                 $orderService = new OrderService;
+                $warehouse = app(WarehouseService::class);
+                if ($warehouse->enabled() && $lockedShop === null) {
+                    throw (new ModelNotFoundException)->setModel(Shop::class, [$shopId]);
+                }
                 $hasPrepaidAmount = Schema::hasColumn('orders', 'prepaid_amount');
 
                 foreach ($this->datas as $dataItem) {
+                    if ($warehouse->enabled() && ! empty($dataItem['id'])) {
+                        $existing = Order::withTrashed()->where('shop_id', $shopId)
+                            ->where('pancake_order_id', $dataItem['id'].'_'.$shopId)->lockForUpdate()->first();
+                        if ($existing) {
+                            if (! $existing->trashed()) {
+                                $warehouse->synchronize($existing, $dataItem, false);
+                            }
+
+                            continue;
+                        }
+                    }
                     // Preserve the existing bulk business filter: only VTP
                     // partner orders enter the local orders table.
-                    if (empty($dataItem['partner']['order_number_vtp'])) {
+                    if (empty($dataItem['partner']['order_number_vtp']) && ! $warehouse->canImportWithoutTracking($dataItem)) {
                         continue;
                     }
 
@@ -77,6 +95,7 @@ class GetOrderByShopJob implements ShouldQueue
                     }
 
                     $storedOrderIds[$storedOrderId] = true;
+                    $sourcePayloads[$storedOrderId] = $dataItem;
                     $insertData[] = $orderData;
                 }
 
@@ -133,6 +152,7 @@ class GetOrderByShopJob implements ShouldQueue
                     OrderSummaryService::queueOrder((int) $order->id);
 
                     $customer = $customersByPancakeId->get((string) $order->pancake_customer_id);
+                    $warehouse->synchronize($order, $sourcePayloads[$storedOrderId], true);
                     if (
                         $hasLastOrderAt
                         &&

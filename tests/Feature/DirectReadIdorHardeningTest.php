@@ -14,6 +14,7 @@ use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class DirectReadIdorHardeningTest extends TestCase
@@ -446,6 +447,250 @@ class DirectReadIdorHardeningTest extends TestCase
         );
     }
 
+    public function test_assigned_staff_reads_full_customer_history_only_in_the_care_shop(): void
+    {
+        [$shop, $otherShop, $staff, $otherStaff, $care, $source] = $this->createPurchaseHistoryContext();
+        // Even membership in both shops must not widen this appointment's history.
+        $this->attach($staff, $otherShop);
+        $expected = [$source->id];
+        foreach ([0, 1, 2, 4] as $status) {
+            $expected[] = $this->createOrder($shop, [
+                'pancake_customer_id' => $care->pancake_customer_id,
+                'user_creator_id' => $status === 0 ? $staff->pancake_user_id : $otherStaff->pancake_user_id,
+                'user_care_id' => $otherStaff->pancake_user_id,
+                'status' => $status,
+            ])->id;
+        }
+        $foreignOrder = $this->createOrder($otherShop, [
+            'pancake_customer_id' => $care->pancake_customer_id,
+            'user_creator_id' => $staff->pancake_user_id,
+        ]);
+        $differentCustomer = $this->createOrder($shop, ['user_creator_id' => $staff->pancake_user_id]);
+        $deleted = $this->createOrder($shop, ['pancake_customer_id' => $care->pancake_customer_id]);
+        $deleted->delete();
+        $ordersBefore = DB::table('orders')->orderBy('id')->get()->toJson();
+        $assignmentsBefore = DB::table('customer_care_assignments')->get()->toJson();
+        $membershipsBefore = DB::table('shop_users')->get()->toJson();
+
+        $response = $this->actingAs($staff, 'api')
+            ->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonCount(5, 'data')
+            ->assertJsonStructure(['success', 'data' => [['id', 'shop_id', 'pancake_customer_id',
+                'pancake_order_id', 'status', 'cod', 'total_quantity', 'shop', 'user_creator',
+                'user_care', 'user_assigning']]]);
+        $this->assertEqualsCanonicalizing($expected, collect($response->json('data'))->pluck('id')->all());
+        $this->assertSame(['success', 'data'], array_keys($response->json()));
+
+        // Request parameters cannot replace the backend-verified customer/shop.
+        $tampered = $this->getJson("/api/v1/customer-cares/{$care->id}/orders?shop_id={$otherShop->id}"
+            ."&customer_id={$differentCustomer->pancake_customer_id}"
+            ."&pancake_customer_id={$foreignOrder->pancake_customer_id}")
+            ->assertOk();
+        $this->assertEqualsCanonicalizing($expected, collect($tampered->json('data'))->pluck('id')->all());
+        $this->assertSame($ordersBefore, DB::table('orders')->orderBy('id')->get()->toJson());
+        $this->assertSame($assignmentsBefore, DB::table('customer_care_assignments')->get()->toJson());
+        $this->assertSame($membershipsBefore, DB::table('shop_users')->get()->toJson());
+    }
+
+    #[DataProvider('deniedPurchaseHistoryCases')]
+    public function test_purchase_history_cannot_bypass_care_authorization(string $scenario): void
+    {
+        [$shop, $otherShop, $staff, $otherStaff, $care, $source, $assignment] = $this->createPurchaseHistoryContext();
+        // Owning the Order never substitutes for permission to read the care.
+        $source->update(['user_creator_id' => $staff->pancake_user_id, 'user_care_id' => $staff->pancake_user_id]);
+        switch ($scenario) {
+            case 'no_assignment':
+                $assignment->delete();
+                break;
+            case 'other_assignee':
+                $assignment->update(['assignee_user_id' => $otherStaff->id]);
+                break;
+            case 'reclaimed':
+                $assignment->update(['status' => CustomerCareAssignment::STATUS_RECLAIMED]);
+                break;
+            case 'wrong_assignment_shop':
+                $assignment->update(['shop_id' => $otherShop->id]);
+                break;
+            case 'multiple_active':
+                $this->createAssignment($care, $staff, $source);
+                break;
+            case 'different_care':
+                $assignment->update(['customer_care_id' => $this->createCare($shop)->id]);
+                break;
+            case 'legacy_cannot_override_active_assignee':
+                $care->update(['user_care_id' => $staff->pancake_user_id]);
+                $assignment->update(['assignee_user_id' => $otherStaff->id]);
+                break;
+            case 'no_shop_membership':
+                $staff->shops()->detach($shop->id);
+                $this->attach($staff, $otherShop);
+                break;
+            case 'url_tampering':
+                $care = $this->createCare($shop);
+                $this->createAssignment($care, $otherStaff, $source);
+                break;
+        }
+
+        $this->actingAs($staff, 'api')
+            ->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertForbidden()
+            ->assertJsonPath('success', false)
+            ->assertJsonMissingPath('data');
+    }
+
+    public static function deniedPurchaseHistoryCases(): array
+    {
+        return array_map(static fn ($scenario) => [$scenario], [
+            'no_assignment', 'other_assignee', 'reclaimed', 'wrong_assignment_shop',
+            'multiple_active', 'different_care', 'legacy_cannot_override_active_assignee',
+            'no_shop_membership', 'url_tampering',
+        ]);
+    }
+
+    #[DataProvider('legacyPurchaseHistoryCases')]
+    public function test_legacy_care_ownership_still_grants_same_shop_customer_history(string $ownership): void
+    {
+        [$shop, , $staff, , $care, $source, $assignment] = $this->createPurchaseHistoryContext();
+        $assignment->update(['status' => CustomerCareAssignment::STATUS_RECLAIMED]);
+        if ($ownership === 'pivot') {
+            DB::table('customer_assigneds')->insert([
+                'customer_care_id' => $care->id,
+                'pancake_user_id' => $staff->pancake_user_id,
+            ]);
+        } else {
+            $care->update([$ownership => $staff->pancake_user_id]);
+        }
+        $this->actingAs($staff, 'api')
+            ->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $source->id);
+    }
+
+    public static function legacyPurchaseHistoryCases(): array
+    {
+        return [['user_creator_id'], ['user_care_id'], ['user_assigning_seller_id'], ['pivot']];
+    }
+
+    #[DataProvider('blankPurchaseHistoryCustomerIds')]
+    public function test_blank_customer_identity_never_groups_unrelated_purchase_history(?string $customerId): void
+    {
+        [, , $staff, , $care] = $this->createPurchaseHistoryContext(['pancake_customer_id' => $customerId]);
+        $this->actingAs($staff, 'api')
+            ->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertOk()
+            ->assertExactJson(['success' => true, 'data' => []]);
+    }
+
+    public static function blankPurchaseHistoryCustomerIds(): array
+    {
+        return [[null], [''], ['   ']];
+    }
+
+    public function test_imported_care_without_matching_orders_does_not_join_purchase_history_by_phone(): void
+    {
+        [$shop, , $staff, , $care, $source, $assignment] = $this->createPurchaseHistoryContext();
+        $source->update(['customer_phone' => '0900000000']);
+        $care->update(['pancake_customer_id' => 'IMPORT-123', 'pancake_order_id' => null,
+            'customer_phones' => '0900000000']);
+        $assignment->update(['source_type' => CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
+            'source_id' => 123]);
+        $this->actingAs($staff, 'api')
+            ->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertOk()
+            ->assertExactJson(['success' => true, 'data' => []]);
+    }
+
+    public function test_customer_without_orders_returns_empty_purchase_history(): void
+    {
+        [, , $staff, , $care] = $this->createPurchaseHistoryContext();
+        $care->update(['pancake_customer_id' => 'NO-PURCHASES']);
+        $this->actingAs($staff, 'api')
+            ->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertOk()
+            ->assertExactJson(['success' => true, 'data' => []]);
+    }
+
+    #[DataProvider('purchaseHistoryManagerRoles')]
+    public function test_purchase_history_preserves_admin_and_manager_shop_scope(string $role): void
+    {
+        [$shop, $otherShop, , , $care, $source] = $this->createPurchaseHistoryContext();
+        $actor = $this->createUser($role, 'History reader');
+        if ($role === 'manager-cskh') {
+            $this->attach($actor, $shop);
+            $this->attach($actor, $otherShop);
+        }
+        $other = $this->createOrder($otherShop, ['pancake_customer_id' => $care->pancake_customer_id]);
+        $response = $this->actingAs($actor, 'api')
+            ->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertOk()->assertJsonPath('success', true);
+        $this->assertEqualsCanonicalizing(
+            $role === 'admin' ? [$source->id, $other->id] : [$source->id],
+            collect($response->json('data'))->pluck('id')->all()
+        );
+        if ($role === 'manager-cskh') {
+            $outsideManager = $this->createUser($role, 'Manager in another shop');
+            $this->attach($outsideManager, $otherShop);
+            $this->actingAs($outsideManager, 'api')
+                ->getJson("/api/v1/customer-cares/{$care->id}/orders")->assertForbidden();
+        }
+    }
+
+    public static function purchaseHistoryManagerRoles(): array
+    {
+        return [['admin'], ['manager-cskh']];
+    }
+
+    public function test_purchase_history_keeps_soft_delete_and_source_shop_conflict_guards(): void
+    {
+        [$shop, $otherShop, $staff, , $care, $source] = $this->createPurchaseHistoryContext();
+        $source->delete();
+        $this->actingAs($staff, 'api')
+            ->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertOk()->assertExactJson(['success' => true, 'data' => []]);
+
+        $this->createOrder($otherShop, ['pancake_order_id' => $care->pancake_order_id,
+            'pancake_customer_id' => $care->pancake_customer_id]);
+        $this->getJson("/api/v1/customer-cares/{$care->id}/orders")
+            ->assertStatus(409)->assertJsonPath('success', false);
+    }
+
+    public function test_purchase_history_requires_authentication_existing_care_and_cskh_role(): void
+    {
+        [$shop, , , , $care] = $this->createPurchaseHistoryContext();
+        $this->getJson("/api/v1/customer-cares/{$care->id}/orders")->assertUnauthorized();
+        $staff = $this->createUser('staff-cskh', 'Staff');
+        $this->actingAs($staff, 'api')->getJson('/api/v1/customer-cares/999999/orders')->assertNotFound();
+        $sale = $this->createUser('manager-sale', 'Sale');
+        $this->attach($sale, $shop);
+        $this->actingAs($sale, 'api')->getJson("/api/v1/customer-cares/{$care->id}/orders")->assertForbidden();
+    }
+
+    private function createPurchaseHistoryContext(array $careAttributes = []): array
+    {
+        $shop = $this->createShop(11);
+        $otherShop = $this->createShop(12);
+        $staff = $this->createUser('staff-cskh', 'Assigned staff');
+        $otherStaff = $this->createUser('staff-cskh', 'Other owner');
+        $this->attach($staff, $shop);
+        $source = $this->createOrder($shop, [
+            'pancake_customer_id' => $careAttributes['pancake_customer_id'] ?? 'HISTORY-CUSTOMER',
+            'user_creator_id' => $otherStaff->pancake_user_id,
+            'user_care_id' => $otherStaff->pancake_user_id,
+        ]);
+        $care = $this->createCare($shop, array_merge([
+            'pancake_customer_id' => $source->pancake_customer_id,
+            'pancake_order_id' => $source->pancake_order_id,
+        ], $careAttributes));
+        // Include actual null-key Orders to prove the blank-ID guard, not just a mismatch.
+        $source->update(['pancake_customer_id' => $care->pancake_customer_id]);
+        $assignment = $this->createAssignment($care, $staff, $source);
+
+        return [$shop, $otherShop, $staff, $otherStaff, $care, $source, $assignment];
+    }
+
     private function createSchema(): void
     {
         Schema::create('permission_groups', function (Blueprint $table) {
@@ -542,7 +787,7 @@ class DirectReadIdorHardeningTest extends TestCase
         Schema::create('customer_cares', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('shop_id');
-            $table->string('pancake_customer_id');
+            $table->string('pancake_customer_id')->nullable();
             $table->string('pancake_order_id')->nullable();
             $table->text('customer_phones')->nullable();
             $table->string('customer_name')->nullable();

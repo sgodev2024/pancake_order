@@ -75,6 +75,13 @@ class OrderCreatedEventWriter
 
     private function resolveCustomer(Order $order, ?Customer $customer): ?Customer
     {
+        if ($order->customer_id !== null) {
+            return $customer !== null && (int) $customer->id === (int) $order->customer_id
+                && (int) $customer->shop_id === (int) $order->shop_id
+                ? $customer
+                : Customer::where('shop_id', $order->shop_id)->find($order->customer_id);
+        }
+
         $pancakeCustomerId = $this->nullableIdentifier($order->pancake_customer_id);
 
         if ($pancakeCustomerId === null) {

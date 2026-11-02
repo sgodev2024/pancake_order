@@ -11,6 +11,7 @@ import DonutChart from '../../components/DonutChart.jsx'
 import { ROUTES } from '../../constants/routes.js'
 import { getApiErrorMessage } from '../../utils/response.js'
 import { createEmptyOrderFilters, normalizeOrderFilters } from '../Orders/orderFilters.js'
+import { orderValues, withOrderValues } from './orderValues.js'
 import './reports-overview.css'
 
 const numberFormatter = new Intl.NumberFormat('vi-VN')
@@ -19,7 +20,7 @@ const number = (value) => numberFormatter.format(Number(value) || 0)
 const money = (value) => moneyFormatter.format(Number(value) || 0)
 const period = (from, to) => (from && to ? `${dayjs(from).format('DD/MM/YYYY')} – ${dayjs(to).format('DD/MM/YYYY')}` : '')
 
-const ORDER_PARAMS = normalizeOrderFilters(createEmptyOrderFilters())
+const ORDER_PARAMS = withOrderValues(normalizeOrderFilters(createEmptyOrderFilters()))
 const LATEST_WEEK = { week_mode: 'latest' }
 const queryOptions = { staleTime: 60_000, refetchOnWindowFocus: false }
 
@@ -153,7 +154,7 @@ const ChartCard = ({ title, note, action, children }) => (
 
 const ReportsOverviewPage = () => {
   const todayDate = dayjs().format('YYYY-MM-DD')
-  const todayOrderParams = useMemo(() => ({
+  const todayOrderParams = useMemo(() => withOrderValues({
     date_from: todayDate,
     date_to: todayDate,
   }), [todayDate])
@@ -181,14 +182,12 @@ const ReportsOverviewPage = () => {
   })
 
   const todayOrders = todayOrderQuery.data ?? {}
-  const todayCod = Number(todayOrders.total_revenue) || 0
-  const todayPrepaid = Number(todayOrders.total_prepaid_amount) || 0
+  const { cod: todayCod, prepaid: todayPrepaid, total: todayTotal } = orderValues(todayOrders)
 
   const orders = orderQuery.data ?? {}
   const care = careQuery.data ?? {}
   const product = productQuery.data ?? {}
-  const cod = Number(orders.total_revenue) || 0
-  const prepaid = Number(orders.total_prepaid_amount) || 0
+  const { cod, prepaid } = orderValues(orders)
   const productItems = product.items ?? []
   const revenueItems = [...productItems].sort((left, right) => Number(right.revenue || 0) - Number(left.revenue || 0)).slice(0, 8)
   const productPeriod = period(product.from, product.to)
@@ -205,7 +204,7 @@ const ReportsOverviewPage = () => {
 
       <section className="ov-kpis">
         {todayOrderQuery.isLoading ? <Skeleton active /> : (
-          <Kpi to={ROUTES.ORDER_REPORT} label="Tổng giá trị đơn hôm nay" value={money(todayCod + todayPrepaid)} note={`${number(todayOrders.total_items)} đơn`}>
+          <Kpi to={ROUTES.ORDER_REPORT} label="Tổng giá trị đơn hôm nay" value={money(todayTotal)} note={`${number(todayOrders.total_items)} đơn`}>
             <ul>
               <li><span>COD</span><b>{money(todayCod)}</b></li>
               <li><span>Trả trước</span><b>{money(todayPrepaid)}</b></li>

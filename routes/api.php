@@ -100,6 +100,9 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
         ->middleware(AdminOnlyMiddleware::class.':allow-director');
     Route::get('orders/sales-chart-data', [OrderController::class, 'salesChartData']);
     Route::apiResource('orders', OrderController::class);
+    Route::get('warehouse/orders', [\App\Http\Controllers\Api\WarehouseController::class, 'index']);
+    Route::get('warehouse/orders/{order}', [\App\Http\Controllers\Api\WarehouseController::class, 'show']);
+    Route::post('warehouse/orders/{order}/complete', [\App\Http\Controllers\Api\WarehouseController::class, 'complete']);
 
     Route::get('pancake-orders', [PancakeOrderController::class, 'index']);
     Route::get('pancake-orders/{id}', [PancakeOrderController::class, 'show']);
@@ -161,6 +164,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('loyalty-tiers/customers/pendding-upgrade-list', [LoyaltyTierController::class, 'getCustomerPenddingUpgradeList']);
     Route::get('loyalty-tiers/customers/pendding-upgrade', [LoyaltyTierController::class, 'getCustomerPenddingUpgrade']);
     Route::get('loyalty-tiers/overview', [LoyaltyTierController::class, 'overview']);
+    Route::get('loyalty-tiers/shop-report', [LoyaltyTierController::class, 'shopReport']);
     Route::get('loyalty-tiers/total-discount', [LoyaltyTierController::class, 'getTotalDiscount']);
     Route::apiResource('loyalty-tiers', LoyaltyTierController::class);
 

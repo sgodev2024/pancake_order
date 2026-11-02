@@ -53,4 +53,3 @@ return Application::configure(basePath: dirname(__DIR__))
             return response()->json($response, $status);
         });
     })->create();
-

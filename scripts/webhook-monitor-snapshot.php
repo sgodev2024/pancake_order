@@ -21,4 +21,3 @@ $data = ['checked_at' => date(DATE_ATOM), 'worker_running' => count($workers) > 
 $target = storage_path('app/webhook-monitor-status.json');
 $tmp = $target.'.tmp';
 file_put_contents($tmp, json_encode($data)); chmod($tmp, 0644); rename($tmp, $target);
-

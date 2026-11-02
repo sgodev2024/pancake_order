@@ -68,5 +68,3 @@ class ZaloBridge {
   return $result;
  }
 }
-
-

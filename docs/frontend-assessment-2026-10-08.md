@@ -52,4 +52,3 @@ Chưa triển khai các đề xuất tối ưu trong báo cáo này.
 ## Kết quả bộ test đầy đủ
 
 Lệnh node --test --test-force-exit tests/*.test.js: 67 test, 66 pass, 1 fail (13,58 giây). Test thất bại: completion modal has V1 fields, validation, exact payload and reset/refresh behavior, trong tests/customerCareActionParity.test.js. Test dùng cắt chuỗi mã nguồn và nhận đoạn rỗng; cần kiểm tra lại selector/assertion và luồng modal thực tế trước khi kết luận lỗi chức năng. Lệnh không có test-force-exit giữ process ở nhóm auth hơn 60 giây, cần xử lý teardown/timer.
-

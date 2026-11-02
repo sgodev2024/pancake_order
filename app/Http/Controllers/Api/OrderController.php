@@ -3,23 +3,37 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\Province;
 use App\Models\Shop;
 use App\Services\OrderItemSql;
+use App\Services\OrderService;
 use App\Services\OrderSummaryService;
 use App\Services\ReportDataVersion;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 
-class OrderController extends Controller
+class OrderController extends Controller implements HasMiddleware
 {
+    public static function middleware(): array
+    {
+        return [
+            new Middleware(PermissionCheckMiddleware::class.':list-product,strict', only: ['store']),
+            new Middleware(PermissionCheckMiddleware::class.':list-customer,strict', only: ['store']),
+        ];
+    }
+
     private ShopAccessService $shopAccessService;
 
     public function __construct(?ShopAccessService $shopAccessService = null)
@@ -44,10 +58,12 @@ class OrderController extends Controller
             // databases while retaining the existing response by default.
             'include_totals' => ['nullable', 'boolean'],
             'totals_only' => ['nullable', 'boolean'],
+            'include_order_values' => ['nullable', 'boolean'],
             'month_mode' => ['nullable', 'in:latest'],
         ]);
         $includeTotals = $request->boolean('include_totals', true);
         $totalsOnly = $request->boolean('totals_only');
+        $includeOrderValues = $isSummaryView && $totalsOnly && $request->boolean('include_order_values');
         $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
             $user,
             $request->filled('shop_id') ? $request->integer('shop_id') : null
@@ -79,6 +95,7 @@ class OrderController extends Controller
             $summaryInputs = $inputs;
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
+            $hasOrderOrigin = Schema::hasColumn('orders', 'origin');
             if ($isSummaryView) {
                 $query->with([
                     'shop' => function ($query) {
@@ -145,11 +162,16 @@ class OrderController extends Controller
             // (Bonus) Lọc theo search (ví dụ tìm theo số điện thoại hoặc mã đơn VTP)
             if (! empty($inputs['search'])) {
                 $searchTerm = $inputs['search'].'%';
-                $query->where(function ($q) use ($searchTerm, $inputs) {
+                $query->where(function ($q) use ($searchTerm, $inputs, $hasOrderOrigin) {
                     $q->where('orders.order_number_vtp', 'like', $searchTerm)
                         ->orWhere('orders.customer_phone', 'like', $searchTerm)
                         ->orWhere('orders.customer_name', 'like', $searchTerm)
                         ->orWhere('orders.pancake_order_id', $inputs['search']);
+                    if ($hasOrderOrigin && preg_match('/^POS-(\d+)$/i', $inputs['search'], $match)) {
+                        $q->orWhere(function ($local) use ($match) {
+                            $local->where('orders.origin', 'local_pos')->where('orders.id', $match[1]);
+                        });
+                    }
                 });
             }
             if (isset($inputs['date_from'])) {
@@ -179,6 +201,8 @@ class OrderController extends Controller
                 $query->select([
                     'id',
                     'pancake_order_id',
+                    'pancake_full_data->origin as order_origin',
+                    'pancake_full_data->pos_totals->total_amount as pos_total_amount',
                     'created_at',
                     'status',
                     'status_vtp',
@@ -232,8 +256,16 @@ class OrderController extends Controller
             }
 
             $prepaidColumn = $query->getQuery()->getGrammar()->wrap('orders.pancake_full_data->prepaid');
-            $revenueExpression = "COALESCE(SUM(COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0)), 0)";
-            $prepaidAmountExpression = Schema::hasColumn('orders', 'prepaid_amount')
+            $posTotalColumn = $query->getQuery()->getGrammar()->wrap('orders.pancake_full_data->pos_totals->total_amount');
+            $orderValueExpression = "COALESCE({$posTotalColumn}, COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0))";
+            $revenueExpression = "COALESCE(SUM({$orderValueExpression}), 0)";
+            // Preserve the indexed COD path for synced orders while counting
+            // a POS order's full value even when collection by COD is disabled.
+            $overviewRevenueExpression = $hasOrderOrigin
+                ? "COALESCE(SUM(CASE WHEN orders.origin = 'local_pos' THEN {$orderValueExpression} ELSE COALESCE(orders.cod, 0) END), 0)"
+                : 'COALESCE(SUM(COALESCE(orders.cod, 0)), 0)';
+            $hasIndexedPrepaid = Schema::hasColumn('orders', 'prepaid_amount');
+            $prepaidAmountExpression = $hasIndexedPrepaid
                 ? 'COALESCE(SUM(COALESCE(orders.prepaid_amount, 0)), 0)'
                 : '0';
             // Counts and COD money only touch indexed columns. The prepaid JSON
@@ -258,6 +290,9 @@ SQL;
             $overdueCustomerCount = null;
             $trendPayload = null;
             $comparePayload = null;
+            $posValues = null;
+            $totalCod = null;
+            $totalOrderValue = null;
 
             if ($isSummaryView) {
                 $pageNumber = max((int) ($inputs['page'] ?? 1), 1);
@@ -284,6 +319,15 @@ SQL;
                             COALESCE(SUM(pending_count), 0) AS pending_count,
                             COALESCE(SUM(pending_amount), 0) AS pending_amount
                         ')->first();
+                        $summaryTotals->total_cod = $summaryTotals->total_revenue;
+                        if ($hasOrderOrigin) {
+                            $posValues = $this->posOverviewAdjustment($query, $orderValueExpression, $hasIndexedPrepaid, $user);
+                            if ($posValues['delta'] != 0) {
+                                // Daily revenue remains COD for trends/monthly
+                                // reports; only this overview includes POS totals.
+                                $summaryTotals->total_revenue = round((float) $summaryTotals->total_revenue + $posValues['delta'], 2);
+                            }
+                        }
                     }
 
                     if ($summaryTotals === null) {
@@ -291,7 +335,7 @@ SQL;
                         // prepaid out of pancake_full_data does not finish on the
                         // full order table, so that sum stays on the smaller path.
                         $revenueSelect = $totalsOnly
-                            ? 'COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_revenue'
+                            ? "{$overviewRevenueExpression} AS total_revenue"
                             : "{$revenueExpression} AS total_revenue";
                         $summaryTotals = (clone $query)->toBase()
                             ->cloneWithout(['columns', 'orders'])
@@ -299,6 +343,15 @@ SQL;
                             ->selectRaw("COUNT(*) AS total_items, {$revenueSelect}, {$overviewExpression}, {$prepaidAmountExpression} AS total_prepaid_amount")
                             ->first();
                     }
+                }
+
+                if ($includeOrderValues && $summaryTotals !== null) {
+                    $posValues ??= $hasOrderOrigin
+                        ? $this->posOverviewAdjustment($query, $orderValueExpression, $hasIndexedPrepaid, $user)
+                        : ['delta' => 0.0, 'pos_prepaid' => 0.0];
+                    $totalCod = (float) $summaryTotals->total_cod;
+                    $totalOrderValue = round($totalCod + (float) $summaryTotals->total_prepaid_amount
+                        + $posValues['delta'] - $posValues['pos_prepaid'], 2);
                 }
 
                 if ($totalsOnly && $summaryTotals !== null) {
@@ -342,7 +395,7 @@ SQL;
             } else {
                 $pageNumber = $inputs['page'] ?? 1;
                 $pageSize = $inputs['page_size'] ?? 30;
-                $totalRevenue = (clone $query)->sum(DB::raw("COALESCE(orders.cod, 0) + COALESCE({$prepaidColumn}, 0)"));
+                $totalRevenue = (clone $query)->sum(DB::raw($orderValueExpression));
                 $orders = $query->latest('created_at')->paginate($pageSize, ['*'], 'page', $pageNumber);
                 $orderItems = $orders->items();
                 $pageNumber = $orders->currentPage();
@@ -370,6 +423,10 @@ SQL;
                     'has_more' => $isSummaryView && ! $includeTotals && ! $totalsOnly
                         ? $hasMore
                         : null,
+                    ...($includeOrderValues ? [
+                        'total_cod' => $totalCod,
+                        'total_order_value' => $totalOrderValue,
+                    ] : []),
                 ],
             ]);
         } catch (\Throwable $th) {
@@ -380,19 +437,74 @@ SQL;
         }
     }
 
-    public function show($id)
+    public function store(Request $request, OrderService $service)
     {
-        $order = Order::find($id);
-        if (! $order) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Không tìm thấy đơn hàng.',
-            ], 404);
+        $user = $request->user();
+        // Custom sales roles must opt in explicitly; read permissions alone never allow POS.
+        if (! $user->isAdmin() && ! $user->isStaffSale() && ! $user->isManagerSale()
+            && ! can_access('pos-create')) {
+            throw new AuthorizationException('Bạn không có quyền tạo đơn POS.');
         }
+        abort_unless(Schema::hasColumns('orders', [
+            'origin', 'customer_id', 'created_by_user_id', 'idempotency_key', 'request_hash',
+            'warehouse_status', 'warehouse_queued_at',
+        ]) && Schema::hasColumn('products', 'virtual_stock'), 503,
+            'Chức năng POS chưa sẵn sàng. Cần áp dụng migration POS trước khi tạo đơn.');
+        $money = ['numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'];
+        $data = $request->validate([
+            'idempotency_key' => ['required', 'uuid'],
+            'shop_id' => ['required', 'integer', Rule::exists('shops', 'id')->whereNull('deleted_at')],
+            'customer_id' => ['nullable', 'integer', 'prohibits:customer'],
+            'customer' => ['required_without:customer_id', 'array:name,phone', 'prohibits:customer_id'],
+            'customer.name' => ['required_with:customer', 'string', 'max:255'],
+            'customer.phone' => ['required_with:customer', 'string', 'regex:/^(0\d{9,10}|\+84\d{9,10})$/'],
+            'shipping_address' => ['required', 'string', 'max:1000'],
+            'items' => ['required', 'array', 'min:1', 'max:200'],
+            'items.*' => ['required', 'array:product_id,quantity,unit_price'],
+            'items.*.product_id' => ['required', 'integer', 'distinct'],
+            // This is only a numeric safety bound, unrelated to displayed/physical stock.
+            'items.*.quantity' => ['required', 'integer', 'min:1', 'max:1000000'],
+            'items.*.unit_price' => ['sometimes', 'required', ...$money],
+            'discount_amount' => ['sometimes', 'required', ...$money],
+            'shipping_fee' => ['sometimes', 'required', ...$money],
+            'surcharge' => ['sometimes', 'required', ...$money],
+            'paid_amount' => ['sometimes', 'required', ...$money],
+            'payment_method' => ['sometimes', 'required', Rule::in(['cash', 'bank_transfer'])],
+            'cod_mode' => ['sometimes', 'required', Rule::in(['remaining', 'none'])],
+            'note' => ['nullable', 'string', 'max:5000'],
+        ]);
+        $order = $service->createLocalOrder($user, $data);
 
         return response()->json([
-            'success' => true,
-            'data' => $order,
+            'success' => true, 'message' => 'Tạo đơn hàng thành công.',
+            'replayed' => ! $order->wasRecentlyCreated,
+            'data' => $this->orderDetailData($order),
+        ], $order->wasRecentlyCreated ? 201 : 200);
+    }
+
+    public function show(Request $request, Order $order)
+    {
+        $actor = $request->user();
+        if (! $this->shopAccessService->canAccessShop($actor, (int) $order->shop_id)) {
+            throw new AuthorizationException('Bạn không có quyền xem đơn hàng thuộc shop này.');
+        }
+        if (! $actor->isAdmin() && ! $actor->isManagerSale() && ! $actor->isManagerCskh()
+            && (string) $order->user_creator_id !== (string) $actor->pancake_user_id
+            && (string) $order->user_care_id !== (string) $actor->pancake_user_id) {
+            throw new AuthorizationException('Bạn không có quyền xem đơn hàng này.');
+        }
+
+        return response()->json(['success' => true, 'data' => $this->orderDetailData($order)]);
+    }
+
+    private function orderDetailData(Order $order): array
+    {
+        $payload = $order->pancake_full_data ?? [];
+
+        return array_merge($order->load('shop:id,name', 'user_creator')->toArray(), [
+            'reference' => $order->origin === 'local_pos' ? 'POS-'.$order->id : $order->pancake_order_id,
+            'totals' => $payload['pos_totals'] ?? null,
+            'items' => $payload['items'] ?? [], 'payments' => $payload['payments'] ?? [],
         ]);
     }
 
@@ -525,7 +637,9 @@ SQL;
                 ->orderByDesc('id');
 
             $customerId = $order->pancake_customer_id;
-            if ($customerId === null || trim((string) $customerId) === '') {
+            if ($order->customer_id !== null) {
+                $historyQuery->where('customer_id', $order->customer_id)->where('shop_id', $order->shop_id);
+            } elseif ($customerId === null || trim((string) $customerId) === '') {
                 // Never use whereNull here: a blank customer identity is not a safe grouping key.
                 $historyQuery->whereKey($order->getKey());
             } else {
@@ -640,6 +754,26 @@ SQL;
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function posOverviewAdjustment($query, string $orderValueExpression, bool $hasIndexedPrepaid, $user): array
+    {
+        $posQuery = (clone $query)->toBase()
+            ->cloneWithout(['columns', 'orders'])
+            ->cloneWithoutBindings(['select', 'order'])
+            ->where('orders.origin', 'local_pos');
+        $cacheKey = 'order_pos_adjustment:v2:'.hash('sha256', json_encode([
+            $user->getAuthIdentifier(), $user->role_id, $user->role?->slug,
+            $user->pancake_user_id, $posQuery->toSql(), $posQuery->getBindings(),
+            ReportDataVersion::key('orders'), $hasIndexedPrepaid,
+        ], JSON_THROW_ON_ERROR));
+
+        return Cache::remember($cacheKey, 120, function () use ($posQuery, $orderValueExpression, $hasIndexedPrepaid) {
+            $posPrepaid = $hasIndexedPrepaid ? 'COALESCE(SUM(COALESCE(orders.prepaid_amount, 0)), 0)' : '0';
+            $row = $posQuery->selectRaw("COALESCE(SUM({$orderValueExpression} - COALESCE(orders.cod, 0)), 0) AS adjustment, {$posPrepaid} AS pos_prepaid")->first();
+
+            return ['delta' => (float) $row->adjustment, 'pos_prepaid' => (float) $row->pos_prepaid];
+        });
     }
 
     /** Daily totals do not contain record-level or exact-status dimensions. */
@@ -965,19 +1099,21 @@ SQL;
             // identities separate. Summing their order counts would count
             // one order twice when it contains two same-named products.
             $sql = "SELECT 
-                orders.shop_id, 
+                orders.shop_id,
+                shops.name as shop_name,
                 COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm') as product_name, 
                 SUM(COALESCE(item.quantity, 0)) as quantity, 
                 SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)) as revenue, 
                 COUNT(DISTINCT orders.id) as orders_count 
-            FROM orders 
+            FROM orders
+            LEFT JOIN shops ON shops.id = orders.shop_id
             JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
                 product_name VARCHAR(255) PATH '$.variation_info.name', 
                 quantity DECIMAL(12,2) PATH '$.quantity', 
                 retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
             )) AS item 
             WHERE {$whereSql}
-            GROUP BY orders.shop_id, product_name 
+            GROUP BY orders.shop_id, shops.name, product_name
             HAVING revenue > 0 
             ORDER BY revenue DESC";
 
@@ -993,7 +1129,7 @@ SQL;
                 $revenue = (float) $row->revenue;
                 $quantity = (float) $row->quantity;
                 $ordersCount = (int) $row->orders_count;
-                $shopName = $shopsMap[$row->shop_id] ?? ('Cửa hàng #'.$row->shop_id);
+                $shopName = $row->shop_name ?? $shopsMap[$row->shop_id] ?? ('Cửa hàng #'.$row->shop_id);
                 $pName = $row->product_name;
 
                 $totalSystemRevenue += $revenue;
