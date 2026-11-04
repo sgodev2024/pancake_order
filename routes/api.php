@@ -52,7 +52,7 @@ Route::prefix('v1/auth')->group(function () {
 });
 Route::get('/v1/settings/{code}', [SettingController::class, 'show']);
 // --- Nhóm các Route Private (Yêu cầu Passport Token) ---
-Route::middleware('auth:api')->prefix('v1')->group(function () {
+Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::class])->prefix('v1')->group(function () {
     Route::post('/change-first-password', [AuthController::class, 'changeFirstPassword']);
     // Nhóm tài khoản (Profile)
     Route::prefix('me')->group(function () {
@@ -139,6 +139,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('users/mornitoring', [UserController::class, 'getMornitoring']);
     Route::get('users/all-user', [UserController::class, 'getAllUser'])
         ->middleware(AdminOnlyMiddleware::class.':activity-log-query');
+    Route::put('users/{user}/account-state', [\App\Http\Controllers\Api\StaffAccountController::class, 'update']);
     Route::apiResource('users', UserController::class);
     Route::get('users/{pancake_user_id}/orders', [UserController::class, 'getOrder']);
 
@@ -199,3 +200,4 @@ Route::prefix('webhook')->group(function () {
 });
 
 require __DIR__.'/zalo-chat.php';
+

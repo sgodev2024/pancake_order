@@ -51,3 +51,7 @@ export const deleteStaff = async (id) => {
   const response = await apiClient.delete(`${API_ROUTES.USERS}/${id}`)
   return response.data
 }
+export const setStaffAccountState = async ({ id, disabled }) => {
+  const response = await apiClient.put(`${API_ROUTES.USERS}/${id}/account-state`, { disabled })
+  return response.data
+}

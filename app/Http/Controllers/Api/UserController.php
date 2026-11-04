@@ -81,7 +81,7 @@ class UserController extends Controller implements HasMiddleware
                                 $query->select("name", "id");
                             }
                         ])
-                        ->select("id", "name", "phone_number", "email", "role_id", "pancake_user_id");
+                        ->select("id", "name", "phone_number", "email", "role_id", "pancake_user_id")->selectSub(DB::table('staff_account_states')->selectRaw('1')->whereColumn('user_id', 'users.id')->limit(1), 'account_disabled');
             if (($inputs["page_name"] ?? null) == "report_page") {
                 $queries->withCount(['orders' => function ($q) use ($inputs, $effectiveShopIds) {
                             if ($effectiveShopIds !== null) {
@@ -585,8 +585,19 @@ class UserController extends Controller implements HasMiddleware
                 "message" => "Tài khoản này không được phép xóa"
             ]);
         }
-        // Xóa user
-        $user->delete();
+        abort_if($user->isAdmin() || $user->id === request()->user()->id, 422, 'Không được xóa tài khoản Admin hoặc chính mình.');
+        try {
+            DB::transaction(function () use ($user) {
+                $locked = User::whereKey($user->id)->lockForUpdate()->firstOrFail();
+                app(\App\Services\StaffDeletionGuard::class)->check($locked);
+                $locked->delete();
+            });
+        } catch (\Illuminate\Database\QueryException $e) {
+            if ((int)($e->errorInfo[1] ?? 0) === 1451) abort(409, 'Nhân viên có dữ liệu liên quan. Vui lòng ngừng hoạt động tài khoản thay vì xóa.');
+            throw $e;
+        }
+        // Delete handled transactionally above.
+        
 
         // Trả về response
         return response()->json([
@@ -821,3 +832,4 @@ class UserController extends Controller implements HasMiddleware
         }
     }
 }
+

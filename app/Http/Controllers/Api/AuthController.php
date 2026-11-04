@@ -25,6 +25,10 @@ class AuthController extends Controller
             // 2. Lấy đối tượng user
             $user = Auth::user();
 
+            if (\Illuminate\Support\Facades\DB::table('staff_account_states')->where('user_id',$user->id)->exists()) {
+                Auth::logout();
+                return response()->json(['success'=>false,'message'=>'Tài khoản đã ngừng hoạt động. Vui lòng liên hệ Admin.'],403);
+            }
             // Đăng nhập lần đầu → token scope hạn chế
             if ($user->is_first_login) {
                 $token = $user->createToken('PancakeManagementToken', ['change-password']);
@@ -219,3 +223,4 @@ class AuthController extends Controller
         }
     }
 }
+

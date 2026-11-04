@@ -1,4 +1,4 @@
-import { DeleteOutlined, EditOutlined, FilterOutlined, MoreOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { LockOutlined, UnlockOutlined, DeleteOutlined, EditOutlined, FilterOutlined, MoreOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -16,7 +16,7 @@ import {
   Tag,
 } from 'antd'
 import { useCallback, useMemo, useState } from 'react'
-import { createStaff, deleteStaff, getRoleOptions, getStaff, getStaffById, updateStaff } from '../../api/users.api.js'
+import { setStaffAccountState, createStaff, deleteStaff, getRoleOptions, getStaff, getStaffById, updateStaff } from '../../api/users.api.js'
 import { getShopOptions } from '../../api/shops.api.js'
 import { hasPermission } from '../../auth/permissions.js'
 import { useAuthStore } from '../../auth/auth.store.js'
@@ -64,6 +64,11 @@ const StaffPage = () => {
     onError: (error) => {
       message.error(getApiErrorMessage(error, 'Không thể lưu nhân viên. Vui lòng thử lại.'))
     },
+  })
+  const accountMutation = useMutation({
+    mutationFn: setStaffAccountState,
+    onSuccess: (result) => { message.success(result.message); queryClient.invalidateQueries({ queryKey: ['staff'] }) },
+    onError: (error) => message.error(getApiErrorMessage(error, 'Không thể đổi trạng thái tài khoản.')),
   })
   const deleteMutation = useMutation({
     mutationFn: deleteStaff,
@@ -162,7 +167,8 @@ const StaffPage = () => {
       { title: 'Chức vụ', dataIndex: ['role', 'name'], width: 160, render: (role) => role || '' },
     ]
 
-    if (canUpdateStaff || canDeleteStaff) {
+    cols.push({ title: 'Trạng thái', dataIndex: 'account_disabled', width: 150, render: (value) => <Tag color={Number(value) ? 'red' : 'green'}>{Number(value) ? 'Ngừng hoạt động' : 'Đang hoạt động'}</Tag> })
+    if (canUpdateStaff || canDeleteStaff || user?.role?.slug === 'admin') {
       cols.push({
         title: 'Thao tác',
         width: 68,
@@ -180,6 +186,11 @@ const StaffPage = () => {
               onClick: () => openEdit(record),
             })
           }
+          if (user?.role?.slug === 'admin' && String(record.id) !== String(user.id)) {
+            const disabled = !Number(record.account_disabled)
+            items.push({ key: 'account-state', icon: disabled ? <LockOutlined /> : <UnlockOutlined />, label: disabled ? 'Ngừng hoạt động / Khóa đăng nhập' : 'Mở khóa đăng nhập', disabled: accountMutation.isPending,
+              onClick: () => Modal.confirm({ title: disabled ? 'Ngừng hoạt động nhân viên?' : 'Mở khóa tài khoản?', content: disabled ? 'Khóa đăng nhập và thu hồi phiên API. Giữ nguyên lịch sử và phân công; vui lòng thu hồi hoặc chuyển giao công việc riêng.' : 'Người dùng có thể đăng nhập lại. Các phiên cũ không được khôi phục.', okText: 'Xác nhận', cancelText: 'Hủy', onOk: () => accountMutation.mutateAsync({ id: record.id, disabled }) }) })
+          }
           if (canDeleteStaff) {
             items.push({
               key: 'delete',
@@ -189,7 +200,7 @@ const StaffPage = () => {
               disabled: deleteMutation.isPending,
               onClick: () => Modal.confirm({
                 title: 'Xóa nhân viên này?',
-                content: 'Thao tác này không thể hoàn tác.',
+                content: 'Chỉ xóa được tài khoản chưa có lịch sử nghiệp vụ. Nếu đã có dữ liệu, hãy chọn Ngừng hoạt động / Khóa đăng nhập.',
                 okText: 'Xóa',
                 cancelText: 'Hủy',
                 okButtonProps: { danger: true },
@@ -220,7 +231,7 @@ const StaffPage = () => {
     }
 
     return cols
-  }, [canDeleteStaff, canUpdateStaff, deleteMutation, loadingStaffId, openEdit, page])
+  }, [accountMutation, user, canDeleteStaff, canUpdateStaff, deleteMutation, loadingStaffId, openEdit, page])
 
   if (!canView) {
     return <Alert type="warning" showIcon message="Bạn không có quyền xem danh sách nhân viên." />
@@ -324,3 +335,4 @@ const StaffPage = () => {
 }
 
 export default StaffPage
+
