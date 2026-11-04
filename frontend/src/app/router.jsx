@@ -118,18 +118,22 @@ export const router = createBrowserRouter([
             ],
           },
           {
-            path: ROUTES.ORDERS,
-            element: <LazyRoute Page={lazy(() => import('../pages/Orders/OrdersPage.jsx'))} />,
-          },
-          {
             path: ROUTES.PANCAKE_ORDERS,
             element: <LazyRoute Page={lazy(() => import('../pages/PancakeOrders/PancakeOrdersPage.jsx'))} />,
           },
+          { path: '/pancake', element: <Navigate to={ROUTES.PANCAKE_ORDERS} replace /> },
           {
-            path: '/pancake',
-            element: <Navigate to={ROUTES.PANCAKE_ORDERS} replace />,
+            path: ROUTES.POS,
+            element: <LazyRoute Page={lazy(() => import('../pages/Pos/PosPage.jsx'))} />,
           },
-
+          {
+            path: ROUTES.WAREHOUSE,
+            element: <LazyRoute Page={lazy(() => import('../pages/Warehouse/WarehousePage.jsx'))} />,
+          },
+          {
+            path: ROUTES.ORDERS,
+            element: <LazyRoute Page={lazy(() => import('../pages/Orders/OrdersPage.jsx'))} />,
+          },
           {
             path: ROUTES.OPPORTUNITIES,
             element: (
@@ -196,8 +200,9 @@ export const router = createBrowserRouter([
               route.path !== ROUTES.ZALO_INBOX &&
               route.path !== ROUTES.ORDERS &&
               route.path !== ROUTES.PANCAKE_ORDERS &&
+              route.path !== ROUTES.POS &&
+              route.path !== ROUTES.WAREHOUSE &&
               route.path !== ROUTES.OPPORTUNITIES &&
-
               route.path !== ROUTES.STAFF_ASSIGNMENTS &&
               route.path !== ROUTES.CUSTOMERS &&
               route.path !== ROUTES.SHOPS &&

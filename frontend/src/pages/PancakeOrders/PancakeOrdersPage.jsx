@@ -1,5 +1,7 @@
 import {
   CloudServerOutlined,
+  MoreOutlined,
+  DeleteOutlined,
   EyeOutlined,
   FilterOutlined,
   ReloadOutlined,
@@ -19,10 +21,13 @@ import {
   Space,
   Table,
   Tag,
-  Tooltip,
+  Dropdown,
 } from 'antd'
 import dayjs from 'dayjs'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useAuthStore } from '../../auth/auth.store.js'
+import api from '../../api/client.js'
+import { App } from 'antd'
 import { getPancakeOrderDetail, getPancakeOrders } from '../../api/pancake-orders.api.js'
 import './pancake-orders.css'
 
@@ -97,6 +102,12 @@ const PancakeOrdersPage = () => {
     end_date: '',
   })
 
+  const user = useAuthStore((state) => state.user)
+  const admin = user?.role?.slug === 'admin'
+  const { message } = App.useApp()
+  const [selectedKeys, setSelectedKeys] = useState([])
+  const includeHidden = false
+  const [changing, setChanging] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [selectedOrder, setSelectedOrder] = useState(null)
@@ -104,13 +115,14 @@ const PancakeOrdersPage = () => {
 
   const queryParams = useMemo(() => ({
     page,
+    include_hidden: includeHidden ? 1 : undefined,
     per_page: pageSize,
     search: appliedFilters.search || undefined,
     status: appliedFilters.status || undefined,
     payment_status: appliedFilters.payment_status !== '' ? appliedFilters.payment_status : undefined,
     start_date: appliedFilters.start_date || undefined,
     end_date: appliedFilters.end_date || undefined,
-  }), [appliedFilters, page, pageSize])
+  }), [appliedFilters, page, pageSize, includeHidden])
 
   const {
     data: queryResult,
@@ -178,7 +190,20 @@ const PancakeOrdersPage = () => {
     }
   }
 
+  useEffect(() => { setSelectedKeys([]) }, [appliedFilters, page, pageSize, includeHidden])
+  const deleteFromCrm = async (ids) => {
+    setChanging(true)
+    try {
+      await api.post('/pancake-orders/hide', { ids })
+      setSelectedKeys([])
+      message.success('Đã xóa đơn khỏi CRM. Đơn tại web Hương Chất giữ nguyên.')
+      await refetch()
+    } catch (error) { message.error(error?.response?.data?.message || 'Không thể xóa đơn khỏi CRM. Vui lòng thử lại.') }
+    finally { setChanging(false) }
+  }
+  const confirmDelete = (ids) => Modal.confirm({ title: `Xóa ${ids.length} đơn khỏi CRM?`, content: 'Đơn sẽ không còn xuất hiện trong CRM. Dữ liệu tại web Hương Chất giữ nguyên.', okText: 'Xóa khỏi CRM', cancelText: 'Hủy', okButtonProps: { danger: true }, onOk: () => deleteFromCrm(ids) })
   const columns = useMemo(() => [
+    { title: 'STT', key: 'stt', width: 70, render: (_, __, index) => (page - 1) * pageSize + index + 1 },
     {
       title: 'Mã đơn',
       dataIndex: 'code',
@@ -251,27 +276,25 @@ const PancakeOrdersPage = () => {
       align: 'center',
       fixed: 'right',
       render: (_, record) => (
-        <Tooltip title="Xem chi tiết đơn hàng">
-          <Button
-            type="text"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleViewDetail(record)}
-          >
-            Chi tiết
-          </Button>
-        </Tooltip>
+        <Dropdown trigger={['click']} placement="bottomRight" menu={{ items: [
+          { key: 'detail', icon: <EyeOutlined />, label: 'Xem chi tiết', onClick: () => handleViewDetail(record) },
+          ...(admin ? [{ key: 'delete', icon: <DeleteOutlined />, label: 'Xóa đơn', danger: true, disabled: changing || isFetching, onClick: () => confirmDelete([record.id]) }] : []),
+        ] }}>
+          <Button type="text" icon={<MoreOutlined />} aria-label={`Thao tác đơn ${record.code || record.id}`} loading={changing} />
+        </Dropdown>
       ),
     },
-  ], [])
+  ], [page, pageSize, admin, changing, isFetching, refetch])
 
   return (
     <div className="pancake-orders-page">
+      <Alert style={{ marginBottom: 16 }} type="info" showIcon message="Xóa đơn chỉ áp dụng trong CRM, không xóa tại web Hương Chất. Phân trang theo nguồn Hương Chất nên trang có đơn đã xóa có thể ít dòng hơn." />
+      {admin && <Space style={{ marginBottom: 16 }}><Button danger disabled={!selectedKeys.length || changing || isFetching} loading={changing} icon={<DeleteOutlined />} onClick={() => confirmDelete(selectedKeys)}>Xóa đơn đã chọn ({selectedKeys.length})</Button></Space>}
       <Card
         className="pancake-orders-card"
         title={
           <Space>
-            <span>Danh sách đơn hàng Pancake (Hương Chất)</span>
+            <span>Danh sách đơn hàng Hương Chất Web</span>
             <Tag color="blue" icon={<CloudServerOutlined />} className="pancake-orders-source-tag">
               Nguồn: Hương Chất API
             </Tag>
@@ -360,12 +383,13 @@ const PancakeOrdersPage = () => {
 
         <Table
           rowKey="id"
+          rowSelection={admin ? { selectedRowKeys: selectedKeys, onChange: setSelectedKeys, getCheckboxProps: (record) => ({ disabled: record.hidden_in_pancake || changing || isFetching }) } : undefined}
           columns={columns}
           dataSource={orders}
           loading={isLoading}
           scroll={{ x: 1200 }}
           locale={{
-            emptyText: <Empty description="Không có đơn hàng Pancake nào từ Hương Chất" />,
+            emptyText: <Empty description="Chưa có đơn hàng từ Hương Chất Web" />,
           }}
           pagination={{
             current: page,
@@ -373,7 +397,7 @@ const PancakeOrdersPage = () => {
             total: pagination.total,
             showSizeChanger: true,
             pageSizeOptions: ['10', '20', '50', '100'],
-            showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} đơn hàng`,
+            showTotal: (total, range) => `${total} đơn tại nguồn Hương Chất`,
             onChange: (newPage, newPageSize) => {
               setPage(newPage)
               setPageSize(newPageSize)

@@ -104,6 +104,8 @@ Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::cl
     Route::get('warehouse/orders/{order}', [\App\Http\Controllers\Api\WarehouseController::class, 'show']);
     Route::post('warehouse/orders/{order}/complete', [\App\Http\Controllers\Api\WarehouseController::class, 'complete']);
 
+    Route::post('pancake-orders/hide', [\App\Http\Controllers\Api\PancakeOrderController::class, 'hide']);
+    Route::delete('pancake-orders/hidden/{id}', [\App\Http\Controllers\Api\PancakeOrderController::class, 'restore'])->whereNumber('id');
     Route::get('pancake-orders', [PancakeOrderController::class, 'index']);
     Route::get('pancake-orders/{id}', [PancakeOrderController::class, 'show']);
 

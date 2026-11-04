@@ -78,31 +78,25 @@ export const MENU_ITEMS = [
     ],
   },
   {
-    key: 'orders-group',
-    label: 'Đơn hàng',
-    icon: ShoppingCartOutlined,
+    key: 'orders-group', label: 'Đơn hàng', icon: ShoppingCartOutlined,
     children: [
-      {
-        key: ROUTES.ORDERS,
-        label: 'Đơn hàng',
-        title: 'Đơn hàng',
-        path: ROUTES.ORDERS,
-      },
-      {
-        key: ROUTES.PANCAKE_ORDERS,
-        label: 'Pancake',
-        title: 'Đơn hàng Pancake',
-        path: ROUTES.PANCAKE_ORDERS,
-      },
+      { key: ROUTES.ORDERS, label: 'Đơn hàng', path: ROUTES.ORDERS },
+      { key: ROUTES.PANCAKE_ORDERS, label: 'Hương Chất Web', title: 'Đơn hàng Hương Chất Web', path: ROUTES.PANCAKE_ORDERS },
     ],
   },
-
   {
     key: ROUTES.PRODUCTS,
     label: 'Sản phẩm',
     path: ROUTES.PRODUCTS,
     icon: InboxOutlined,
     permission: 'list-product',
+  },
+  {
+    key: ROUTES.WAREHOUSE,
+    label: 'Kho',
+    path: ROUTES.WAREHOUSE,
+    icon: InboxOutlined,
+    warehouseOnly: true,
   },
   {
     key: ROUTES.STAFF,
@@ -240,6 +234,7 @@ export const PLACEHOLDER_ROUTES = [
 export const getRouteMetadata = (pathname) => {
   return [
     { key: ROUTES.HOME, label: 'Tổng quan', title: 'Tổng quan', path: ROUTES.HOME },
+    { key: ROUTES.POS, label: 'Bán hàng POS', title: 'Bán hàng POS', path: ROUTES.POS },
     ...PLACEHOLDER_ROUTES,
   ].find((item) => item.path === pathname)
 }
