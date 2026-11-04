@@ -151,8 +151,7 @@ class ProductReportController extends Controller
     {
         return Order::query()
             ->where('orders.status', 3)
-            ->whereNotNull('orders.order_number_vtp')
-            ->where('orders.order_number_vtp', '<>', '')
+            ->where(function ($q) { $q->where(function ($v) { $v->whereNotNull('orders.order_number_vtp')->where('orders.order_number_vtp','<>',''); })->orWhere('orders.origin','huongchat_web'); })
             ->when($shopIds !== null, fn ($query) => $query->whereIn('orders.shop_id', $shopIds));
     }
 

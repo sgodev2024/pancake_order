@@ -288,7 +288,6 @@ const PancakeOrdersPage = () => {
 
   return (
     <div className="pancake-orders-page">
-      <Alert style={{ marginBottom: 16 }} type="info" showIcon message="Xóa đơn chỉ áp dụng trong CRM, không xóa tại web Hương Chất. Phân trang theo nguồn Hương Chất nên trang có đơn đã xóa có thể ít dòng hơn." />
       {admin && <Space style={{ marginBottom: 16 }}><Button danger disabled={!selectedKeys.length || changing || isFetching} loading={changing} icon={<DeleteOutlined />} onClick={() => confirmDelete(selectedKeys)}>Xóa đơn đã chọn ({selectedKeys.length})</Button></Space>}
       <Card
         className="pancake-orders-card"

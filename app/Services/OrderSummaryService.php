@@ -230,7 +230,7 @@ class OrderSummaryService
         $status = $order->status === null ? null : (int) $order->status;
         $cod = self::units($order->cod ?? 0);
         $hasVtp = ($order->order_number_vtp ?? null) !== null && rtrim((string) $order->order_number_vtp, ' ') !== '';
-        $delivered = $status === 3 && $hasVtp;
+        $delivered = $status === 3 && ($hasVtp || ($order->origin ?? null) === 'huongchat_web');
         $metrics = ['total_items' => 1, 'total_revenue' => $cod, 'total_prepaid_amount' => self::units($order->prepaid_amount ?? 0),
             'delivered_vtp_count' => (int) $delivered, 'delivered_vtp_quantity' => $delivered ? self::units($order->total_quantity ?? 0) : 0];
         foreach (['shipping' => [2, 8, 9], 'success' => [3, 16], 'cancel' => [6, 7], 'return' => [4, 5, 15]] as $name => $statuses) {

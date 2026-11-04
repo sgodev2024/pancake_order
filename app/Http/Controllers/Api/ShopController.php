@@ -182,6 +182,7 @@ class ShopController extends Controller implements HasMiddleware
 
     public function getCustomer($shop)
     {
+        if ($shop && $shop->pancake_shop_id === 'huongchat_web') { throw new \RuntimeException('Cửa hàng Hương Chất Web đồng bộ tự động từ Web; nhân viên được gán trong CRM.'); }
         Log::info("======================getCustomer=====================");
         try {
             $page_size = 20;
@@ -210,6 +211,7 @@ class ShopController extends Controller implements HasMiddleware
 
     public function getProduct($shop)
     {
+        if ($shop && $shop->pancake_shop_id === 'huongchat_web') { throw new \RuntimeException('Cửa hàng Hương Chất Web đồng bộ tự động từ Web; nhân viên được gán trong CRM.'); }
         Log::info("======================getProduct=====================");
         try {
             $page_size = 20;
@@ -238,6 +240,7 @@ class ShopController extends Controller implements HasMiddleware
 
     public function getOrder($shop, $date_from = NULL, $date_to = NULL)
     {
+        if ($shop && $shop->pancake_shop_id === 'huongchat_web') { throw new \RuntimeException('Cửa hàng Hương Chất Web đồng bộ tự động từ Web; nhân viên được gán trong CRM.'); }
         Log::info("======================getOrder=====================");
         try {
             $page_size = 20;
@@ -320,6 +323,7 @@ class ShopController extends Controller implements HasMiddleware
 
     public function getEmployee($shop)
     {
+        if ($shop && $shop->pancake_shop_id === 'huongchat_web') { throw new \RuntimeException('Cửa hàng Hương Chất Web đồng bộ tự động từ Web; nhân viên được gán trong CRM.'); }
         Log::info("======================getEmployee=====================");
         $response = Http::get($this->apiUrl . "shops/{$shop->pancake_shop_id}/users?api_key={$shop->api_key}")->json();
         if (!empty($response["data"])) {

@@ -20,3 +20,5 @@ Schedule::command('customer-care:reclaim-stale', [
     ->when(fn (): bool => config('customer_care.auto_reclaim.enabled') === true)
     ->withoutOverlapping(180)
     ->onFailure(fn () => Log::error('Scheduled customer-care auto reclaim failed.'));
+
+Schedule::command('huongchat:sync')->everyFiveMinutes()->withoutOverlapping(15);
