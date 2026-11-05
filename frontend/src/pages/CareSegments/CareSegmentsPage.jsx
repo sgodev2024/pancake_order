@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Alert, App, Button, Card, DatePicker, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd'
 import dayjs from 'dayjs'
 import 'dayjs/locale/vi'
-import viPicker from 'antd/locale/vi_VN'
+import { monthLocale, dateLocale } from './calendarLocale.js'
 
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../../api/client.js'
@@ -13,14 +13,6 @@ import { useAuthStore } from '../../auth/auth.store.js'
 import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
 import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
 import { ROUTES } from '../../constants/routes.js'
-
-const monthLocale = {
-  ...viPicker.DatePicker,
-  lang: {
-    ...viPicker.DatePicker.lang,
-    shortMonths: Array.from({ length: 12 }, (_, index) => `Tháng ${index + 1}`),
-  },
-}
 
 const initial = () => ({ months: [dayjs().startOf('month'), dayjs().endOf('month')], shops: [], sources: [], products: [], match: 'any', search: '' })
 const paramsFor = (filters) => ({
@@ -123,7 +115,7 @@ export default function CareSegmentsPage() {
         <InputNumber min={0} placeholder="Từ" value={draft.min} onChange={(v) => update('min', v)} />
         <InputNumber min={0} placeholder="Đến" value={draft.max} onChange={(v) => update('max', v)} />
       </Space.Compact></div>
-      <div><label>Lần mua gần nhất trong kỳ trước ngày</label><DatePicker locale={viPicker.DatePicker} format="DD/MM/YYYY" placeholder="Chọn ngày" style={{ width: '100%' }} value={draft.last} onChange={(v) => update('last', v)} /></div>
+      <div><label>Lần mua gần nhất trong kỳ trước ngày</label><DatePicker locale={dateLocale} format="DD/MM/YYYY" placeholder="Chọn ngày" style={{ width: '100%' }} value={draft.last} onChange={(v) => update('last', v)} /></div>
       <div><label>Khách hàng / số điện thoại</label><Input value={draft.search} onChange={(e) => update('search', e.target.value)} onPressEnter={apply} /></div>
     </div>
     <Space wrap style={{ marginBottom: 16 }}>
