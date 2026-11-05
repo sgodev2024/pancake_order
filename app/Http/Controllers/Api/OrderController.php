@@ -466,7 +466,7 @@ SQL;
         }
         $request->merge($adjustments);
         $simplifiedPayment = $request->has('payment_mode');
-        $needsConfirmation = in_array($request->input('payment_mode'), ['cash', 'bank_transfer'], true);
+        $needsConfirmation = in_array($request->input('payment_mode'), ['cash', 'bank_transfer', 'bank_transfer_cod'], true);
         $money = ['numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'];
         $data = $request->validate([
             'user_id' => ['prohibited'],
@@ -495,7 +495,8 @@ SQL;
             'paid_amount' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), ...$money],
             'payment_method' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), Rule::in(['cash', 'bank_transfer'])],
             'cod_mode' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), Rule::in(['remaining', 'none'])],
-            'payment_mode' => ['sometimes', 'required', Rule::in(['cash', 'bank_transfer', 'cod'])],
+            'payment_mode' => ['sometimes', 'required', Rule::in(['cash', 'bank_transfer', 'cod', 'bank_transfer_cod'])],
+            'deposit_amount' => [Rule::requiredIf($request->input('payment_mode') === 'bank_transfer_cod'), Rule::prohibitedIf($request->input('payment_mode') !== 'bank_transfer_cod'), ...$money],
             'payment_confirmed' => [Rule::requiredIf($needsConfirmation), Rule::prohibitedIf(! $simplifiedPayment), 'boolean'],
             'confirmed_total' => [Rule::requiredIf($needsConfirmation), Rule::prohibitedIf(! $needsConfirmation), ...$money],
             'note' => ['nullable', 'string', 'max:5000'],

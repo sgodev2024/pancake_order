@@ -37,7 +37,7 @@ test('optional adjustments accept blank/null/undefined as zero and reject malfor
   }
 })
 test('cash and transfer stay unpaid until receipt confirmation; COD always remains uncollected', () => {
-  assert.equal(POS_PAYMENT_OPTIONS.length, 3)
+  assert.equal(POS_PAYMENT_OPTIONS.length, 4)
   const adjustments = { discount_amount: 10000, shipping_fee: 30000, surcharge: 5000 }
   for (const mode of ['cash', 'bank_transfer']) {
     const before = calculatePosPaymentTotals(cart, { ...adjustments, payment_mode: mode })
@@ -133,4 +133,17 @@ test('createOrder forwards the same idempotency key on retry; detail uses the ex
     assert.deepEqual(calls, [['/orders', payload], ['/orders', payload]])
     assert.deepEqual(await getOrder(9), { id: 9, origin: 'local_pos' })
   } finally { apiClient.post = originals.post; apiClient.get = originals.get }
+})
+
+test('partial bank transfer collects only the balance as COD after receipt confirmation', () => {
+  const fields = { payment_mode: 'bank_transfer_cod', shipping_fee: 30000, deposit_amount: 200000 }
+  const totals = calculatePosPaymentTotals(cart, fields, true)
+  assert.equal(totals.total, 53000000)
+  assert.equal(totals.paid, 20000000)
+  assert.equal(totals.cod, 33000000)
+  assert.equal(totals.remaining, 33000000)
+  assert.equal(calculatePosPaymentTotals(cart, fields).cod, 33000000)
+  for (const deposit_amount of [undefined, 0, -1, 530000, 600000, 'abc', '1.234']) {
+    assert.ok(calculatePosPaymentTotals(cart, { ...fields, deposit_amount }, true).error)
+  }
 })

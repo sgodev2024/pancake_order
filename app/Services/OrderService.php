@@ -197,11 +197,19 @@ class OrderService
 
             return [0, $total, null, 'remaining'];
         }
-        if (! in_array($mode, ['cash', 'bank_transfer'], true) || ! $confirmed) {
-            throw ValidationException::withMessages(['payment_confirmed' => 'Cần xác nhận đã nhận đủ tiền trước khi tạo đơn.']);
+        if (! in_array($mode, ['cash', 'bank_transfer', 'bank_transfer_cod'], true) || ! $confirmed) {
+            throw ValidationException::withMessages(['payment_confirmed' => 'Cần xác nhận số tiền thực nhận trước khi tạo đơn.']);
         }
         if (! isset($input['confirmed_total']) || self::moneyCents($input['confirmed_total']) !== $total) {
             throw ValidationException::withMessages(['confirmed_total' => 'Tổng tiền đã thay đổi. Vui lòng kiểm tra và xác nhận lại số tiền thực nhận.']);
+        }
+
+        if ($mode === 'bank_transfer_cod') {
+            $paid = self::moneyCents($input['deposit_amount'] ?? 0);
+            if ($paid <= 0 || $paid >= $total) {
+                throw ValidationException::withMessages(['deposit_amount' => 'Tiền chuyển khoản một phần phải lớn hơn 0 và nhỏ hơn tổng thanh toán.']);
+            }
+            return [$paid, $total - $paid, 'bank_transfer', 'remaining'];
         }
 
         return [$total, 0, $mode, 'none'];
@@ -212,6 +220,9 @@ class OrderService
         unset($input['idempotency_key']);
         foreach (['discount_amount', 'shipping_fee', 'surcharge', 'paid_amount'] as $key) {
             $input[$key] = self::moneyString(self::moneyCents($input[$key] ?? 0));
+        }
+        if (isset($input['deposit_amount'])) {
+            $input['deposit_amount'] = self::moneyString(self::moneyCents($input['deposit_amount']));
         }
         if (isset($input['confirmed_total'])) {
             $input['confirmed_total'] = self::moneyString(self::moneyCents($input['confirmed_total']));

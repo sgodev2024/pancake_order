@@ -334,12 +334,12 @@ const successfulOrderApi = () => {
   }
 }
 
-test('payment form has one three-option select and three optional adjustment fields', async () => {
+test('payment form has one four-option select and three optional adjustment fields', async () => {
   await mount(actor(118))
   const items = renderer.root.findAllByType('form-item-control')
   assert.equal(items.some((node) => ['paid_amount', 'cod_mode', 'payment_method'].includes(node.props.name)), false)
   const payment = items.find((node) => node.props.name === 'payment_mode').findByType('select-control')
-  assert.deepEqual(payment.props.options.map((option) => option.value), ['cash', 'bank_transfer', 'cod'])
+  assert.deepEqual(payment.props.options.map((option) => option.value), ['cash', 'bank_transfer', 'bank_transfer_cod', 'cod'])
   assert.equal(form().props.form.getFieldsValue().payment_mode, 'cod')
   for (const name of ['discount_amount', 'shipping_fee', 'surcharge']) {
     const field = adjustment(name)
@@ -449,4 +449,28 @@ test('an unknown cash submission is retried only on demand with the identical co
   assert.equal(posts.length, 2)
   assert.deepEqual(posts[1], posts[0])
   assert.equal(dialogs.length, 1)
+})
+
+test('partial transfer prompts for the actual deposit and sends the remaining collection contract once', async () => {
+  await mount(actor(220))
+  await addProduct()
+  successfulOrderApi()
+  const values = { ...allRequiredValues, payment_mode: 'bank_transfer_cod', deposit_amount: 200 }
+  await setCheckout(values)
+  const field = renderer.root.findAllByType('form-item-control').find((node) => node.props.name === 'deposit_amount')
+  assert.ok(field)
+  await field.props.rules[1].validator(null, 200)
+  for (const invalid of [0, -1, 1000, 1001]) await assert.rejects(field.props.rules[1].validator(null, invalid))
+  await act(async () => form().props.onFinish(values))
+  assert.equal(posts.length, 0)
+  assert.match(dialogs[0].content, /200 đ/)
+  assert.match(dialogs[0].content, /800 đ/)
+  await act(async () => dialogs[0].onOk())
+  await act(async () => dialogs[0].onOk())
+  await settle()
+  assert.equal(posts.length, 1)
+  assert.equal(posts[0][1].deposit_amount, '200.00')
+  assert.equal(posts[0][1].confirmed_total, '1000.00')
+  assert.equal(posts[0][1].payment_confirmed, true)
+  assert.equal(posts[0][1].payment_mode, 'bank_transfer_cod')
 })

@@ -583,6 +583,53 @@ class PosOrderTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_partial_transfer_records_receipt_and_only_collects_the_balance_as_cod(): void
+    {
+        config(['aicrm.shipping_provider_id' => 42]);
+        $input = $this->simplePaymentPayload('bank_transfer_cod', ['shipping_fee' => 30000]);
+        $input += ['deposit_amount' => '200000.00', 'payment_confirmed' => true, 'confirmed_total' => '530000.00'];
+        $id = $this->postJson('/api/v1/orders', $input)->assertCreated()
+            ->assertJsonPath('data.totals.total_amount', '530000.00')
+            ->assertJsonPath('data.totals.paid_amount', '200000.00')
+            ->assertJsonPath('data.totals.remaining_amount', '330000.00')
+            ->assertJsonPath('data.totals.expected_cod', '330000.00')->json('data.id');
+        $order = Order::findOrFail($id);
+        $this->assertEquals(200000, $order->cash);
+        $this->assertEquals(330000, $order->cod);
+        $this->assertSame('bank_transfer', $order->pancake_full_data['payments'][0]['method']);
+        $this->assertSame('bank_transfer_cod', $order->pancake_full_data['payment_mode']);
+        $this->assertEquals(330000, app(AicrmOrderPayload::class)->make($order)['moneyCollection']);
+        $this->postJson('/api/v1/orders', $input)->assertOk()->assertJsonPath('replayed', true);
+        $input['deposit_amount'] = '200000';
+        $this->postJson('/api/v1/orders', $input)->assertOk()->assertJsonPath('replayed', true);
+        $input['deposit_amount'] = '210000';
+        $this->postJson('/api/v1/orders', $input)->assertStatus(409);
+        $this->assertDatabaseCount('orders', 1);
+        Http::assertNothingSent();
+    }
+
+    public function test_partial_transfer_requires_valid_amount_and_confirmed_current_total(): void
+    {
+        $base = $this->simplePaymentPayload('bank_transfer_cod');
+        $base += ['payment_confirmed' => true, 'confirmed_total' => '500000'];
+        foreach ([null, 0, -1, 500000, 500001, 'abc', '1.234'] as $amount) {
+            $this->postJson('/api/v1/orders', $base + ['deposit_amount' => $amount])->assertUnprocessable();
+        }
+        $input = $base + ['deposit_amount' => '200000'];
+        $input['payment_confirmed'] = false;
+        $this->postJson('/api/v1/orders', $input)->assertUnprocessable();
+        unset($input['payment_confirmed']);
+        $this->postJson('/api/v1/orders', $input)->assertUnprocessable();
+        $input['payment_confirmed'] = true;
+        $input['confirmed_total'] = '499999';
+        $this->postJson('/api/v1/orders', $input)->assertUnprocessable();
+        $input['confirmed_total'] = '500000';
+        $input['payment_mode'] = 'cod';
+        $this->postJson('/api/v1/orders', $input)->assertUnprocessable();
+        $this->assertDatabaseCount('orders', 0);
+        Http::assertNothingSent();
+    }
+
     private function simplePaymentPayload(string $mode, array $override = []): array
     {
         $payload = $this->payload($override);

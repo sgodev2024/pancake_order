@@ -207,7 +207,8 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
       shipping_address: values.shipping_address,
       items: cart.map(({ product_id, quantity, unit_price }) => ({ product_id, quantity, unit_price })),
       discount_amount: centsToAmount(submittedTotals.discount), shipping_fee: centsToAmount(submittedTotals.shipping), surcharge: centsToAmount(submittedTotals.surcharge),
-      payment_mode: values.payment_mode ?? 'cod', note: values.note,
+      payment_mode: values.payment_mode ?? 'cod',
+      ...(values.payment_mode === 'bank_transfer_cod' ? { deposit_amount: centsToAmount(optionalMoneyCents(values.deposit_amount)) } : {}), note: values.note,
     }
     const send = (confirmed) => {
       if (!isCurrentScope()) return
@@ -220,9 +221,11 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
     const confirmedDraft = currentDraft.current
     let accepted = false
     paymentDialog.current = modal.confirm({
-      title: payload.payment_mode === 'cash' ? 'Xác nhận đã thu đủ tiền mặt' : 'Xác nhận đã nhận đủ chuyển khoản',
-      content: `Số tiền cần xác nhận: ${money(submittedTotals.total / 100)}. Chỉ xác nhận khi bạn đã thực sự nhận đủ tiền.`,
-      okText: 'Đã nhận đủ tiền', cancelText: 'Chưa nhận tiền',
+      title: payload.payment_mode === 'bank_transfer_cod' ? 'Xác nhận đã nhận chuyển khoản một phần' : payload.payment_mode === 'cash' ? 'Xác nhận đã thu đủ tiền mặt' : 'Xác nhận đã nhận đủ chuyển khoản',
+      content: payload.payment_mode === 'bank_transfer_cod'
+        ? `Đã nhận chuyển khoản: ${money(values.deposit_amount)}. Còn thu COD: ${money((submittedTotals.total - optionalMoneyCents(values.deposit_amount)) / 100)}. Chỉ xác nhận khi đã thực sự nhận khoản tiền này.`
+        : `Số tiền cần xác nhận: ${money(submittedTotals.total / 100)}. Chỉ xác nhận khi bạn đã thực sự nhận đủ tiền.`,
+      okText: payload.payment_mode === 'bank_transfer_cod' ? 'Đã nhận khoản chuyển' : 'Đã nhận đủ tiền', cancelText: 'Chưa nhận tiền',
       onCancel: () => { paymentDialog.current = null },
       onOk: () => {
         paymentDialog.current = null
@@ -312,11 +315,19 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
                 onInput={(text) => setMoneyInputErrors((errors) => ({ ...errors, [name]: isValidMoneyInput(text) && optionalMoneyCents(parseMoneyInput(text)) !== null ? undefined : 'Nhập số tiền không âm, tối đa 2 chữ số thập phân.' }))} />
             </Form.Item>)}</div>
             <Form.Item name="payment_mode" label="Hình thức thanh toán"><Select options={POS_PAYMENT_OPTIONS} /></Form.Item>
-            {fields.payment_mode !== 'cod' && !paymentConfirmed && <Alert type="info" showIcon title="Chỉ ghi nhận đã thanh toán sau khi xác nhận thực sự nhận đủ tiền." />}
+            {fields.payment_mode === 'bank_transfer_cod' && <Form.Item name="deposit_amount" label="Số tiền chuyển khoản đã nhận" preserve={false}
+              rules={[{ required: true, message: 'Nhập số tiền đã nhận.' }, { validator: (_, value) => {
+                const amount = optionalMoneyCents(value)
+                const total = calculatePosPaymentTotals(cart, { ...fields, payment_mode: 'cod' }).total
+                return amount !== null && amount > 0 && amount < total ? Promise.resolve() : Promise.reject(new Error('Số tiền phải lớn hơn 0 và nhỏ hơn tổng thanh toán.'))
+              } }]}>
+              <InputNumber className="pos-money-input" min={0} max={999999999999.99} precision={2} formatter={formatMoneyInput} parser={parseMoneyInput} suffix="đ" />
+            </Form.Item>}
+            {fields.payment_mode !== 'cod' && !paymentConfirmed && <Alert type="info" showIcon title="Chỉ ghi nhận đã thanh toán sau khi xác nhận số tiền thực nhận." />}
             <div className="pos-totals" aria-live="polite">{totalsError ? <Alert type="warning" title={totalsError} /> : <>
               <div><span>Tiền hàng</span><strong>{money(totals.subtotal / 100)}</strong></div>
               <div className="pos-total"><span>Tổng thanh toán</span><strong>{money(totals.total / 100)}</strong></div>
-              <div><span>Đã thanh toán</span><strong>{money(totals.paid / 100)}</strong></div>
+              <div><span>{fields.payment_mode === 'bank_transfer_cod' && !paymentConfirmed ? 'Chuyển khoản khai báo' : 'Đã thanh toán'}</span><strong>{money(totals.paid / 100)}</strong></div>
               <div><span>Còn phải thu</span><strong>{money(totals.remaining / 100)}</strong></div>
               <div><span>COD dự kiến</span><strong>{money(totals.cod / 100)}</strong></div>
             </>}</div>

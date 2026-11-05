@@ -33,6 +33,7 @@ export const centsToAmount = (cents) => `${Math.floor(cents / 100)}.${String(cen
 export const POS_PAYMENT_OPTIONS = [
   { value: 'cash', label: 'Tiền mặt — đã thu đủ' },
   { value: 'bank_transfer', label: 'Chuyển khoản — đã nhận đủ' },
+  { value: 'bank_transfer_cod', label: 'Chuyển khoản một phần + COD' },
   { value: 'cod', label: 'Thu hộ COD — thu khi giao hàng' },
 ]
 
@@ -42,8 +43,12 @@ export const calculatePosPaymentTotals = (items, fields = {}, confirmed = false)
   if (!POS_PAYMENT_OPTIONS.some((option) => option.value === mode)) return { error: 'Chọn hình thức thanh toán hợp lệ.' }
   const totals = calculatePosTotals(items, { ...fields, paid_amount: 0, cod_mode: 'remaining' })
   if (totals.error) return totals
-  const paid = mode !== 'cod' && confirmed ? totals.total : 0
-  return { ...totals, paid, remaining: totals.total - paid, cod: mode === 'cod' ? totals.total : 0 }
+  const deposit = optionalMoneyCents(fields.deposit_amount)
+  if (mode === 'bank_transfer_cod' && (deposit === null || deposit <= 0 || deposit >= totals.total)) {
+    return { error: 'Tiền chuyển khoản một phần phải lớn hơn 0 và nhỏ hơn tổng thanh toán.' }
+  }
+  const paid = mode === 'bank_transfer_cod' ? deposit : (mode !== 'cod' && confirmed ? totals.total : 0)
+  return { ...totals, paid, remaining: totals.total - paid, cod: ['cod', 'bank_transfer_cod'].includes(mode) ? totals.total - paid : 0 }
 }
 
 export const money = (value) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(Number(value ?? 0)) + ' đ'
