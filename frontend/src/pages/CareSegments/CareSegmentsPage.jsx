@@ -2,6 +2,10 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, App, Button, Card, DatePicker, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd'
 import dayjs from 'dayjs'
+import 'dayjs/locale/vi'
+import viPicker from 'antd/locale/vi_VN'
+
+dayjs.locale('vi')
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../../api/client.js'
 import { getShops } from '../../api/shops.api.js'
@@ -102,7 +106,7 @@ export default function CareSegmentsPage() {
         allowClear showSearch placeholder="Tất cả nguồn đơn" value={draft.sources} onChange={(v) => update('sources', v)}
         loading={sourceOptions.isFetching} disabled={!draft.months?.[0] || !draft.months?.[1]}
         options={sourceOptions.data ?? []} filterOption={filterOrderSource} optionRender={renderOrderSourceOption} /></div>
-      <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" value={draft.months} onChange={(v) => setDraft((old) => ({ ...old, months: v, sources: [] }))} style={{ width: '100%' }} /></div>
+      <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" locale={viPicker.DatePicker} format="[Tháng] MM/YYYY" placeholder={['Từ tháng', 'Đến tháng']} value={draft.months} onChange={(v) => setDraft((old) => ({ ...old, months: v, sources: [] }))} style={{ width: '100%' }} /></div>
       <div><label>Sản phẩm đã mua</label><Select aria-label="Sản phẩm đã mua" mode="multiple" showSearch optionFilterProp="search"
         placeholder="Tên hoặc mã sản phẩm" style={{ width: '100%' }} value={draft.products} onChange={(v) => update('products', v)}
         options={(report.data?.products ?? []).map((p) => ({ ...p, search: `${p.label} ${p.code}`, label: p.code ? `${p.label} · ${p.code}` : p.label }))} /></div>
@@ -112,7 +116,7 @@ export default function CareSegmentsPage() {
         <InputNumber min={0} placeholder="Từ" value={draft.min} onChange={(v) => update('min', v)} />
         <InputNumber min={0} placeholder="Đến" value={draft.max} onChange={(v) => update('max', v)} />
       </Space.Compact></div>
-      <div><label>Lần mua gần nhất trong kỳ trước ngày</label><DatePicker style={{ width: '100%' }} value={draft.last} onChange={(v) => update('last', v)} /></div>
+      <div><label>Lần mua gần nhất trong kỳ trước ngày</label><DatePicker locale={viPicker.DatePicker} format="DD/MM/YYYY" placeholder="Chọn ngày" style={{ width: '100%' }} value={draft.last} onChange={(v) => update('last', v)} /></div>
       <div><label>Khách hàng / số điện thoại</label><Input value={draft.search} onChange={(e) => update('search', e.target.value)} onPressEnter={apply} /></div>
     </div>
     <Space wrap style={{ marginBottom: 16 }}>
