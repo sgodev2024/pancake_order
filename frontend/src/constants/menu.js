@@ -36,14 +36,14 @@ export const MENU_ITEMS = [
       { key: ROUTES.ORDERS, label: 'Đơn Pancake', title: 'Đơn Pancake', path: ROUTES.ORDERS },
       { key: ROUTES.POS_ORDERS, label: 'Đơn POS', title: 'Đơn POS', path: ROUTES.POS_ORDERS },
       { key: ROUTES.PANCAKE_ORDERS, label: 'Hương Chất Web', title: 'Đơn hàng Hương Chất Web', path: ROUTES.PANCAKE_ORDERS },
-      {
-          key: ROUTES.WAREHOUSE,
-          label: 'Kho',
-          path: ROUTES.WAREHOUSE,
-          icon: InboxOutlined,
-          warehouseOnly: true,
-        },
     ],
+  },
+  {
+    key: ROUTES.WAREHOUSE,
+    label: 'Kho',
+    path: ROUTES.WAREHOUSE,
+    icon: InboxOutlined,
+    warehouseOnly: true,
   },
   {
     key: ROUTES.CUSTOMERS,
