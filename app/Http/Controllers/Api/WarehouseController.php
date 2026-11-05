@@ -42,10 +42,7 @@ class WarehouseController extends Controller implements HasMiddleware
         $at = $this->warehouse->activation()->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s');
         $status = $data['status'] ?? Order::WAREHOUSE_WAITING;
         $query = Order::where('warehouse_status', $status)->where('warehouse_queued_at', '>=', $at)
-            ->where(function ($birth) use ($at) {
-                $birth->where(fn ($local) => $local->where('origin', 'local_pos')->where('created_at', '>=', $at))
-                    ->orWhere(fn ($pancake) => $pancake->where('origin', 'pancake')->where('source_created_at', '>=', $at));
-            })->with(['shop:id,name', 'packedBy', 'user_creator', 'packingLog:id,subject_id,actor_user_id,actor_name', 'aicrmShipment']);
+            ->where('origin', 'local_pos')->where('created_at', '>=', $at)->with(['shop:id,name', 'packedBy', 'user_creator', 'packingLog:id,subject_id,actor_user_id,actor_name', 'aicrmShipment']);
         if ($status === Order::WAREHOUSE_WAITING) {
             $query->whereIn('status', WarehouseService::PACKABLE_STATUSES);
         }

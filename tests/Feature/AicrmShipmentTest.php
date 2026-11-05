@@ -75,12 +75,12 @@ class AicrmShipmentTest extends TestCase
             RolePermission::create(['role_id' => $role->id, 'permission_id' => Permission::where('slug', $slug)->value('id')]);
         }
         $this->order = Order::create([
-            'shop_id' => $this->shop->id, 'pancake_order_id' => 'pancake-123', 'origin' => 'pancake',
+            'shop_id' => $this->shop->id, 'pancake_order_id' => null, 'origin' => 'local_pos',
             'customer_name' => 'Nguyễn Văn Test', 'customer_phone' => '0901234567', 'customer_address' => '123 Đường Test, Hà Nội',
             'cod' => 200000, 'cash' => 999999, 'total_quantity' => 3, 'status' => 0,
             'warehouse_status' => 'packed', 'warehouse_queued_at' => now(), 'source_created_at' => now(),
             'packed_by_user_id' => $this->actor->id, 'packed_at' => now(),
-            'pancake_full_data' => ['prepaid' => 50000, 'items' => [
+            'pancake_full_data' => ['prepaid' => 50000, 'pos_totals' => ['total_amount' => '250000.00'], 'items' => [
                 ['quantity' => 2, 'variation_info' => ['name' => 'Áo']],
                 ['quantity' => 1, 'name' => 'Quần'],
             ]],
@@ -112,7 +112,7 @@ class AicrmShipmentTest extends TestCase
         Queue::assertNothingPushed();
     }
 
-    public function test_exact_aicrm_mapping_uses_cod_plus_prepaid_and_never_cash_or_browser_payload(): void
+    public function test_exact_aicrm_mapping_uses_pos_total_and_never_cash_or_browser_payload(): void
     {
         $this->postJson($this->url('/viettel-post'), ['shippingProviderId' => 999, 'moneyCollection' => 1, 'shop_id' => 999])->assertOk();
         $this->assertSame([
@@ -136,7 +136,7 @@ class AicrmShipmentTest extends TestCase
     #[DataProvider('invalidOrderStates')]
     public function test_ineligible_orders_are_rejected_before_sending(array $override): void
     {
-        $this->order->update($override);
+        $this->order->forceFill($override)->save();
         $this->postJson($this->url('/viettel-post'))->assertStatus(409);
         $this->assertDatabaseCount('aicrm_shipments', 0);
         Http::assertNothingSent();
@@ -147,7 +147,7 @@ class AicrmShipmentTest extends TestCase
         return [
             [['warehouse_status' => 'waiting_packing']], [['packed_at' => null]],
             [['order_number_vtp' => 'EXISTING']], [['status' => 6]], [['status' => 99]],
-            [['warehouse_queued_at' => null]], [['source_created_at' => '2000-01-01']],
+            [['warehouse_queued_at' => null]], [['created_at' => '2000-01-01']],
         ];
     }
 
@@ -406,7 +406,7 @@ class AicrmShipmentTest extends TestCase
     public function test_live_rejects_historical_order_even_if_its_id_was_approved(): void
     {
         $this->live(true);
-        $this->order->update(['source_created_at' => now()->subHours(2)]);
+        $this->order->forceFill(['created_at' => now()->subHours(2)])->save();
         $this->postJson($this->url('/viettel-post'))->assertStatus(409);
         Http::assertNothingSent();
     }
@@ -707,7 +707,7 @@ class AicrmShipmentTest extends TestCase
     #[DataProvider('productNameLengths')]
     public function test_product_name_limit_counts_vietnamese_characters_and_complete_item_summary(int $length, bool $valid): void
     {
-        $data = ['prepaid' => 0, 'items' => [['name' => str_repeat('Á', $length), 'quantity' => 1]]];
+        $data = ['prepaid' => 0, 'pos_totals' => ['total_amount' => '250000.00'], 'items' => [['name' => str_repeat('Á', $length), 'quantity' => 1]]];
         $this->order->update(['pancake_full_data' => $data]);
         $before = $this->order->fresh()->getRawOriginal();
         $response = $this->postJson($this->url('/viettel-post'));

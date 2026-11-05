@@ -132,15 +132,15 @@ class WarehouseTest extends TestCase
             ->assertJsonPath('data.orders.0.origin', 'local_pos');
     }
 
-    public function test_new_pancake_order_without_tracking_is_admitted_by_bulk_and_webhook_without_legacy_side_effects(): void
+    public function test_pancake_sync_keeps_orders_out_of_warehouse(): void
     {
         $this->bulk([$this->source('bulk-no-tracking')]);
         $this->webhook($this->source('webhook-no-tracking'));
         $this->assertDatabaseCount('orders', 2);
         foreach (Order::all() as $order) {
             $this->assertSame('pancake', $order->origin);
-            $this->assertSame(Order::WAREHOUSE_WAITING, $order->warehouse_status);
-            $this->assertNotNull($order->warehouse_queued_at);
+            $this->assertNull($order->warehouse_status);
+            $this->assertNull($order->warehouse_queued_at);
             $this->assertSame('2026-10-21T02:00:00+00:00', $order->source_created_at->utc()->toIso8601String());
             $this->assertNotNull($order->first_synced_at);
             $this->assertNull($order->order_number_vtp);
@@ -255,6 +255,7 @@ class WarehouseTest extends TestCase
         $source = $this->source('cancel-before');
         $this->webhook($source);
         $order = Order::sole();
+        $order->forceFill(['warehouse_status' => 'waiting_packing', 'warehouse_queued_at' => now()])->save();
         $source['status'] = 6;
         $this->webhook($source);
         $this->webhook($source);
@@ -272,6 +273,7 @@ class WarehouseTest extends TestCase
             'assigning_seller' => ['id' => 'seller', 'name' => 'Original seller']]));
         $before = Order::sole();
         $this->assertSame('Original seller', $before->source_creator_name);
+        $before->forceFill(['warehouse_status' => 'waiting_packing', 'warehouse_queued_at' => now()])->save();
         $this->webhook(['id' => 'partial-cancel', 'shop_id' => $this->shop->pancake_shop_id, 'status' => 6]);
         $after = $before->fresh();
         $this->assertNull($after->warehouse_status);
@@ -286,8 +288,9 @@ class WarehouseTest extends TestCase
     {
         $source = $this->source('packed-sync', ['creator' => ['id' => 'first-creator', 'name' => 'First']]);
         $this->webhook($source);
-        $id = Order::sole()->id;
-        $this->actingAs($this->packer, 'api')->postJson('/api/v1/warehouse/orders/'.$id.'/complete')->assertOk();
+        $legacy = Order::sole();
+        $legacy->forceFill(['warehouse_status' => 'packed', 'warehouse_queued_at' => now(), 'packed_at' => now(), 'packed_by_user_id' => $this->packer->id])->save();
+        $id = $legacy->id;
         $source['status'] = 6;
         $source['creator'] = ['id' => 'changed-creator'];
         $this->webhook($source);
@@ -296,26 +299,23 @@ class WarehouseTest extends TestCase
         $this->assertSame('packed', $order->warehouse_status);
         $this->assertSame('first-creator', $order->user_creator_id);
         $this->assertSame($this->packer->id, $order->packed_by_user_id);
-        $this->assertSame(1, ActivityLog::where('action', 'warehouse.packed')->count());
+        $this->assertNotNull($order->packed_at);
     }
 
-    public function test_pancake_sync_after_mock_shipment_preserves_tracking_and_cannot_create_again(): void
+    public function test_legacy_pancake_queue_rows_are_hidden_and_cannot_be_processed(): void
     {
-        config(['aicrm.mode' => 'mock', 'aicrm.shipping_provider_id' => 17, 'aicrm.mock_scenario' => 'success']);
-        $source = $this->source('mock-shipment-sync', ['bill_phone_number' => '0901234567']);
-        $this->webhook($source);
+        $this->webhook($this->source('legacy-pancake'));
         $order = Order::sole();
-        $this->actingAs($this->packer, 'api')->postJson('/api/v1/warehouse/orders/'.$order->id.'/complete')->assertOk();
-        $response = $this->postJson('/api/v1/warehouse/orders/'.$order->id.'/viettel-post')->assertOk();
-        $number = $response->json('data.tracking_number');
-        $this->webhook(array_replace($source, ['partner' => ['order_number_vtp' => null]]));
-        $this->bulk([$source]);
-        $this->postJson('/api/v1/warehouse/orders/'.$order->id.'/viettel-post')->assertOk()
-            ->assertJsonPath('replayed', true)->assertJsonPath('data.tracking_number', $number);
-        $this->assertDatabaseCount('aicrm_shipment_attempts', 1);
-        $this->assertNull($order->fresh()->order_number_vtp);
+        $order->forceFill(['warehouse_status' => 'waiting_packing', 'warehouse_queued_at' => now()])->save();
+        $id = $this->createLocal();
+        $this->actingAs($this->packer, 'api')->getJson('/api/v1/warehouse/orders')->assertOk()
+            ->assertJsonCount(1, 'data.orders')->assertJsonPath('data.orders.0.id', $id);
+        $this->getJson('/api/v1/warehouse/orders/'.$order->id)->assertNotFound();
+        $this->postJson('/api/v1/warehouse/orders/'.$order->id.'/complete')->assertStatus(409);
+        $order->forceFill(['warehouse_status' => 'packed', 'packed_at' => now()])->save();
+        $this->getJson('/api/v1/warehouse/orders?status=packed')->assertOk()->assertJsonCount(0, 'data.orders');
+        $this->postJson('/api/v1/warehouse/orders/'.$order->id.'/viettel-post')->assertStatus(409);
         Http::assertNothingSent();
-        Queue::assertNothingPushed();
     }
 
     public function test_module_disabled_or_future_preserves_legacy_import_and_does_not_backfill(): void
@@ -344,11 +344,10 @@ class WarehouseTest extends TestCase
         $this->assertNull(Order::findOrFail($id)->packed_at);
     }
 
-    public function test_search_pagination_and_birth_timezone_are_consistent(): void
+    public function test_pos_reference_search_and_pagination_are_consistent(): void
     {
-        $this->bulk([$this->source('timezone', ['inserted_at' => '2026-10-21T01:00:00+07:00'])]);
-        $id = Order::sole()->id;
-        $this->actingAs($this->packer, 'api')->getJson('/api/v1/warehouse/orders?search=timezone&page_size=1')->assertOk()
+        $id = $this->createLocal();
+        $this->actingAs($this->packer, 'api')->getJson('/api/v1/warehouse/orders?search=POS-'.$id.'&page_size=1')->assertOk()
             ->assertJsonPath('data.total_items', 1)->assertJsonPath('data.orders.0.id', $id);
         $this->getJson('/api/v1/warehouse/orders?page_size=101')->assertUnprocessable();
         $this->getJson('/api/v1/warehouse/orders?status=invalid')->assertUnprocessable();
@@ -383,10 +382,10 @@ class WarehouseTest extends TestCase
         $this->bulk([$source]);
         $this->webhook($source);
         $this->assertDatabaseCount('orders', 2);
-        $this->assertSame(1, Order::whereNotNull('warehouse_queued_at')->count());
+        $this->assertSame(0, Order::whereNotNull('warehouse_queued_at')->count());
         $this->assertSame($before, $sample->fresh()->getRawOriginal());
         $this->actingAs($this->packer, 'api')->getJson('/api/v1/warehouse/orders')->assertOk()
-            ->assertJsonPath('data.total_items', 1);
+            ->assertJsonPath('data.total_items', 0);
         $this->getJson('/api/v1/warehouse/orders/349305')->assertNotFound();
         $this->postJson('/api/v1/warehouse/orders/349305/complete')->assertStatus(409);
         $this->assertSame($before, $sample->fresh()->getRawOriginal());
@@ -417,7 +416,7 @@ class WarehouseTest extends TestCase
         $this->bulk([$source]);
         $order = Order::sole();
         $this->assertEquals(50000, $order->prepaid_amount);
-        $this->assertNotNull($order->warehouse_queued_at);
+        $this->assertNull($order->warehouse_queued_at);
         $this->assertSame('2026-10-21 09:00:00', $customer->fresh()->last_order_at->format('Y-m-d H:i:s'));
 
         $this->webhook(array_replace($source, ['prepaid' => 70000]));
@@ -426,7 +425,7 @@ class WarehouseTest extends TestCase
         $this->webhook(['id' => $source['id'], 'shop_id' => $source['shop_id'], 'status' => 1]);
         $this->assertEquals(70000, $order->fresh()->prepaid_amount);
         $this->assertEquals(70000, $order->fresh()->pancake_full_data['prepaid']);
-        $this->assertNotNull($order->fresh()->warehouse_queued_at);
+        $this->assertNull($order->fresh()->warehouse_queued_at);
         Http::assertNothingSent();
     }
 
