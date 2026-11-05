@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getProducts } from '../../api/products.api.js'
 import { getCustomers } from '../../api/customers.api.js'
-import { createOrder, getOrder, getOrderPages } from '../../api/orders.api.js'
+import { createOrder, getOrder, orderPageQueryOptions } from '../../api/orders.api.js'
 import { posShopOptionsQueryOptions } from '../../api/shops.api.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import { canUsePos } from '../../auth/permissions.js'
@@ -15,6 +15,7 @@ import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
 import { getProductImage, PRODUCT_PLACEHOLDER } from '../../utils/products.js'
 import { getApiErrorMessage } from '../../utils/response.js'
 import { ROUTES } from '../../constants/routes.js'
+import { getOrderPageOptions } from '../Orders/orderFilters.js'
 import PosOrderReceipt from './PosOrderReceipt.jsx'
 import { formatLiveMoneyInput, parseLiveMoneyInput, formatMoneyInput, isValidMoneyInput, parseMoneyInput } from './posMoneyInput.js'
 import { calculatePosPaymentTotals, centsToAmount, money, optionalMoneyCents, POS_PAYMENT_OPTIONS } from './posTotals.js'
@@ -92,8 +93,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const currentDraft = useRef(null)
   const [orderPageId, setOrderPageId] = useState()
   const pagesQuery = useQuery({
-    queryKey: ['pos-order-pages', user?.id, shopId],
-    queryFn: ({ signal }) => getOrderPages({ shop_id: shopId }, { signal }),
+    ...orderPageQueryOptions(user?.id, shopId),
     enabled: shopsReady && !!shopId,
   })
   const draftFingerprint = JSON.stringify({ cart, fields, moneyInputErrors, orderPageId })
@@ -262,8 +262,8 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
           <Select aria-label="Nguồn đơn" placeholder="Chọn nguồn đơn" allowClear showSearch
             optionFilterProp="label" value={orderPageId} onChange={setOrderPageId} disabled={disabled}
             loading={pagesQuery.isFetching} status={pagesQuery.isError ? 'error' : undefined}
-            notFoundContent={pagesQuery.isError ? 'Không thể tải nguồn đơn' : 'Không có nguồn đơn'}
-            options={(pagesQuery.data ?? []).map(({ id, name }) => ({ value: String(id), label: name }))} />
+            notFoundContent={pagesQuery.isLoading ? 'Đang tải...' : pagesQuery.isError ? 'Không thể tải nguồn đơn' : 'Không có nguồn đơn'}
+            options={getOrderPageOptions(pagesQuery.data)} />
           <Input prefix={<SearchOutlined />} value={search} disabled={!shopId || disabled} allowClear onChange={(event) => setSearch(event.target.value)} placeholder="Tên, mã sản phẩm hoặc barcode" aria-label="Tìm sản phẩm POS" /></div>
         {shopsQuery.isError ? <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
           : !shopsReady ? <Spin tip="Đang tải cửa hàng"><Empty description="Đang tải danh sách cửa hàng" /></Spin>

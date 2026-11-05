@@ -4,7 +4,7 @@ import { Avatar, Button, Card, DatePicker, Descriptions, Dropdown, Empty, Input,
 import dayjs from 'dayjs'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getOrders, getOrderPages, getOrderTotals } from '../../api/orders.api.js'
+import { getOrders, getOrderTotals, orderPageQueryOptions } from '../../api/orders.api.js'
 import ShopSelect from '../../components/ShopSelect.jsx'
 import {
   DEFAULT_ORDER_PAGE_SIZE,
@@ -74,14 +74,7 @@ const OrdersPage = ({ origin = 'pancake' }) => {
     staleTime: 30_000,
   })
 
-  const orderPagesQuery = useQuery({
-    queryKey: ['order-pages', draftFilters.shopId ?? null],
-    queryFn: ({ signal }) => getOrderPages({ shop_id: draftFilters.shopId }, { signal }),
-    enabled: Boolean(draftFilters.shopId),
-    // Page snapshots are changed by data sync, not by normal list browsing.
-    // Reusing them avoids an additional request whenever this screen remounts.
-    staleTime: 5 * 60_000,
-  })
+  const orderPagesQuery = useQuery(orderPageQueryOptions(user?.id, draftFilters.shopId))
 
   const orderPageOptions = useMemo(
     () => getOrderPageOptions(orderPagesQuery.data),

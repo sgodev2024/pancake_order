@@ -85,6 +85,7 @@ const mount = async (user = actor(101), options = {}) => {
     calls.push({ url, userId, ...config })
     if (url === '/shops') return { data: { data: await getShops() } }
     const id = Number(config.params?.shop_id)
+    if (url === '/order-pages') return { data: { data: [{ id: 'page-'+id, name: 'Nguồn '+id }] } }
     if (url === '/products') return { data: { data: getProducts ? await getProducts(userId, id, config.signal) : { products: [{ id: id * 10, name: `product-${userId}-${id}`, price: 1000 }], total_items: 1 } } }
     if (url === '/customers') return { data: { data: { customers: [{ id: userId * 100, name: `customer-${userId}`, phone: '0900000000', address: 'TEST' }] } } }
     if (url.startsWith('/orders/')) return { data: { data: { id: 99, origin: 'local_pos', reference: 'POS-99', totals: {}, items: [] } } }
@@ -473,4 +474,18 @@ test('partial transfer prompts for the actual deposit and sends the remaining co
   assert.equal(posts[0][1].confirmed_total, '1000.00')
   assert.equal(posts[0][1].payment_confirmed, true)
   assert.equal(posts[0][1].payment_mode, 'bank_transfer_cod')
+})
+
+test('POS loads order pages for the selected shop and clears the previous source', async () => {
+  await mount(actor(221), { shops: [shopA, shopB] })
+  const source = () => renderer.root.findAllByType('select-control').find((node) => node.props['aria-label'] === 'Nguồn đơn')
+  assert.equal(calls.filter((call) => call.url === '/order-pages').length, 0)
+  await pickShop('7')
+  await settle()
+  assert.deepEqual(source().props.options, [{ value: 'page-7', label: 'Nguồn 7' }])
+  await act(async () => source().props.onChange('page-7'))
+  await pickShop('22')
+  await settle()
+  assert.equal(source().props.value, undefined)
+  assert.deepEqual(source().props.options, [{ value: 'page-22', label: 'Nguồn 22' }])
 })
