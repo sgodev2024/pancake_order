@@ -107,9 +107,10 @@ class ShopController extends Controller implements HasMiddleware
                 ->where('source_rank', 1)
                 ->selectRaw("shop_id, pancake_order_page_id AS id, COALESCE(NULLIF(TRIM(pancake_order_page_name), ''), pancake_order_page_id) AS name")
                 ->orderBy('name')->orderBy('id')->get()->groupBy('shop_id');
+            $sources = app(\App\Services\OrderSourceAliasService::class)->decorate($sources->flatten(1))->groupBy('shop_id');
             foreach ($rows as $shop) {
                 $shop->setAttribute('order_pages', $sources->get($shop->id, collect())->map(
-                    fn ($source) => ['id' => (string) $source->id, 'name' => $source->name]
+                    fn ($source) => array_merge($source, ['id' => (string) $source['id']])
                 )->values());
             }
 

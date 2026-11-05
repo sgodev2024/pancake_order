@@ -12,9 +12,10 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Avatar, Button, Card, DatePicker, Dropdown, Form, Input, InputNumber, Modal, Space, Table, Tag } from 'antd'
+import { App, Alert, Avatar, Button, Card, DatePicker, Dropdown, Form, Input, InputNumber, Modal, Space, Table, Tag } from 'antd'
 import dayjs from 'dayjs'
 import { useMemo, useState } from 'react'
+import apiClient from '../../api/client.js'
 import { createShop, deleteShop, getShops, syncShopData, updateShop } from '../../api/shops.api.js'
 import { getApiErrorMessage } from '../../utils/response.js'
 import { hasPermission, isAdmin } from '../../auth/permissions.js'
@@ -39,6 +40,7 @@ const ShopsPage = () => {
   const canDeleteShop = hasPermission(user, 'delete-shop')
   const isUserAdmin = isAdmin(user)
 
+  const { message } = App.useApp()
   const queryClient = useQueryClient()
   const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS)
   const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
@@ -94,6 +96,20 @@ const ShopsPage = () => {
     setAppliedFilters(EMPTY_FILTERS)
   }
 
+  const [sourceEdit, setSourceEdit] = useState(null)
+  const [sourceAlias, setSourceAlias] = useState('')
+  const aliasMutation = useMutation({
+    mutationFn: () => apiClient.put(`/shops/${sourceEdit.shopId}/source-alias`, { source_id: String(sourceEdit.source.id), alias: sourceAlias }),
+    onSuccess: () => {
+      message.success('Đã lưu tên gợi nhớ.')
+      setSourceEdit(null)
+      for (const key of ['shops', 'order-pages', 'care-segments', 'segment-sources']) {
+        queryClient.invalidateQueries({ queryKey: [key] })
+      }
+    },
+    onError: (error) => message.error(getApiErrorMessage(error, 'Không lưu được tên gợi nhớ.')),
+  })
+
   const columns = [
     { title: 'STT', width: 64, align: 'center', render: (_, __, index) => index + 1 },
     { title: 'Shop_id', dataIndex: 'id', width: 64, align: 'center', render: (value) => value ?? '' },
@@ -107,8 +123,12 @@ const ShopsPage = () => {
       title: 'Nguồn đơn',
       dataIndex: 'order_pages',
       width: 280,
-      render: (sources = []) => sources.length ? <div style={{ maxHeight: 130, overflowY: 'auto', display: 'grid', gap: 8 }}>
-        {sources.map((source) => <div key={source.id}>{renderOrderSourceOption({ value: source.id, label: source.name })}</div>)}
+      render: (sources = [], shop) => sources.length ? <div style={{ maxHeight: 130, overflowY: 'auto', display: 'grid', gap: 8 }}>
+        {sources.map((source) => <div key={source.id}>{renderOrderSourceOption({ value: source.id, label: source.name })}
+          {isUserAdmin && <Button type="link" size="small" icon={<EditOutlined />} onClick={() => {
+            setSourceEdit({ shopId: shop.id, source }); setSourceAlias(source.alias ?? '')
+          }}>Đặt tên gợi nhớ</Button>}
+        </div>)}
       </div> : '—',
     },
     { title: 'Doanh thu (vnđ)', dataIndex: 'total_cod', width: 160, align: 'right', render: formatMoney },
@@ -202,7 +222,15 @@ const ShopsPage = () => {
         </div>
         <p className="shops-summary">Tổng số cửa hàng: <strong>{shops.length}</strong> · Tổng doanh thu: <strong>{formatMoney(totalRevenue)} VNĐ</strong></p>
         <Table className="app-table shops-table" rowKey="id" columns={columns} dataSource={shops} loading={shopsQuery.isLoading || shopsQuery.isFetching} scroll={{ x: 'max-content', y: 'calc(100vh - 390px)' }} pagination={{ pageSize: 30, showSizeChanger: false, position: ['bottomRight'] }} locale={{ emptyText: 'Chưa có cửa hàng' }} />
-      </Card>
+        <Modal open={!!sourceEdit} title="Tên gợi nhớ nguồn đơn" okText="Lưu" cancelText="Hủy"
+        confirmLoading={aliasMutation.isPending} onOk={() => aliasMutation.mutate()} onCancel={() => !aliasMutation.isPending && setSourceEdit(null)}>
+        <p>{sourceEdit?.source.original_name ?? sourceEdit?.source.name}</p>
+        <p>ID: {sourceEdit?.source.id}</p>
+        <label>Tên gợi nhớ</label>
+        <Input maxLength={150} value={sourceAlias} onChange={(event) => setSourceAlias(event.target.value)} placeholder="Ví dụ: Hương Chất · Zalo chính" />
+        <small>Để trống và lưu để bỏ tên gợi nhớ.</small>
+      </Modal>
+    </Card>
       <Modal className="shops-modal" title={editingShop ? 'Cập nhật cửa hàng' : 'Thêm cửa hàng'} open={modalOpen} okText={editingShop ? 'Cập nhật' : 'Đồng ý'} cancelText="Hủy" confirmLoading={saveMutation.isPending} onCancel={() => setModalOpen(false)} onOk={() => form.submit()}>
         <Form form={form} layout="vertical" onFinish={(values) => saveMutation.mutate(values)}>
           {!editingShop && <Form.Item name="api_key" label="API key" rules={[{ required: true, message: 'Vui lòng nhập API key.' }]}><Input.Password placeholder="Nhập API key..." /></Form.Item>}

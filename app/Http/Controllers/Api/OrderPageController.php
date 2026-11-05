@@ -52,7 +52,7 @@ class OrderPageController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $options,
+            'data' => app(\App\Services\OrderSourceAliasService::class)->decorate(collect($options), $shopId),
         ]);
     }
 }

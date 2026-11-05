@@ -200,6 +200,26 @@ class PosOrderTest extends TestCase
         $this->assertStringStartsWith('PK', $export->streamedContent());
     }
 
+    public function test_source_alias_is_admin_only_shop_scoped_and_keeps_original_name(): void
+    {
+        (require database_path('migrations/2026_11_05_000005_create_order_source_aliases.php'))->up();
+        foreach ([$this->shop, $this->otherShop] as $shop) {
+            Order::create(['shop_id' => $shop->id, 'pancake_order_page_id' => 'shared-id', 'pancake_order_page_name' => 'Original']);
+        }
+        $url = '/api/v1/shops/'.$this->shop->id.'/source-alias';
+        $this->putJson($url, ['source_id' => 'shared-id', 'alias' => 'My name'])->assertForbidden();
+        $this->actingAs($this->actor('admin'), 'api');
+        $this->putJson($url, ['source_id' => 'missing', 'alias' => 'Name'])->assertUnprocessable();
+        $this->putJson($url, ['source_id' => 'shared-id', 'alias' => 'My name'])->assertOk();
+        $this->getJson('/api/v1/order-pages?shop_id='.$this->shop->id)->assertOk()
+            ->assertJsonPath('data.0.alias', 'My name')
+            ->assertJsonPath('data.0.original_name', 'Original');
+        $this->getJson('/api/v1/order-pages?shop_id='.$this->otherShop->id)->assertOk()
+            ->assertJsonPath('data.0.name', 'Original')->assertJsonMissingPath('data.0.alias');
+        $this->putJson($url, ['source_id' => 'shared-id', 'alias' => ''])->assertOk();
+        $this->getJson('/api/v1/order-pages?shop_id='.$this->shop->id)->assertOk()->assertJsonPath('data.0.name', 'Original');
+    }
+
     private function runMigration(): void
     {
         (require database_path('migrations/2026_10_21_000001_add_local_pos_support.php'))->up();

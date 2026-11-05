@@ -91,6 +91,7 @@ Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::cl
     Route::post('shops/{shop_id}/get-data-pancake', [ShopController::class, 'getDataPancake']);
 
     Route::apiResource('shops', ShopController::class);
+    Route::put('shops/{shop}/source-alias', [\App\Http\Controllers\Api\OrderSourceAliasController::class, 'update']);
     Route::apiResource('shops.customers', ShopCustomerController::class);
     Route::apiResource('shops.orders', ShopOrderController::class);
     Route::apiResource('shops.users', ShopUserController::class)

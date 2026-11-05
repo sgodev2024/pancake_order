@@ -29,6 +29,7 @@ class CareSegmentService
         $sources = DB::query()->fromSub($sourceRows->toBase(), 'segment_sources')->where('source_rank', 1)
             ->selectRaw("shop_id, pancake_order_page_id AS id, COALESCE(NULLIF(TRIM(pancake_order_page_name), ''), pancake_order_page_id) AS name")
             ->orderBy('name')->orderBy('id')->get();
+        $sources = app(OrderSourceAliasService::class)->decorate($sources);
         if (! empty($filters['sources_only'])) {
             return ['rows' => [], 'products' => [], 'unmatched_orders' => 0, 'sources' => $sources];
         }
