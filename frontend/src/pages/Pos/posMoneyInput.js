@@ -7,7 +7,15 @@ export const formatMoneyInput = (value) => {
   return fraction === undefined ? groupedInteger : `${groupedInteger},${fraction}`
 }
 
-export const parseMoneyInput = (value) => value
-  ?.replace(/\./g, '')
-  .replace(',', '.')
-  .replace(/[^\d.-]/g, '') ?? ''
+const inputText = (value) => String(value ?? '').trim().replace(/\s*[đ₫]$/u, '').trim()
+const MONEY_INPUT = /^(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?$/
+
+export const isValidMoneyInput = (value) => inputText(value) === '' || MONEY_INPUT.test(inputText(value))
+
+export const parseMoneyInput = (value) => {
+  const text = inputText(value)
+  if (text === '') return ''
+  // Do not silently turn malformed input such as "1abc" or "1.2" into a different amount.
+  if (!/^-?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?$/.test(text)) return text
+  return text.replace(/\./g, '').replace(',', '.')
+}

@@ -15,11 +15,11 @@ import { getProductImage, PRODUCT_PLACEHOLDER } from '../../utils/products.js'
 import { getApiErrorMessage } from '../../utils/response.js'
 import { ROUTES } from '../../constants/routes.js'
 import PosOrderReceipt from './PosOrderReceipt.jsx'
-import { formatMoneyInput, parseMoneyInput } from './posMoneyInput.js'
-import { calculatePosTotals, money } from './posTotals.js'
+import { formatMoneyInput, isValidMoneyInput, parseMoneyInput } from './posMoneyInput.js'
+import { calculatePosPaymentTotals, centsToAmount, money, optionalMoneyCents, POS_PAYMENT_OPTIONS } from './posTotals.js'
 import './pos.css'
 
-const INITIAL = { discount_amount: 0, shipping_fee: 0, surcharge: 0, paid_amount: 0, payment_method: 'cash', cod_mode: 'remaining' }
+const INITIAL = { discount_amount: 0, shipping_fee: 0, surcharge: 0, payment_mode: 'cod' }
 const PAGE_SIZE = 18
 
 const PosPage = () => {
@@ -84,8 +84,17 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const [created, setCreated] = useState(null)
   const pendingRequest = useRef(null)
   const [lockedRequest, setLockedRequest] = useState(false)
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false)
+  const [moneyInputErrors, setMoneyInputErrors] = useState({})
   const shopDialog = useRef(null)
-  useEffect(() => () => shopDialog.current?.destroy(), [])
+  const paymentDialog = useRef(null)
+  const currentDraft = useRef(null)
+  const draftFingerprint = JSON.stringify({ cart, fields, moneyInputErrors })
+  useLayoutEffect(() => {
+    currentDraft.current = draftFingerprint
+    return () => { currentDraft.current = null }
+  }, [draftFingerprint])
+  useEffect(() => () => { shopDialog.current?.destroy(); paymentDialog.current?.destroy() }, [])
 
   useEffect(() => {
     const timer = setTimeout(() => { setAppliedSearch(search.trim()); setPage(1) }, 300)
@@ -125,7 +134,9 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
     queryKey: ['order-detail', user?.id, orderId], queryFn: () => getOrder(orderId), enabled: !!orderId,
     retry: false,
   })
-  const totals = useMemo(() => calculatePosTotals(cart, fields), [cart, fields])
+  const totals = useMemo(() => calculatePosPaymentTotals(cart, fields, paymentConfirmed), [cart, fields, paymentConfirmed])
+  const moneyInputError = Object.values(moneyInputErrors).find(Boolean)
+  const totalsError = moneyInputError || totals.error
   const mutation = useMutation({
     mutationFn: (payload) => {
       if (!isCurrentScope()) throw new Error('Danh sách cửa hàng đã thay đổi. Vui lòng kiểm tra lại đơn hàng.')
@@ -150,6 +161,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
       if ([401, 403, 404, 422].includes(status)) {
         pendingRequest.current = null
         setLockedRequest(false)
+        setPaymentConfirmed(false)
       }
       const errors = error?.errors ?? error?.response?.data?.errors
       if (errors) form.setFields(Object.entries(errors).map(([name, messages]) => ({
@@ -161,6 +173,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const disabled = draftLocked || !shopsReady || !shopId
   const resetDraft = () => {
     setCart([]); setCreated(null); pendingRequest.current = null; setLockedRequest(false)
+    setPaymentConfirmed(false); setMoneyInputErrors({})
     form.resetFields(); mutation.reset(); setCustomerSearch(''); setCustomerTerm(''); setSelectedCustomer(null)
   }
   const changeShop = (next) => {
@@ -181,23 +194,43 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   }
   const submit = (values) => {
     if (!isCurrentScope()) return
-    if (mutation.isPending || created) return
+    if (draftLocked || paymentDialog.current || pendingRequest.current) return
     if (!shopId || !cart.length) { message.error('Chọn cửa hàng và thêm sản phẩm vào giỏ.'); return }
-    if (totals.error) { message.error(totals.error); return }
-    if (!pendingRequest.current) {
-      pendingRequest.current = {
-        idempotency_key: crypto.randomUUID(), shop_id: Number(shopId),
-        ...(values.customer_id
-          ? { customer_id: values.customer_id }
-          : { customer: { name: values.customer_name, phone: values.customer_phone } }),
-        shipping_address: values.shipping_address,
-        items: cart.map(({ product_id, quantity, unit_price }) => ({ product_id, quantity, unit_price })),
-        discount_amount: values.discount_amount, shipping_fee: values.shipping_fee, surcharge: values.surcharge,
-        paid_amount: values.paid_amount, payment_method: values.payment_method, cod_mode: values.cod_mode, note: values.note,
-      }
+    const submittedTotals = calculatePosPaymentTotals(cart, values)
+    if (moneyInputError || submittedTotals.error) { message.error(moneyInputError || submittedTotals.error); return }
+    const payload = {
+      idempotency_key: crypto.randomUUID(), shop_id: Number(shopId),
+      ...(values.customer_id
+        ? { customer_id: values.customer_id }
+        : { customer: { name: values.customer_name, phone: values.customer_phone } }),
+      shipping_address: values.shipping_address,
+      items: cart.map(({ product_id, quantity, unit_price }) => ({ product_id, quantity, unit_price })),
+      discount_amount: centsToAmount(submittedTotals.discount), shipping_fee: centsToAmount(submittedTotals.shipping), surcharge: centsToAmount(submittedTotals.surcharge),
+      payment_mode: values.payment_mode ?? 'cod', note: values.note,
     }
-    setLockedRequest(true)
-    mutation.mutate(pendingRequest.current)
+    const send = (confirmed) => {
+      if (!isCurrentScope()) return
+      pendingRequest.current = { ...payload, ...(confirmed ? { payment_confirmed: true, confirmed_total: centsToAmount(submittedTotals.total) } : {}) }
+      setPaymentConfirmed(confirmed)
+      setLockedRequest(true)
+      mutation.mutate(pendingRequest.current)
+    }
+    if (payload.payment_mode === 'cod') { send(false); return }
+    const confirmedDraft = currentDraft.current
+    let accepted = false
+    paymentDialog.current = modal.confirm({
+      title: payload.payment_mode === 'cash' ? 'Xác nhận đã thu đủ tiền mặt' : 'Xác nhận đã nhận đủ chuyển khoản',
+      content: `Số tiền cần xác nhận: ${money(submittedTotals.total / 100)}. Chỉ xác nhận khi bạn đã thực sự nhận đủ tiền.`,
+      okText: 'Đã nhận đủ tiền', cancelText: 'Chưa nhận tiền',
+      onCancel: () => { paymentDialog.current = null },
+      onOk: () => {
+        paymentDialog.current = null
+        if (accepted || !isCurrentScope()) return
+        if (currentDraft.current !== confirmedDraft) { message.error('Đơn hàng đã thay đổi. Vui lòng kiểm tra và xác nhận lại.'); return }
+        accepted = true
+        send(true)
+      },
+    })
   }
 
   if (orderId) return <main className="pos-page"><Card title="Chi tiết đơn hàng" extra={<Button onClick={() => navigate(ROUTES.ORDERS)}>Danh sách đơn</Button>}>
@@ -271,17 +304,23 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
                 <Button aria-label={`Tăng ${item.name}`} disabled={disabled || item.quantity >= 1000000} icon={<PlusOutlined />} onClick={() => setQuantity(item.product_id, item.quantity + 1)} /></Space.Compact>
               <strong>{money(Number(item.unit_price) * item.quantity)}</strong><Button type="text" danger aria-label={`Xóa ${item.name}`} disabled={disabled} icon={<DeleteOutlined />} onClick={() => setCart((items) => items.filter((line) => line.product_id !== item.product_id))} />
             </div>)}</div>
-            <div className="pos-adjustments">{[['discount_amount', 'Giảm giá đơn'], ['shipping_fee', 'Phí vận chuyển thu khách'], ['surcharge', 'Phụ thu'], ['paid_amount', 'Khách đã thanh toán']].map(([name, label]) => <Form.Item key={name} name={name} label={label} rules={[{ required: true }, { type: 'number', min: 0, max: 999999999999.99 }]}><InputNumber className="pos-money-input" min={0} max={999999999999.99} precision={2} formatter={formatMoneyInput} parser={parseMoneyInput} suffix="đ" /></Form.Item>)}</div>
-            <div className="pos-two-fields"><Form.Item name="payment_method" label="Hình thức thanh toán"><Select options={[{ value: 'cash', label: 'Tiền mặt' }, { value: 'bank_transfer', label: 'Chuyển khoản' }]} /></Form.Item>
-              <Form.Item name="cod_mode" label="Thu hộ COD"><Select options={[{ value: 'remaining', label: 'Thu hộ phần còn lại' }, { value: 'none', label: 'Không thu hộ' }]} /></Form.Item></div>
-            <div className="pos-totals" aria-live="polite">{totals.error ? <Alert type="warning" title={totals.error} /> : <>
+            <div className="pos-adjustments">{[['discount_amount', 'Giảm giá đơn'], ['shipping_fee', 'Phí vận chuyển thu khách'], ['surcharge', 'Phụ thu']].map(([name, label]) => <Form.Item key={name} name={name} label={label}
+              validateStatus={moneyInputErrors[name] ? 'error' : undefined} help={moneyInputErrors[name]}
+              rules={[{ validator: (_, value) => optionalMoneyCents(value) === null ? Promise.reject(new Error('Nhập số tiền không âm, tối đa 2 chữ số thập phân.')) : Promise.resolve() }]}>
+              <InputNumber className="pos-money-input" max={999999999999.99} precision={2} formatter={formatMoneyInput} parser={parseMoneyInput} suffix="đ"
+                onInput={(text) => setMoneyInputErrors((errors) => ({ ...errors, [name]: isValidMoneyInput(text) && optionalMoneyCents(parseMoneyInput(text)) !== null ? undefined : 'Nhập số tiền không âm, tối đa 2 chữ số thập phân.' }))} />
+            </Form.Item>)}</div>
+            <Form.Item name="payment_mode" label="Hình thức thanh toán"><Select options={POS_PAYMENT_OPTIONS} /></Form.Item>
+            {fields.payment_mode !== 'cod' && !paymentConfirmed && <Alert type="info" showIcon title="Chỉ ghi nhận đã thanh toán sau khi xác nhận thực sự nhận đủ tiền." />}
+            <div className="pos-totals" aria-live="polite">{totalsError ? <Alert type="warning" title={totalsError} /> : <>
               <div><span>Tiền hàng</span><strong>{money(totals.subtotal / 100)}</strong></div>
               <div className="pos-total"><span>Tổng thanh toán</span><strong>{money(totals.total / 100)}</strong></div>
+              <div><span>Đã thanh toán</span><strong>{money(totals.paid / 100)}</strong></div>
               <div><span>Còn phải thu</span><strong>{money(totals.remaining / 100)}</strong></div>
               <div><span>COD dự kiến</span><strong>{money(totals.cod / 100)}</strong></div>
             </>}</div>
             <Form.Item name="note" label="Ghi chú đơn hàng"><Input.TextArea rows={2} maxLength={5000} /></Form.Item>
-            <Button type="primary" block size="large" htmlType="submit" icon={<ShoppingCartOutlined />} disabled={!shopId || !cart.length || !!totals.error || disabled}>Tạo đơn hàng</Button>
+            <Button type="primary" block size="large" htmlType="submit" icon={<ShoppingCartOutlined />} disabled={!shopId || !cart.length || !!totalsError || disabled}>Tạo đơn hàng</Button>
           </Form>
           {lockedRequest && <Button type="primary" block size="large" loading={mutation.isPending} disabled={mutation.isPending} onClick={() => mutation.mutate(pendingRequest.current)} style={{ marginTop: 12 }}>{mutation.isPending ? 'Đang tạo đơn...' : 'Gửi lại yêu cầu tạo đơn'}</Button>}
         </>}

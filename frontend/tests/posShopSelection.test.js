@@ -22,7 +22,7 @@ const { useShopStore } = await import('../src/stores/shop.store.js')
 const actor = (id, slug = 'staff-sale') => ({ id, role: { slug, permissions: ['list-product', 'list-customer', 'pos-create'].map((slug) => ({ slug })) } })
 const shopA = { id: 7, name: 'Shop A được phân công' }
 const shopB = { id: 22, name: 'Shop B được phân công' }
-const allRequiredValues = { customer_name: 'TEST', customer_phone: '0900000000', shipping_address: 'TEST', discount_amount: 0, shipping_fee: 0, surcharge: 0, paid_amount: 0, payment_method: 'cash', cod_mode: 'remaining' }
+const allRequiredValues = { customer_name: 'TEST', customer_phone: '0900000000', shipping_address: 'TEST', discount_amount: 0, shipping_fee: 0, surcharge: 0, payment_mode: 'cod' }
 const originals = { get: apiClient.get, post: apiClient.post }
 let Page
 let renderer
@@ -323,4 +323,130 @@ test('reading an existing POS order does not fetch shops or start a new sales dr
   await mount(actor(117), { url: '/ban-hang?order_id=99' })
   assert.deepEqual(calls.map((call) => call.url), ['/orders/99'])
   assert.equal(posts.length, 0)
+})
+
+const adjustment = (name) => renderer.root.findAll((node) => node.type === 'form-item-control' && node.props.name === name)[0]
+const setCheckout = async (values) => { await act(async () => form().props.form.setFieldsValue(values)) }
+const successfulOrderApi = () => {
+  apiClient.post = async (url, payload) => {
+    posts.push([url, payload])
+    return { data: { success: true, data: { id: 900, reference: 'POS-TEST', origin: 'local_pos', totals: {}, items: [] } } }
+  }
+}
+
+test('payment form has one three-option select and three optional adjustment fields', async () => {
+  await mount(actor(118))
+  const items = renderer.root.findAllByType('form-item-control')
+  assert.equal(items.some((node) => ['paid_amount', 'cod_mode', 'payment_method'].includes(node.props.name)), false)
+  const payment = items.find((node) => node.props.name === 'payment_mode').findByType('select-control')
+  assert.deepEqual(payment.props.options.map((option) => option.value), ['cash', 'bank_transfer', 'cod'])
+  assert.equal(form().props.form.getFieldsValue().payment_mode, 'cod')
+  for (const name of ['discount_amount', 'shipping_fee', 'surcharge']) {
+    const field = adjustment(name)
+    assert.equal(field.props.rules.some((rule) => rule.required), false)
+    for (const blank of ['', null, undefined]) await field.props.rules[0].validator(null, blank)
+    await assert.rejects(field.props.rules[0].validator(null, -1))
+  }
+  assert.equal(posts.length, 0)
+})
+
+for (const role of ['staff-sale', 'staff-cskh', 'admin']) {
+  for (const mode of ['cash', 'bank_transfer', 'cod']) {
+    test(`${role}: ${mode} with empty adjustments sends only the new contract and cash requires confirmation`, async () => {
+      await mount(actor(120, role))
+      await addProduct()
+      successfulOrderApi()
+      const values = { ...allRequiredValues, payment_mode: mode, discount_amount: '', shipping_fee: null, surcharge: undefined }
+      await setCheckout(values)
+      assert.equal(posts.length, 0)
+      await act(async () => form().props.onFinish(values))
+      if (mode !== 'cod') {
+        assert.equal(posts.length, 0)
+        assert.equal(dialogs.length, 1)
+        assert.match(dialogs[0].content, /1\.000 đ/)
+        assert.equal(dialogs[0].okText, 'Đã nhận đủ tiền')
+        await act(async () => dialogs[0].onOk())
+        await act(async () => dialogs[0].onOk())
+      } else {
+        assert.equal(dialogs.length, 0)
+      }
+      await settle()
+      assert.equal(posts.length, 1)
+      const [url, payload] = posts[0]
+      assert.equal(url, '/orders')
+      assert.equal(payload.payment_mode, mode)
+      for (const name of ['discount_amount', 'shipping_fee', 'surcharge']) assert.equal(payload[name], '0.00')
+      for (const name of ['paid_amount', 'cod_mode', 'payment_method']) assert.equal(name in payload, false)
+      assert.equal(payload.payment_confirmed, mode === 'cod' ? undefined : true)
+      assert.equal(payload.confirmed_total, mode === 'cod' ? undefined : '1000.00')
+    })
+  }
+}
+
+test('cash/transfer cancellation and stale payment confirmation never submit a receipt', async () => {
+  await mount(actor(121))
+  await addProduct()
+  for (const mode of ['cash', 'bank_transfer']) {
+    const values = { ...allRequiredValues, payment_mode: mode }
+    await setCheckout(values)
+    await act(async () => form().props.onFinish(values))
+    await act(async () => dialogs.at(-1).onCancel())
+    assert.equal(posts.length, 0)
+  }
+  const values = { ...allRequiredValues, payment_mode: 'cash' }
+  await setCheckout(values)
+  await act(async () => form().props.onFinish(values))
+  const stale = dialogs.at(-1)
+  await setCheckout({ surcharge: 500 })
+  await act(async () => stale.onOk())
+  assert.equal(posts.length, 0)
+  assert.match(messages.at(-1)[1], /Đơn hàng đã thay đổi/)
+})
+
+test('invalid raw adjustment input blocks submission even if InputNumber retains its previous valid value', async () => {
+  await mount(actor(122))
+  await addProduct()
+  for (const name of ['discount_amount', 'shipping_fee', 'surcharge']) {
+    for (const raw of ['abc', '1abc', '-1', '1,234', '1.2']) {
+      await act(async () => adjustment(name).findByType('number-control').props.onInput(raw))
+      assert.equal(submitButton().props.disabled, true)
+      await act(async () => form().props.onFinish(allRequiredValues))
+      assert.equal(posts.length, 0)
+    }
+    await act(async () => adjustment(name).findByType('number-control').props.onInput(''))
+    assert.equal(submitButton().props.disabled, false)
+  }
+})
+
+test('an old payment confirmation cannot submit after the actor changes', async () => {
+  await mount(actor(123))
+  await addProduct()
+  const values = { ...allRequiredValues, payment_mode: 'bank_transfer' }
+  await setCheckout(values)
+  await act(async () => form().props.onFinish(values))
+  const previous = dialogs.at(-1)
+  await act(async () => useAuthStore.setState({ user: actor(124, 'staff-cskh'), token: 'another-payment-test-session' }))
+  await settle()
+  assert.equal(previous.destroyed, true)
+  await act(async () => previous.onOk())
+  assert.equal(posts.length, 0)
+})
+
+test('an unknown cash submission is retried only on demand with the identical confirmed request', async () => {
+  await mount(actor(125))
+  await addProduct()
+  const values = { ...allRequiredValues, payment_mode: 'cash' }
+  await setCheckout(values)
+  apiClient.post = async (url, payload) => { posts.push([url, payload]); throw new Error('Unknown result') }
+  await act(async () => form().props.onFinish(values))
+  await act(async () => dialogs[0].onOk())
+  await settle()
+  assert.equal(posts.length, 1)
+  assert.equal(submitButton().props.disabled, true)
+  const retry = renderer.root.findAll((node) => node.type === 'button-control' && node.props.children === 'Gửi lại yêu cầu tạo đơn')[0]
+  await act(async () => retry.props.onClick())
+  await settle()
+  assert.equal(posts.length, 2)
+  assert.deepEqual(posts[1], posts[0])
+  assert.equal(dialogs.length, 1)
 })
