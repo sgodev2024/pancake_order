@@ -54,7 +54,8 @@ class ProductPlanOneTest extends TestCase
         Storage::fake('public');
         $this->shop = $this->shop('Assigned');
         $this->otherShop = $this->shop('Other');
-        $this->actor = $this->actor('staff-sale');
+        // Existing catalog write behavior belongs to a non-staff actor.
+        $this->actor = $this->actor('manager-sale');
         $this->actingAs($this->actor, 'api');
     }
 
@@ -255,6 +256,22 @@ class ProductPlanOneTest extends TestCase
         $this->putJson("/api/v1/products/{$id}", ['name' => '', 'selling_price' => -1, 'initial_quantity' => 1.5])
             ->assertUnprocessable()->assertJsonValidationErrors(['name', 'selling_price', 'initial_quantity']);
         $this->assertSame($before, Product::findOrFail($id)->getRawOriginal());
+    }
+
+    public function test_pos_staff_can_read_products_without_catalog_write_access(): void
+    {
+        $id = $this->postJson('/api/v1/products', $this->payload())->assertCreated()->json('data.id');
+        $before = Product::findOrFail($id)->getRawOriginal();
+        foreach (['staff-sale', 'staff-cskh'] as $slug) {
+            $this->actingAs($this->actor($slug), 'api');
+            $this->getJson('/api/v1/products')->assertOk()->assertJsonCount(1, 'data.products');
+            $this->getJson('/api/v1/products/'.$id)->assertOk();
+            $this->postJson('/api/v1/products', $this->payload())->assertForbidden();
+            $this->putJson('/api/v1/products/'.$id, ['selling_price' => 1])->assertForbidden();
+            $this->deleteJson('/api/v1/products/'.$id)->assertForbidden();
+            $this->assertSame($before, Product::findOrFail($id)->getRawOriginal());
+            $this->assertDatabaseCount('products', 1);
+        }
     }
 
     private function payload(array $override = []): array

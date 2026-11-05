@@ -93,6 +93,7 @@ class ProductController extends Controller implements HasMiddleware
 
     public function store(Request $request): JsonResponse
     {
+        $this->authorizeProductWrite($request);
         $validated = $this->validateProduct($request);
 
         $this->shopAccessService->authorizeRequestedShopId($request->user(), $validated['shop_id']);
@@ -108,6 +109,7 @@ class ProductController extends Controller implements HasMiddleware
 
     public function update(Request $request, Product $product): JsonResponse
     {
+        $this->authorizeProductWrite($request);
         $this->authorizeProductAccess($request, $product);
 
         $validated = $this->validateProduct($request, true);
@@ -134,6 +136,7 @@ class ProductController extends Controller implements HasMiddleware
 
     public function destroy(Request $request, Product $product): JsonResponse
     {
+        $this->authorizeProductWrite($request);
         $this->authorizeProductAccess($request, $product);
         $product->delete();
 
@@ -141,6 +144,14 @@ class ProductController extends Controller implements HasMiddleware
             'success' => true,
             'message' => 'Xóa sản phẩm thành công.',
         ]);
+    }
+
+    private function authorizeProductWrite(Request $request): void
+    {
+        // Reading the POS catalog must not also grant staff price/stock administration.
+        if ($request->user()->isStaffSale() || $request->user()->isStaffCskh()) {
+            throw new AuthorizationException('Quyền xem sản phẩm để bán POS không bao gồm quản lý sản phẩm.');
+        }
     }
 
     private function authorizeProductAccess(Request $request, Product $product): void
