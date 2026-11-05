@@ -147,3 +147,13 @@ test('partial bank transfer collects only the balance as COD after receipt confi
     assert.ok(calculatePosPaymentTotals(cart, { ...fields, deposit_amount }, true).error)
   }
 })
+
+test('money input keeps the typed buffer instead of inserting decimals between keystrokes', () => {
+  for (const input of ['7', '70', '700', '7000', '70000', '700000', '', '70.000', '700.000,50']) {
+    const parsed = parseMoneyInput(input)
+    const value = parsed === '' ? null : Number(parsed).toFixed(2)
+    assert.equal(formatMoneyInput(value, { userTyping: true, input }), input)
+  }
+  assert.equal(formatMoneyInput('700000.00', { userTyping: false, input: '700000' }), '700.000,00')
+  assert.equal(parseMoneyInput('700.000,50'), '700000.50')
+})

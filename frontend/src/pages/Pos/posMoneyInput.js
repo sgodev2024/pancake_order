@@ -1,4 +1,8 @@
-export const formatMoneyInput = (value) => {
+export const formatMoneyInput = (value, { userTyping = false, input } = {}) => {
+  // Keep the raw edit buffer and caret stable. InputNumber can supply a value
+  // already padded to precision=2 while the operator is still typing.
+  if (userTyping && typeof input === 'string') return input
+
   if (value === null || value === undefined || value === '') return ''
 
   const [integer, fraction] = String(value).split('.')

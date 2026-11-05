@@ -321,7 +321,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
                 const total = calculatePosPaymentTotals(cart, { ...fields, payment_mode: 'cod' }).total
                 return amount !== null && amount > 0 && amount < total ? Promise.resolve() : Promise.reject(new Error('Số tiền phải lớn hơn 0 và nhỏ hơn tổng thanh toán.'))
               } }]}>
-              <InputNumber className="pos-money-input" min={0} max={999999999999.99} precision={2} formatter={formatMoneyInput} parser={parseMoneyInput} suffix="đ" />
+              <InputNumber className="pos-money-input" style={{ width: '100%' }} min={0} max={999999999999.99} precision={2} formatter={formatMoneyInput} parser={parseMoneyInput} suffix="đ" />
             </Form.Item>}
             {fields.payment_mode !== 'cod' && !paymentConfirmed && <Alert type="info" showIcon title="Chỉ ghi nhận đã thanh toán sau khi xác nhận số tiền thực nhận." />}
             <div className="pos-totals" aria-live="polite">{totalsError ? <Alert type="warning" title={totalsError} /> : <>
