@@ -11,6 +11,7 @@ import DonutChart from '../../components/DonutChart.jsx'
 import { ROUTES } from '../../constants/routes.js'
 import { getApiErrorMessage } from '../../utils/response.js'
 import { createEmptyOrderFilters, normalizeOrderFilters } from '../Orders/orderFilters.js'
+import { orderValues, withOrderValues } from './orderValues.js'
 import './reports-overview.css'
 
 const numberFormatter = new Intl.NumberFormat('vi-VN')
@@ -19,7 +20,7 @@ const number = (value) => numberFormatter.format(Number(value) || 0)
 const money = (value) => moneyFormatter.format(Number(value) || 0)
 const period = (from, to) => (from && to ? `${dayjs(from).format('DD/MM/YYYY')} – ${dayjs(to).format('DD/MM/YYYY')}` : '')
 
-const ORDER_PARAMS = normalizeOrderFilters(createEmptyOrderFilters())
+const ORDER_PARAMS = withOrderValues(normalizeOrderFilters(createEmptyOrderFilters()))
 const LATEST_WEEK = { week_mode: 'latest' }
 const queryOptions = { staleTime: 60_000, refetchOnWindowFocus: false }
 
@@ -35,7 +36,7 @@ const revenueSlices = (items, totalRevenue) => {
   const leaders = [...items].sort((left, right) => Number(right.revenue || 0) - Number(left.revenue || 0)).slice(0, 5)
   const other = Math.max(0, totalRevenue - leaders.reduce((sum, item) => sum + (Number(item.revenue) || 0), 0))
   return [
-    ...leaders.map((item) => ({ key: item.name, label: item.name, value: Number(item.revenue) || 0 })),
+    ...leaders.map((item, index) => ({ key: `product-${index}-${item.name}`, label: item.name, value: Number(item.revenue) || 0 })),
     ...(other > 0 ? [{ key: 'other', label: 'Sản phẩm khác', value: other }] : []),
   ].filter((slice) => slice.value > 0)
 }
@@ -125,8 +126,8 @@ const RevenueBars = ({ items }) => {
   const max = Math.max(...items.map((item) => Number(item.revenue) || 0), 1)
   return (
     <div className="ov-bars">
-      {items.map((item) => (
-        <div key={item.name}>
+      {items.map((item, index) => (
+        <div key={`product-${index}-${item.name}`}>
           <span title={item.name}>{item.name}</span>
           <span className="ov-bars__track">
             <span style={{ width: `${((Number(item.revenue) || 0) / max) * 100}%` }} />
@@ -153,7 +154,7 @@ const ChartCard = ({ title, note, action, children }) => (
 
 const ReportsOverviewPage = () => {
   const todayDate = dayjs().format('YYYY-MM-DD')
-  const todayOrderParams = useMemo(() => ({
+  const todayOrderParams = useMemo(() => withOrderValues({
     date_from: todayDate,
     date_to: todayDate,
   }), [todayDate])
@@ -171,24 +172,22 @@ const ReportsOverviewPage = () => {
   const careQuery = useQuery({ queryKey: ['overview'], queryFn: getOverview, ...queryOptions })
   const productQuery = useQuery({
     queryKey: ['product-sales', LATEST_WEEK],
-    queryFn: () => getProductSales(LATEST_WEEK),
+    queryFn: ({ signal }) => getProductSales(LATEST_WEEK, { signal }),
     ...queryOptions,
   })
   const monthlyQtyQuery = useQuery({
     queryKey: ['product-monthly-quantities'],
-    queryFn: () => getProductMonthlyQuantities(),
+    queryFn: ({ signal }) => getProductMonthlyQuantities({}, { signal }),
     ...queryOptions,
   })
 
   const todayOrders = todayOrderQuery.data ?? {}
-  const todayCod = Number(todayOrders.total_revenue) || 0
-  const todayPrepaid = Number(todayOrders.total_prepaid_amount) || 0
+  const { cod: todayCod, prepaid: todayPrepaid, total: todayTotal } = orderValues(todayOrders)
 
   const orders = orderQuery.data ?? {}
   const care = careQuery.data ?? {}
   const product = productQuery.data ?? {}
-  const cod = Number(orders.total_revenue) || 0
-  const prepaid = Number(orders.total_prepaid_amount) || 0
+  const { cod, prepaid } = orderValues(orders)
   const productItems = product.items ?? []
   const revenueItems = [...productItems].sort((left, right) => Number(right.revenue || 0) - Number(left.revenue || 0)).slice(0, 8)
   const productPeriod = period(product.from, product.to)
@@ -205,7 +204,7 @@ const ReportsOverviewPage = () => {
 
       <section className="ov-kpis">
         {todayOrderQuery.isLoading ? <Skeleton active /> : (
-          <Kpi to={ROUTES.ORDER_REPORT} label="Tổng giá trị đơn hôm nay" value={money(todayCod + todayPrepaid)} note={`${number(todayOrders.total_items)} đơn`}>
+          <Kpi to={ROUTES.ORDER_REPORT} label="Tổng giá trị đơn hôm nay" value={money(todayTotal)} note={`${number(todayOrders.total_items)} đơn`}>
             <ul>
               <li><span>COD</span><b>{money(todayCod)}</b></li>
               <li><span>Trả trước</span><b>{money(todayPrepaid)}</b></li>

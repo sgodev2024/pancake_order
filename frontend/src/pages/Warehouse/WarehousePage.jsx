@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, App, Button, Card, Descriptions, Empty, Input, Modal, Result, Space, Spin, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useState } from 'react'
-import { completePacking, getWarehouseOrder, getWarehouseOrders } from '../../api/warehouse.api.js'
+import { completePacking, createViettelPostShipment, getWarehouseOrder, getWarehouseOrders } from '../../api/warehouse.api.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import { canPackOrders, canViewWarehouse } from '../../auth/permissions.js'
 import ShopSelect from '../../components/ShopSelect.jsx'
@@ -12,6 +12,8 @@ import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
 import { getOrderStatus } from '../../constants/order.js'
 import { getApiErrorMessage, isPermissionError } from '../../utils/response.js'
 import './warehouse.css'
+import { ShipmentButton, ShipmentStatus } from './ViettelPostShipment.jsx'
+import { shipmentConfirmation } from './shipmentConfirmation.js'
 
 const dateTime = (value) => value ? dayjs(value).format('DD/MM/YYYY HH:mm:ss') : '—'
 const sourceTag = (order) => order.origin === 'local_pos' ? null : <Tag color="purple">Pancake</Tag>
@@ -56,6 +58,19 @@ const WarehousePage = () => {
     },
   })
   const configuration = list.data?.module
+  const shippingMode = list.data?.shipping?.mode ?? 'mock'
+  const refreshShipping = () => {
+    client.invalidateQueries({ queryKey: ['warehouse-orders'] })
+    client.invalidateQueries({ queryKey: ['warehouse-order'] })
+    client.invalidateQueries({ queryKey: ['orders'] })
+    client.invalidateQueries({ queryKey: ['order-detail'] })
+  }
+  const shipment = useMutation({
+    mutationFn: createViettelPostShipment, retry: false,
+    onSuccess: (response) => { message.success(response.message); refreshShipping() },
+    onError: (error) => { message.error(getApiErrorMessage(error, 'Không thể tạo vận đơn.')); refreshShipping() },
+  })
+  const confirmShipment = (order) => modal.confirm(shipmentConfirmation(order, shippingMode, () => shipment.mutateAsync(order.id)))
   const confirmPacking = (order) => modal.confirm({
     title: `Hoàn tất đóng hàng đơn ${order.reference}?`,
     content: 'Xác nhận đã kiểm tra đủ sản phẩm, số lượng và đóng gói thực tế. Thao tác này không xác nhận giao hàng hay thanh toán.',
@@ -89,14 +104,20 @@ const WarehousePage = () => {
     ...(status === 'packed' ? [
       { title: 'Người đóng hàng', key: 'packer', width: 160, render: (_, order) => <SingleLineTooltip value={order.packed_by?.name || `ID ${order.packed_by_user_id}`} /> },
       { title: 'Hoàn tất lúc', dataIndex: 'packed_at', width: 180, render: dateTime },
+      { title: 'Vận đơn Viettel Post', key: 'shipment', width: 250, render: (_, order) => <ShipmentStatus order={order} /> },
     ] : [{ title: 'Ngày tạo gốc', key: 'created', width: 180, render: (_, order) => dateTime(order.origin === 'local_pos' ? order.created_at : order.source_created_at) }]),
-    { title: 'Thao tác', key: 'actions', width: 220, fixed: 'right', render: (_, order) => <Space size={8}>
+    { title: 'Thao tác', key: 'actions', width: status === 'packed' ? 420 : 220, fixed: 'right', render: (_, order) => <Space size={8}>
       <Button icon={<EyeOutlined />} onClick={() => { pack.reset(); setSelectedId(order.id) }}>Chi tiết</Button>
       {status === 'waiting_packing' && canPack && <Button type="primary" disabled={!configuration?.enabled || pack.isPending} onClick={() => confirmPacking(order)}>Hoàn tất</Button>}
+      <ShipmentButton order={order} allowed={canPack} pending={shipment.isPending} mode={shippingMode} onCreate={confirmShipment} />
     </Space> },
   ]
   const order = detail.data
   return <main className="warehouse-page"><Card title="Quản lý Kho" extra={<Button icon={<ReloadOutlined />} onClick={() => list.refetch()} loading={list.isFetching}>Tải lại</Button>}>
+    {status === 'packed' && <Alert className="warehouse-alert" showIcon type={shippingMode === 'live' ? 'warning' : 'info'} title={shippingMode === 'live'
+      ? (list.data?.shipping?.live_enabled && list.data?.shipping?.live_creation_enabled ? 'AICRM Live · Tạo vận đơn thật cho đơn được phê duyệt' : 'AICRM Live · Tạo vận đơn thật đang tắt')
+      : shippingMode !== 'sandbox' ? 'Vận đơn đang ở chế độ Mock trên Local' : 'Vận đơn đang ở chế độ AICRM Sandbox'}
+      description="Tạo vận đơn bằng nút xác nhận của từng đơn. Nếu chưa rõ kết quả gửi, cần đối soát trước khi thử lại." />}
     {configuration && !configuration.enabled && <Alert className="warehouse-alert" type={configuration.configuration_valid ? 'info' : 'warning'} showIcon
       title={configuration.configuration_valid ? 'Module Kho đang tắt' : 'Thời điểm kích hoạt Kho chưa hợp lệ'}
       description={configuration.activated_at ? `Dự kiến kích hoạt: ${dateTime(configuration.activated_at)}. Đơn cũ không tự đưa vào Kho.` : 'Chưa kích hoạt chính thức. Không có đơn lịch sử hoặc đơn mẫu được tự đưa vào hàng đợi.'} />}
@@ -110,7 +131,8 @@ const WarehousePage = () => {
       pagination={{ current: page, pageSize, total: list.data?.total_items ?? 0, showSizeChanger: false, onChange: setPage, showTotal: (total) => `${total} đơn hàng` }}
       locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={configuration?.enabled ? 'Không có đơn phù hợp' : 'Kho chưa được kích hoạt'} /> }} />
     <Modal open={!!selectedId} title={order ? `Đơn ${order.reference}` : 'Chi tiết đơn Kho'} width={820} onCancel={() => setSelectedId(null)} footer={
-      <Space><Button onClick={() => setSelectedId(null)}>Đóng</Button>{canPack && order?.warehouse_status === 'waiting_packing' && <Button type="primary" disabled={detail.isError || !configuration?.enabled} loading={pack.isPending} onClick={() => confirmPacking(order)}>Hoàn tất đóng hàng</Button>}</Space>
+      <Space><Button onClick={() => setSelectedId(null)}>Đóng</Button>{canPack && order?.warehouse_status === 'waiting_packing' && <Button type="primary" disabled={detail.isError || !configuration?.enabled} loading={pack.isPending} onClick={() => confirmPacking(order)}>Hoàn tất đóng hàng</Button>}
+        {!detail.isError && order && <ShipmentButton order={order} allowed={canPack} pending={shipment.isPending} mode={shippingMode} onCreate={confirmShipment} />}</Space>
     }>
       {detail.isFetching ? <Spin /> : detail.isError ? <QueryErrorAlert error={detail.error} onRetry={detail.refetch} /> : order && <>
         <Space style={{ marginBottom: 16 }}>{sourceTag(order)}<Tag color={order.warehouse_status === 'packed' ? 'green' : 'gold'}>{order.warehouse_status === 'packed' ? 'Đã đóng hàng' : 'Chờ đóng hàng'}</Tag></Space>
@@ -126,6 +148,7 @@ const WarehousePage = () => {
           ...(order.packed_at ? [{ key: 'packed', label: 'Hoàn tất đóng hàng', children: `${order.packed_by?.name || 'ID '+order.packed_by_user_id} · ${dateTime(order.packed_at)}` }] : []),
         ]} />
         <div className="warehouse-detail-products"><ProductCell products={order.items} /></div>
+        {order.warehouse_status === 'packed' && <><Typography.Title level={5}>Vận đơn Viettel Post</Typography.Title><ShipmentStatus order={order} history /></>}
         {!!order.history?.length && <><Typography.Title level={5}>Lịch sử thao tác</Typography.Title><Timeline items={order.history.map((event) => ({ key: event.id,
           content: `${event.action === 'warehouse.packed' ? 'Hoàn tất đóng hàng' : 'Loại khỏi hàng đợi'} · ${event.actor_name || 'Hệ thống'} · ${dateTime(event.created_at)}` }))} /></>}
       </>}

@@ -6,10 +6,11 @@ export const SHOP_OPTIONS_STALE_TIME = 5 * 60_000
 export const shopQueryKeys = {
   all: ['shops'],
   options: () => ['shops', 'options'],
+  posOptions: (userId) => ['shops', 'options', 'pos', userId],
 }
 
-export const getShops = async (params = {}) => {
-  const response = await apiClient.get(API_ROUTES.SHOPS, { params })
+export const getShops = async (params = {}, { signal } = {}) => {
+  const response = await apiClient.get(API_ROUTES.SHOPS, { params, ...(signal ? { signal } : {}) })
   return response.data.data ?? []
 }
 
@@ -47,4 +48,18 @@ export const shopOptionsQueryOptions = () => ({
   retry: 1,
   refetchOnWindowFocus: false,
   refetchOnMount: true,
+})
+
+// A POS draft must verify the current actor's scope on entry and on returning to the tab.
+export const posShopOptionsQueryOptions = (userId) => ({
+  queryKey: shopQueryKeys.posOptions(userId),
+  queryFn: async ({ signal }) => {
+    const shops = await getShops({ view: 'summary' }, { signal })
+    if (!Array.isArray(shops)) throw new Error('Danh sách cửa hàng không hợp lệ.')
+    return shops
+  },
+  staleTime: 0,
+  retry: 1,
+  refetchOnMount: 'always',
+  refetchOnWindowFocus: true,
 })

@@ -457,8 +457,24 @@ SQL;
             'warehouse_status', 'warehouse_queued_at',
         ]) && Schema::hasColumn('products', 'virtual_stock'), 503,
             'Chức năng POS chưa sẵn sàng. Cần áp dụng migration POS trước khi tạo đơn.');
+        $adjustments = [];
+        foreach (['discount_amount', 'shipping_fee', 'surcharge'] as $field) {
+            $value = $request->input($field);
+            if ($value === null || (is_string($value) && trim($value) === '')) {
+                $adjustments[$field] = 0;
+            }
+        }
+        $request->merge($adjustments);
+        $simplifiedPayment = $request->has('payment_mode');
+        $needsConfirmation = in_array($request->input('payment_mode'), ['cash', 'bank_transfer'], true);
         $money = ['numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'];
         $data = $request->validate([
+            'user_id' => ['prohibited'],
+            'created_by_user_id' => ['prohibited'],
+            'user_creator_id' => ['prohibited'],
+            'user_assigning_seller_id' => ['prohibited'],
+            'role_id' => ['prohibited'],
+            'permissions' => ['prohibited'],
             'idempotency_key' => ['required', 'uuid'],
             'shop_id' => ['required', 'integer', Rule::exists('shops', 'id')->whereNull('deleted_at')],
             'customer_id' => ['nullable', 'integer', 'prohibits:customer'],
@@ -475,9 +491,13 @@ SQL;
             'discount_amount' => ['sometimes', 'required', ...$money],
             'shipping_fee' => ['sometimes', 'required', ...$money],
             'surcharge' => ['sometimes', 'required', ...$money],
-            'paid_amount' => ['sometimes', 'required', ...$money],
-            'payment_method' => ['sometimes', 'required', Rule::in(['cash', 'bank_transfer'])],
-            'cod_mode' => ['sometimes', 'required', Rule::in(['remaining', 'none'])],
+            // Legacy clients retain partial payments. The new mode derives all paid/COD amounts server-side.
+            'paid_amount' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), ...$money],
+            'payment_method' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), Rule::in(['cash', 'bank_transfer'])],
+            'cod_mode' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), Rule::in(['remaining', 'none'])],
+            'payment_mode' => ['sometimes', 'required', Rule::in(['cash', 'bank_transfer', 'cod'])],
+            'payment_confirmed' => [Rule::requiredIf($needsConfirmation), Rule::prohibitedIf(! $simplifiedPayment), 'boolean'],
+            'confirmed_total' => [Rule::requiredIf($needsConfirmation), Rule::prohibitedIf(! $needsConfirmation), ...$money],
             'note' => ['nullable', 'string', 'max:5000'],
         ]);
         $order = $service->createLocalOrder($user, $data);

@@ -1,8 +1,8 @@
 import { App, Button, Form, Input } from 'antd'
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { getMe, login } from '../../api/auth.api.js'
-import { useAuthStore } from '../../auth/auth.store.js'
+import { login } from '../../api/auth.api.js'
+import { isSessionSuperseded, useAuthStore } from '../../auth/auth.store.js'
 
 import { ROUTES } from '../../constants/routes.js'
 import { getApiErrorMessage } from '../../utils/response.js'
@@ -18,23 +18,22 @@ const LoginPage = () => {
   const { message } = App.useApp()
   const navigate = useNavigate()
   const location = useLocation()
-  const setSession = useAuthStore((state) => state.setSession)
+  const completeSession = useAuthStore((state) => state.completeSession)
   const clearSession = useAuthStore((state) => state.clearSession)
+  const beginSessionAttempt = useAuthStore((state) => state.beginSessionAttempt)
+  const isCurrentSessionAttempt = useAuthStore((state) => state.isCurrentSessionAttempt)
 
   const handleSubmit = async (values) => {
     if (submitting) return
     setSubmitting(true)
+    const attempt = beginSessionAttempt()
 
     try {
       const result = await login(values)
       if (!result.access_token) throw new Error('Phản hồi đăng nhập không có access token.')
 
       const requirePasswordChange = result.require_password_change === true
-      setSession({
-        token: result.access_token,
-        user: result.user,
-        requirePasswordChange,
-      })
+      const user = await completeSession(result, { attempt })
 
       if (requirePasswordChange) {
         message.info(result.message || 'Vui lòng cập nhật mật khẩu để tiếp tục.')
@@ -42,11 +41,10 @@ const LoginPage = () => {
         return
       }
 
-      const user = await getMe()
-      setSession({ token: result.access_token, user, requirePasswordChange: false })
       message.success(result.message || 'Đăng nhập thành công')
       navigate(getPostLoginRoute(user, location.state?.from), { replace: true })
     } catch (error) {
+      if (isSessionSuperseded(error) || !isCurrentSessionAttempt(attempt)) return
       clearSession()
       message.error(getApiErrorMessage(error, 'Đăng nhập không thành công.'))
     } finally {

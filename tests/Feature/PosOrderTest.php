@@ -12,6 +12,7 @@ use App\Models\Role;
 use App\Models\RolePermission;
 use App\Models\Shop;
 use App\Models\User;
+use App\Services\AicrmOrderPayload;
 use App\Services\OrderCreatedEventWriter;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -80,6 +81,7 @@ class PosOrderTest extends TestCase
         $this->actor = $this->actor('staff-sale');
         $this->local = $this->product('Local', null, 250000, 20);
         $this->synced = $this->product('Pancake', 'upstream-variation', 100000, 5);
+        (require database_path('migrations/2026_11_04_000001_create_staff_account_states_table.php'))->up();
         $this->actingAs($this->actor, 'api');
         Http::preventStrayRequests();
         Queue::fake();
@@ -365,6 +367,245 @@ class PosOrderTest extends TestCase
         }
         $this->assertDatabaseCount('orders', 1);
         Http::assertNothingSent();
+    }
+
+    public function test_staff_pos_migration_is_minimal_idempotent_and_keeps_existing_roles(): void
+    {
+        $cskh = $this->actor('staff-cskh', false);
+        $manager = $this->actor('manager-cskh');
+        $admin = $this->actor('admin');
+        $warehouse = $this->actor('warehouse-local-test');
+        (require database_path('migrations/2026_10_22_000001_add_explicit_pos_permission.php'))->up();
+        $untouched = DB::table('role_permissions')->whereIn('role_id', [$admin->role_id, $warehouse->role_id])
+            ->orderBy('id')->get()->toJson();
+        $rolesBefore = DB::table('roles')->orderBy('id')->get()->toJson();
+        $migration = require database_path('migrations/2026_11_04_000004_enable_staff_pos_permissions.php');
+        $migration->up();
+        $once = DB::table('role_permissions')->orderBy('id')->get()->toJson();
+        $migration->up();
+        $this->assertSame($once, DB::table('role_permissions')->orderBy('id')->get()->toJson());
+        $this->assertSame($rolesBefore, DB::table('roles')->orderBy('id')->get()->toJson());
+        $this->assertSame($untouched, DB::table('role_permissions')->whereIn('role_id', [$admin->role_id, $warehouse->role_id])
+            ->orderBy('id')->get()->toJson());
+        $this->assertSame(['list-customer', 'list-product'], $this->actor->role->permissions()->pluck('slug')->sort()->values()->all());
+        foreach ([$cskh, $manager] as $actor) {
+            $this->assertSame(['list-customer', 'list-product', 'pos-create'], $actor->role->permissions()->pluck('slug')->sort()->values()->all());
+        }
+        foreach ([$this->actor, $cskh, $manager, $admin] as $actor) {
+            $this->actingAs($actor, 'api');
+            $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->assertJsonPath('data.created_by_user_id', $actor->id);
+            $this->postJson('/api/v1/orders', $this->payload(['shop_id' => $this->otherShop->id]))
+                ->assertStatus($actor->isAdmin() ? 422 : 403);
+        }
+        $this->assertDatabaseCount('orders', 4);
+        Http::assertNothingSent();
+    }
+
+    public function test_staff_pos_migration_rolls_back_all_grants_when_required_role_is_missing(): void
+    {
+        $this->actor('staff-cskh', false);
+        (require database_path('migrations/2026_10_22_000001_add_explicit_pos_permission.php'))->up();
+        $before = DB::table('role_permissions')->orderBy('id')->get()->toJson();
+        try {
+            (require database_path('migrations/2026_11_04_000004_enable_staff_pos_permissions.php'))->up();
+            $this->fail('Missing manager-cskh must fail the entire permission migration.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('manager-cskh', $exception->getMessage());
+        }
+        $this->assertSame($before, DB::table('role_permissions')->orderBy('id')->get()->toJson());
+    }
+
+    public function test_staff_cskh_pos_grant_does_not_expand_customer_scope_or_accept_forged_creator(): void
+    {
+        $cskh = $this->actor('staff-cskh');
+        (require database_path('migrations/2026_10_22_000001_add_explicit_pos_permission.php'))->up();
+        RolePermission::create(['role_id' => $cskh->role_id, 'permission_id' => Permission::where('slug', 'pos-create')->sole()->id]);
+        $own = $this->customer($this->shop, $cskh);
+        $private = $this->customer($this->shop, $this->actor);
+        $this->actingAs($cskh, 'api');
+        $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->shop->id)->assertOk()
+            ->assertJsonCount(1, 'data.customers')->assertJsonPath('data.customers.0.id', $own->id);
+        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $private->id]))->assertForbidden();
+        foreach (['user_id', 'created_by_user_id', 'user_creator_id', 'user_assigning_seller_id', 'role_id', 'permissions'] as $field) {
+            $this->postJson('/api/v1/orders', $this->payload([$field => $field === 'permissions' ? ['pos-create'] : 1]))
+                ->assertUnprocessable()->assertJsonValidationErrors($field);
+        }
+        $this->assertDatabaseCount('orders', 0);
+        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $own->id]))->assertCreated()
+            ->assertJsonPath('data.created_by_user_id', $cskh->id)->assertJsonPath('data.customer_id', $own->id);
+        Http::assertNothingSent();
+    }
+
+    public function test_simplified_payment_modes_work_for_sale_cskh_and_admin_with_authoritative_cod(): void
+    {
+        $cskh = $this->actor('staff-cskh');
+        (require database_path('migrations/2026_10_22_000001_add_explicit_pos_permission.php'))->up();
+        RolePermission::create(['role_id' => $cskh->role_id, 'permission_id' => Permission::where('slug', 'pos-create')->sole()->id]);
+        $admin = $this->actor('admin');
+        config(['aicrm.mode' => 'mock', 'aicrm.shipping_provider_id' => 42,
+            'warehouse.activated_at' => now()->subDay()->toIso8601String()]);
+        foreach ([$this->actor, $cskh, $admin] as $actor) {
+            $this->actingAs($actor, 'api');
+            foreach (['cash', 'bank_transfer', 'cod'] as $mode) {
+                $input = $this->simplePaymentPayload($mode, [
+                    'discount_amount' => 10000, 'shipping_fee' => 30000, 'surcharge' => 5000,
+                ]);
+                if ($mode !== 'cod') {
+                    $input += ['payment_confirmed' => true, 'confirmed_total' => '525000.00'];
+                }
+                $paid = $mode === 'cod' ? '0.00' : '525000.00';
+                $cod = $mode === 'cod' ? '525000.00' : '0.00';
+                $id = $this->postJson('/api/v1/orders', $input)->assertCreated()
+                    ->assertJsonPath('data.created_by_user_id', $actor->id)
+                    ->assertJsonPath('data.totals.total_amount', '525000.00')
+                    ->assertJsonPath('data.totals.paid_amount', $paid)
+                    ->assertJsonPath('data.totals.remaining_amount', $cod)
+                    ->assertJsonPath('data.totals.expected_cod', $cod)->json('data.id');
+                $order = Order::findOrFail($id);
+                $this->assertSame('waiting_packing', $order->warehouse_status);
+                $this->assertNotNull($order->warehouse_queued_at);
+                $this->assertEquals($paid, $order->cash);
+                $this->assertEquals($cod, $order->cod);
+                $this->assertSame($mode, $order->pancake_full_data['payment_mode']);
+                if ($mode === 'cod') {
+                    $this->assertSame([], $order->pancake_full_data['payments']);
+                    $this->assertFalse($order->pancake_full_data['payment_confirmed']);
+                } else {
+                    $this->assertSame($mode, $order->pancake_full_data['payments'][0]['method']);
+                    $this->assertSame($actor->id, $order->pancake_full_data['payments'][0]['recorded_by_user_id']);
+                }
+                // Payload formatting only. No shipment creation or external HTTP.
+                $shipping = app(AicrmOrderPayload::class)->make($order);
+                $this->assertEquals(525000, $shipping['totalPrice']);
+                $this->assertEquals($cod, $shipping['moneyCollection']);
+                $this->postJson('/api/v1/orders', $input)->assertOk()
+                    ->assertJsonPath('replayed', true)->assertJsonPath('data.id', $id);
+            }
+        }
+        $this->assertDatabaseCount('orders', 9);
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
+    }
+
+    public function test_full_receipt_requires_explicit_confirmation_and_matching_server_total_without_writes(): void
+    {
+        foreach (['cash', 'bank_transfer'] as $mode) {
+            foreach ([[], ['payment_confirmed' => false, 'confirmed_total' => 500000],
+                ['payment_confirmed' => true], ['payment_confirmed' => true, 'confirmed_total' => 1],
+                ['payment_confirmed' => true, 'confirmed_total' => 500001],
+            ] as $confirmation) {
+                $this->postJson('/api/v1/orders', $this->simplePaymentPayload($mode, $confirmation))->assertUnprocessable();
+            }
+        }
+        $changedPrice = $this->simplePaymentPayload('cash', ['payment_confirmed' => true, 'confirmed_total' => 500000]);
+        unset($changedPrice['items'][0]['unit_price']);
+        $this->local->update(['pancake_full_data' => ['retail_price' => 300000, 'remain_quantity' => 20]]);
+        $this->postJson('/api/v1/orders', $changedPrice)->assertUnprocessable()->assertJsonValidationErrors('confirmed_total');
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('customers', 0);
+        $this->assertNull($this->local->fresh()->virtual_stock);
+        Http::assertNothingSent();
+    }
+
+    public function test_simplified_payment_cannot_mix_legacy_amounts_or_claim_cod_was_received(): void
+    {
+        foreach (['cash', 'bank_transfer', 'cod'] as $mode) {
+            $base = $this->simplePaymentPayload($mode);
+            if ($mode !== 'cod') {
+                $base += ['payment_confirmed' => true, 'confirmed_total' => 500000];
+            }
+            foreach (['paid_amount' => 1, 'payment_method' => 'cash', 'cod_mode' => 'none'] as $field => $value) {
+                $this->postJson('/api/v1/orders', $base + [$field => $value])
+                    ->assertUnprocessable()->assertJsonValidationErrors($field);
+            }
+        }
+        $this->postJson('/api/v1/orders', $this->simplePaymentPayload('cod', ['payment_confirmed' => true]))->assertUnprocessable();
+        $this->postJson('/api/v1/orders', $this->simplePaymentPayload('cod', ['confirmed_total' => 500000]))->assertUnprocessable();
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('customers', 0);
+    }
+
+    public function test_empty_adjustments_are_zero_for_all_new_modes_and_legacy_partial_payment(): void
+    {
+        foreach (['cash', 'bank_transfer', 'cod'] as $mode) {
+            foreach ([['', null, '  '], [null, '', null]] as [$discount, $shipping, $surcharge]) {
+                $input = $this->simplePaymentPayload($mode, [
+                    'discount_amount' => $discount, 'shipping_fee' => $shipping, 'surcharge' => $surcharge,
+                ]);
+                if ($mode !== 'cod') {
+                    $input += ['payment_confirmed' => true, 'confirmed_total' => 500000];
+                }
+                $this->postJson('/api/v1/orders', $input)->assertCreated()
+                    ->assertJsonPath('data.totals.discount_amount', '0.00')
+                    ->assertJsonPath('data.totals.shipping_fee', '0.00')
+                    ->assertJsonPath('data.totals.surcharge', '0.00')
+                    ->assertJsonPath('data.totals.total_amount', '500000.00');
+            }
+        }
+        $this->postJson('/api/v1/orders', $this->payload([
+            'discount_amount' => '', 'shipping_fee' => null, 'surcharge' => '', 'paid_amount' => 100000,
+        ]))->assertCreated()->assertJsonPath('data.totals.paid_amount', '100000.00')
+            ->assertJsonPath('data.totals.expected_cod', '400000.00');
+        Http::assertNothingSent();
+    }
+
+    public function test_optional_adjustments_still_reject_negative_malformed_or_excessive_money(): void
+    {
+        foreach (['discount_amount', 'shipping_fee', 'surcharge'] as $field) {
+            foreach ([-1, 'abc', '1,50', '1.234', false, [], 1000000000000] as $value) {
+                $this->postJson('/api/v1/orders', $this->simplePaymentPayload('cod', [$field => $value]))
+                    ->assertUnprocessable()->assertJsonValidationErrors($field);
+            }
+        }
+        $this->postJson('/api/v1/orders', $this->simplePaymentPayload('cod', ['discount_amount' => 500001]))->assertUnprocessable();
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertNull($this->local->fresh()->virtual_stock);
+    }
+
+    public function test_new_payment_modes_preserve_exact_cents_and_never_modify_an_old_order(): void
+    {
+        $legacyId = $this->postJson('/api/v1/orders', $this->payload(['paid_amount' => 100000]))->assertCreated()->json('data.id');
+        $legacyBefore = Order::findOrFail($legacyId)->getRawOriginal();
+        $this->local->update(['pancake_full_data' => ['retail_price' => 0.10, 'remain_quantity' => 20]]);
+        foreach (['cash', 'bank_transfer', 'cod'] as $mode) {
+            $input = $this->simplePaymentPayload($mode, [
+                'items' => [['product_id' => $this->local->id, 'quantity' => 3, 'unit_price' => '0.10']],
+                'discount_amount' => '0.10', 'shipping_fee' => '0.20', 'surcharge' => '0.30',
+            ]);
+            if ($mode !== 'cod') {
+                $input += ['payment_confirmed' => true, 'confirmed_total' => '0.70'];
+            }
+            $this->postJson('/api/v1/orders', $input)->assertCreated()->assertJsonPath('data.totals.total_amount', '0.70')
+                ->assertJsonPath('data.totals.paid_amount', $mode === 'cod' ? '0.00' : '0.70')
+                ->assertJsonPath('data.totals.expected_cod', $mode === 'cod' ? '0.70' : '0.00');
+        }
+        $this->assertSame($legacyBefore, Order::findOrFail($legacyId)->getRawOriginal());
+        Http::assertNothingSent();
+    }
+
+    private function simplePaymentPayload(string $mode, array $override = []): array
+    {
+        $payload = $this->payload($override);
+        unset($payload['paid_amount'], $payload['payment_method'], $payload['cod_mode']);
+        $payload['payment_mode'] = $mode;
+
+        return $payload;
+    }
+
+    public function test_legacy_idempotency_hash_from_before_the_payment_change_remains_replayable(): void
+    {
+        $input = $this->payload(['paid_amount' => 100000]);
+        $this->assertSame(1, $input['shop_id']);
+        $this->assertSame(1, $input['items'][0]['product_id']);
+        $id = $this->postJson('/api/v1/orders', $input)->assertCreated()->json('data.id');
+        // Frozen digest produced by OrderService before the simplified payment change.
+        DB::table('orders')->where('id', $id)->update([
+            'request_hash' => '3545c56f558847624d0008aaf22428ad27c5c3c76f0e5120bab6959258498c8d',
+        ]);
+        $before = Order::findOrFail($id)->getRawOriginal();
+        $this->postJson('/api/v1/orders', $input)->assertOk()->assertJsonPath('replayed', true)->assertJsonPath('data.id', $id);
+        $this->assertSame($before, Order::findOrFail($id)->getRawOriginal());
+        $this->assertDatabaseCount('orders', 1);
     }
 
     private function actor(string $slug, bool $grant = true): User

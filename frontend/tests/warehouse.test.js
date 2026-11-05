@@ -86,19 +86,21 @@ const data = { orders: [
 ], module: { enabled: true, activated_at: '2026-10-21T00:00:00+07:00', configuration_valid: true }, total_items: 2 }
 test('real warehouse page renders both sources, two tabs, products and explicit completion actions', () => {
   const html = render(['warehouse-view', 'warehouse-pack'], data)
-  for (const text of ['Chờ đóng hàng', 'Đã đóng hàng', 'POS-1', 'Local', 'Pancake', 'Sản phẩm TEST', 'Hoàn tất đóng hàng']) assert.ok(html.includes(text), text)
+  for (const text of ['Chờ đóng hàng', 'Đã đóng hàng', 'POS-1', 'Local', 'Pancake', 'Sản phẩm TEST']) assert.ok(html.includes(text), text)
+  // The list action is "Hoàn tất"; "Hoàn tất đóng hàng" appears in its confirmation dialog.
+  assert.match(html, /<span>Hoàn tất<\/span>/)
   assert.ok(!html.includes('WAREHOUSE_ACTIVATED_AT'))
 })
 test('view-only user can inspect but has no packing action', () => {
   const html = render(['warehouse-view'], data)
   assert.ok(html.includes('POS-1'))
-  assert.ok(!html.includes('>Hoàn tất đóng hàng</span>'))
+  assert.doesNotMatch(html, /<span>Hoàn tất<\/span>/)
 })
 test('disabled warehouse displays clear status and does not show existing sample orders', () => {
   const html = render(['warehouse-view', 'warehouse-pack'], { orders: [], total_items: 0, module: { enabled: false, activated_at: null, configuration_valid: true } })
   assert.ok(html.includes('Module Kho đang tắt'))
   assert.ok(!html.includes('POS-1'))
-  assert.ok(!html.includes('>Hoàn tất đóng hàng</span>'))
+  assert.doesNotMatch(html, /<span>Hoàn tất<\/span>/)
 })
 test('user without view permission receives the real 403 page', () => {
   const html = render([], data)

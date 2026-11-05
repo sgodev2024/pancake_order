@@ -7,8 +7,8 @@ export const toCents = (value) => {
 }
 
 export const calculatePosTotals = (items, adjustments = {}) => {
-  const amounts = ['discount_amount', 'shipping_fee', 'surcharge', 'paid_amount']
-    .map((key) => toCents(adjustments[key]))
+  const amounts = ['discount_amount', 'shipping_fee', 'surcharge'].map((key) => optionalMoneyCents(adjustments[key]))
+  amounts.push(toCents(adjustments.paid_amount))
   if (amounts.some((amount) => amount === null)) return { error: 'Nhập số tiền hợp lệ, tối đa 2 chữ số thập phân.' }
   const [discount, shipping, surcharge, paid] = amounts
   let subtotal = 0
@@ -24,6 +24,26 @@ export const calculatePosTotals = (items, adjustments = {}) => {
   if (paid > total) return { error: 'Tiền đã trả không được vượt tổng thanh toán.' }
   return { subtotal, discount, shipping, surcharge, total, paid, remaining: total - paid,
     cod: adjustments.cod_mode === 'none' ? 0 : total - paid }
+}
+
+export const optionalMoneyCents = (value) => toCents(value == null || (typeof value === 'string' && value.trim() === '') ? 0 : value)
+
+export const centsToAmount = (cents) => `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`
+
+export const POS_PAYMENT_OPTIONS = [
+  { value: 'cash', label: 'Tiền mặt — đã thu đủ' },
+  { value: 'bank_transfer', label: 'Chuyển khoản — đã nhận đủ' },
+  { value: 'cod', label: 'Thu hộ COD — thu khi giao hàng' },
+]
+
+// Cash/transfer stay unpaid in the preview until the operator explicitly confirms receipt.
+export const calculatePosPaymentTotals = (items, fields = {}, confirmed = false) => {
+  const mode = fields.payment_mode ?? 'cod'
+  if (!POS_PAYMENT_OPTIONS.some((option) => option.value === mode)) return { error: 'Chọn hình thức thanh toán hợp lệ.' }
+  const totals = calculatePosTotals(items, { ...fields, paid_amount: 0, cod_mode: 'remaining' })
+  if (totals.error) return totals
+  const paid = mode !== 'cod' && confirmed ? totals.total : 0
+  return { ...totals, paid, remaining: totals.total - paid, cod: mode === 'cod' ? totals.total : 0 }
 }
 
 export const money = (value) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(Number(value ?? 0)) + ' đ'

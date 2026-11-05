@@ -109,6 +109,7 @@ Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::cl
     Route::get('warehouse/orders', [\App\Http\Controllers\Api\WarehouseController::class, 'index']);
     Route::get('warehouse/orders/{order}', [\App\Http\Controllers\Api\WarehouseController::class, 'show']);
     Route::post('warehouse/orders/{order}/complete', [\App\Http\Controllers\Api\WarehouseController::class, 'complete']);
+    Route::post('warehouse/orders/{order}/viettel-post', [\App\Http\Controllers\Api\AicrmShipmentController::class, 'store']);
 
     Route::post('pancake-orders/hide', [\App\Http\Controllers\Api\PancakeOrderController::class, 'hide']);
     Route::delete('pancake-orders/hidden/{id}', [\App\Http\Controllers\Api\PancakeOrderController::class, 'restore'])->whereNumber('id');

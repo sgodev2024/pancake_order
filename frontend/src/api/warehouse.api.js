@@ -9,3 +9,4 @@ export const getWarehouseOrders = async (params = {}) => {
 }
 export const getWarehouseOrder = async (id) => (await apiClient.get(`${API_ROUTES.WAREHOUSE_ORDERS}/${id}`)).data.data
 export const completePacking = async (id) => (await apiClient.post(`${API_ROUTES.WAREHOUSE_ORDERS}/${id}/complete`)).data
+export const createViettelPostShipment = async (id) => (await apiClient.post(`${API_ROUTES.WAREHOUSE_ORDERS}/${id}/viettel-post`)).data

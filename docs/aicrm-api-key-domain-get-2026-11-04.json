@@ -1,0 +1,48 @@
+[
+  {
+    "checked_at": "2026-11-04T19:21:05.280905+07:00",
+    "url": "https://api.aicrm.vn/api/v1/shipping-providers",
+    "method": "GET",
+    "credential_sent": false,
+    "cookie_sent": false,
+    "redirects_followed": false,
+    "retry_count": 0,
+    "purpose": "anonymous_domain_diagnostic_not_authenticated_integration_test",
+    "http_status": 403,
+    "server": "cloudflare",
+    "content_type": "application/json; charset=utf-8",
+    "json_response": true,
+    "error_metadata": {
+      "status": 403,
+      "error_code": 1010,
+      "error_name": "browser_signature_banned",
+      "error_category": "access_denied",
+      "owner_action_required": true,
+      "retryable": false
+    },
+    "is_provider_list": false
+  },
+  {
+    "checked_at": "2026-11-04T19:21:05.603950+07:00",
+    "url": "https://api-vtp.aicrm.vn/api/v1/shipping-providers",
+    "method": "GET",
+    "credential_sent": false,
+    "cookie_sent": false,
+    "redirects_followed": false,
+    "retry_count": 0,
+    "purpose": "anonymous_domain_diagnostic_not_authenticated_integration_test",
+    "http_status": 403,
+    "server": "cloudflare",
+    "content_type": "application/json; charset=utf-8",
+    "json_response": true,
+    "error_metadata": {
+      "status": 403,
+      "error_code": 1010,
+      "error_name": "browser_signature_banned",
+      "error_category": "access_denied",
+      "owner_action_required": true,
+      "retryable": false
+    },
+    "is_provider_list": false
+  }
+]

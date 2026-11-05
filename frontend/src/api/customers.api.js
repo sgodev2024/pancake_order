@@ -6,9 +6,10 @@ const removeEmptyParams = (params) =>
     Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
   )
 
-export const getCustomers = async (params = {}) => {
+export const getCustomers = async (params = {}, { signal } = {}) => {
   const response = await apiClient.get(API_ROUTES.CUSTOMERS, {
     params: removeEmptyParams(params),
+    ...(signal ? { signal } : {}),
   })
 
   return response.data.data

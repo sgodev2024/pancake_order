@@ -38,6 +38,7 @@ before(async () => {
   OrdersPage = await loadComponent('../src/pages/Orders/OrdersPage.jsx')
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.setQueryData(['orders', {
+    origin: 'pancake',
     shop_id: undefined,
     order_page_id: undefined,
     search: '',

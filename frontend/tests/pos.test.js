@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { calculatePosTotals, toCents } from '../src/pages/Pos/posTotals.js'
-import { formatMoneyInput, parseMoneyInput } from '../src/pages/Pos/posMoneyInput.js'
-import { canUsePos, filterMenuByPermissions } from '../src/auth/permissions.js'
+import { calculatePosPaymentTotals, calculatePosTotals, centsToAmount, optionalMoneyCents, POS_PAYMENT_OPTIONS, toCents } from '../src/pages/Pos/posTotals.js'
+import { formatMoneyInput, isValidMoneyInput, parseMoneyInput } from '../src/pages/Pos/posMoneyInput.js'
+import { canManageProducts, canUsePos, filterMenuByPermissions } from '../src/auth/permissions.js'
 import { MENU_ITEMS } from '../src/constants/menu.js'
 import { ROUTES } from '../src/constants/routes.js'
 import apiClient from '../src/api/client.js'
@@ -23,6 +23,44 @@ test('500000 goods + 30000 shipping - 200000 paid yields 330000 remaining and ex
   assert.equal(result.total, 53000000)
   assert.equal(result.remaining, 33000000)
   assert.equal(result.cod, 33000000)
+})
+test('optional adjustments accept blank/null/undefined as zero and reject malformed money', () => {
+  for (const empty of ['', '  ', null, undefined]) {
+    assert.equal(optionalMoneyCents(empty), 0)
+    const result = calculatePosPaymentTotals(cart, { discount_amount: empty, shipping_fee: empty, surcharge: empty })
+    assert.equal(result.total, 50000000)
+    assert.equal(result.paid, 0)
+    assert.equal(result.cod, result.total)
+  }
+  for (const invalid of [-1, 'abc', '1,50', '0.001', false, [], 1000000000000]) {
+    assert.ok(calculatePosPaymentTotals(cart, { surcharge: invalid }).error, String(invalid))
+  }
+})
+test('cash and transfer stay unpaid until receipt confirmation; COD always remains uncollected', () => {
+  assert.equal(POS_PAYMENT_OPTIONS.length, 3)
+  const adjustments = { discount_amount: 10000, shipping_fee: 30000, surcharge: 5000 }
+  for (const mode of ['cash', 'bank_transfer']) {
+    const before = calculatePosPaymentTotals(cart, { ...adjustments, payment_mode: mode })
+    assert.equal(before.total, 52500000)
+    assert.equal(before.paid, 0)
+    assert.equal(before.remaining, 52500000)
+    assert.equal(before.cod, 0)
+    const confirmed = calculatePosPaymentTotals(cart, { ...adjustments, payment_mode: mode }, true)
+    assert.equal(confirmed.paid, confirmed.total)
+    assert.equal(confirmed.remaining, 0)
+    assert.equal(confirmed.cod, 0)
+  }
+  const cod = calculatePosPaymentTotals(cart, { ...adjustments, payment_mode: 'cod' }, true)
+  assert.equal(cod.paid, 0)
+  assert.equal(cod.remaining, cod.total)
+  assert.equal(cod.cod, cod.total)
+  assert.equal(centsToAmount(70), '0.70')
+  assert.ok(calculatePosPaymentTotals(cart, { payment_mode: 'invalid' }).error)
+})
+test('raw localized money does not silently discard invalid characters, signs or precision', () => {
+  for (const invalid of ['abc', '1abc', '-1', '1.2', '1,234', '1,,2']) assert.equal(isValidMoneyInput(invalid), false, invalid)
+  for (const valid of ['', '1.234.567,89', '100.000 đ', '0,50', '1234']) assert.equal(isValidMoneyInput(valid), true, valid)
+  assert.equal(parseMoneyInput('1abc'), '1abc')
 })
 test('discount, surcharge and full payment use exact decimal cents', () => {
   const result = calculatePosTotals([{ unit_price: '0.10', quantity: 3 }], {
@@ -67,6 +105,22 @@ test('custom POS role needs explicit create permission and both read permissions
   assert.equal(canUsePos(role(required)), true)
   assert.ok(!filterMenuByPermissions(MENU_ITEMS, role(required)).some((item) => item.key === ROUTES.POS))
   for (const missing of required) assert.equal(canUsePos(role(required.filter((slug) => slug !== missing))), false)
+})
+test('staff and manager CSKH use explicit POS grants; admin still needs actual read grants', () => {
+  const user = (slug, permissions) => ({ role: { slug, permissions: permissions.map((slug) => ({ slug })) } })
+  for (const slug of ['staff-cskh', 'manager-cskh']) {
+    assert.equal(canUsePos(user(slug, ['pos-create', 'list-product', 'list-customer'])), true)
+    assert.equal(canUsePos(user(slug, ['list-product', 'list-customer'])), false)
+  }
+  for (const permissions of [[], ['list-product'], ['list-customer']]) {
+    assert.equal(canUsePos(user('admin', permissions)), false)
+  }
+  for (const slug of ['staff-sale', 'staff-cskh']) {
+    assert.equal(canManageProducts(user(slug, ['list-product'])), false)
+  }
+  assert.equal(canManageProducts(user('manager-cskh', ['list-product'])), true)
+  assert.equal(canManageProducts(user('manager-cskh', [])), false)
+  assert.equal(canManageProducts(user('admin', ['list-product'])), true)
 })
 test('createOrder forwards the same idempotency key on retry; detail uses the existing resource API', async () => {
   const originals = { post: apiClient.post, get: apiClient.get }

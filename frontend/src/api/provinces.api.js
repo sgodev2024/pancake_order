@@ -11,17 +11,19 @@ export const getProvinces = async () => {
   return response.data.data ?? []
 }
 
-export const getProvinceReport = async (params = {}) => {
+export const getProvinceReport = async (params = {}, { signal } = {}) => {
   const response = await apiClient.get(API_ROUTES.PROVINCES_REPORT, {
     params: removeEmptyParams(params),
+    ...(signal ? { signal } : {}),
   })
 
   return response.data.data ?? { provinces: [], shop: null }
 }
 
-export const getProvinceCharts = async (params = {}) => {
+export const getProvinceCharts = async (params = {}, { signal } = {}) => {
   const response = await apiClient.get(API_ROUTES.PROVINCES_CHARTS, {
     params: removeEmptyParams(params),
+    ...(signal ? { signal } : {}),
   })
 
   return response.data.data ?? {

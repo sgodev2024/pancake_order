@@ -19,6 +19,12 @@ class OrderService
 
     public function createLocalOrder(User $actor, array $input): Order
     {
+        foreach (['discount_amount', 'shipping_fee', 'surcharge'] as $field) {
+            $value = $input[$field] ?? null;
+            if ($value === null || (is_string($value) && trim($value) === '')) {
+                $input[$field] = 0;
+            }
+        }
         $access = app(ShopAccessService::class);
         $access->authorizeRequestedShopId($actor, (int) $input['shop_id']);
         $hash = $this->localRequestHash($input);
@@ -84,16 +90,15 @@ class OrderService
             $discount = self::moneyCents($input['discount_amount'] ?? 0);
             $shipping = self::moneyCents($input['shipping_fee'] ?? 0);
             $surcharge = self::moneyCents($input['surcharge'] ?? 0);
-            $paid = self::moneyCents($input['paid_amount'] ?? 0);
             if ($discount > $subtotal) {
                 throw ValidationException::withMessages(['discount_amount' => 'Giảm giá không được vượt tiền hàng.']);
             }
             $total = $subtotal - $discount + $shipping + $surcharge;
+            [$paid, $cod, $paymentMethod, $codMode] = $this->localPayment($input, $total);
             if ($total > self::MAX_MONEY_CENTS || $paid > $total) {
                 throw ValidationException::withMessages(['paid_amount' => 'Tiền đã trả không được vượt tổng thanh toán hoặc tổng tiền vượt giới hạn.']);
             }
             $remaining = $total - $paid;
-            $cod = ($input['cod_mode'] ?? 'remaining') === 'remaining' ? $remaining : 0;
 
             if (! empty($input['customer_id'])) {
                 $customer = Customer::where('shop_id', $input['shop_id'])
@@ -141,9 +146,13 @@ class OrderService
                 'pancake_full_data' => [
                     'origin' => 'local_pos', 'items' => $items, 'pos_totals' => $totals,
                     'prepaid' => self::moneyString($paid), 'shipping_fee' => self::moneyString($shipping),
-                    'cod_mode' => $input['cod_mode'] ?? 'remaining',
+                    'cod_mode' => $codMode,
+                    ...(isset($input['payment_mode']) ? [
+                        'payment_mode' => $input['payment_mode'],
+                        'payment_confirmed' => $input['payment_mode'] !== 'cod',
+                    ] : []),
                     'payments' => $paid === 0 ? [] : [[
-                        'amount' => self::moneyString($paid), 'method' => $input['payment_method'] ?? 'cash',
+                        'amount' => self::moneyString($paid), 'method' => $paymentMethod,
                         'status' => 'valid', 'recorded_by_user_id' => $actor->id, 'recorded_at' => now()->toIso8601String(),
                     ]],
                 ],
@@ -165,11 +174,50 @@ class OrderService
         }, 3);
     }
 
+    /** Return authoritative paid, COD, receipt method and legacy collection mode. */
+    private function localPayment(array $input, int $total): array
+    {
+        if (! isset($input['payment_mode'])) {
+            $paid = self::moneyCents($input['paid_amount'] ?? 0);
+            $codMode = $input['cod_mode'] ?? 'remaining';
+
+            return [$paid, $codMode === 'remaining' ? $total - $paid : 0, $input['payment_method'] ?? 'cash', $codMode];
+        }
+        foreach (['paid_amount', 'payment_method', 'cod_mode'] as $field) {
+            if (array_key_exists($field, $input)) {
+                throw ValidationException::withMessages([$field => 'Không gửi trường thanh toán nâng cao cùng hình thức thanh toán POS mới.']);
+            }
+        }
+        $mode = $input['payment_mode'];
+        $confirmed = in_array($input['payment_confirmed'] ?? false, [true, 1, '1'], true);
+        if ($mode === 'cod') {
+            if ($confirmed || array_key_exists('confirmed_total', $input)) {
+                throw ValidationException::withMessages(['payment_confirmed' => 'Đơn thu hộ COD chưa ghi nhận tiền đã thu.']);
+            }
+
+            return [0, $total, null, 'remaining'];
+        }
+        if (! in_array($mode, ['cash', 'bank_transfer'], true) || ! $confirmed) {
+            throw ValidationException::withMessages(['payment_confirmed' => 'Cần xác nhận đã nhận đủ tiền trước khi tạo đơn.']);
+        }
+        if (! isset($input['confirmed_total']) || self::moneyCents($input['confirmed_total']) !== $total) {
+            throw ValidationException::withMessages(['confirmed_total' => 'Tổng tiền đã thay đổi. Vui lòng kiểm tra và xác nhận lại số tiền thực nhận.']);
+        }
+
+        return [$total, 0, $mode, 'none'];
+    }
+
     private function localRequestHash(array $input): string
     {
         unset($input['idempotency_key']);
         foreach (['discount_amount', 'shipping_fee', 'surcharge', 'paid_amount'] as $key) {
             $input[$key] = self::moneyString(self::moneyCents($input[$key] ?? 0));
+        }
+        if (isset($input['confirmed_total'])) {
+            $input['confirmed_total'] = self::moneyString(self::moneyCents($input['confirmed_total']));
+        }
+        if (isset($input['payment_confirmed'])) {
+            $input['payment_confirmed'] = in_array($input['payment_confirmed'], [true, 1, '1'], true);
         }
         $input['shop_id'] = (int) $input['shop_id'];
         $input['customer_id'] = isset($input['customer_id']) ? (int) $input['customer_id'] : null;

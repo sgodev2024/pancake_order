@@ -31,7 +31,7 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use((config) => {
   const token = authHandlers.getToken()
 
-  if (token) {
+  if (token && !config.headers.get('Authorization')) {
     config.headers.set('Authorization', `Bearer ${token}`)
   }
 
@@ -48,7 +48,10 @@ apiClient.interceptors.response.use(
     return response
   },
   (error) => {
-    if (error.response?.status === 401 && !isLoginRequest(error.config)) {
+    const sentAuthorization = error.config?.headers?.get?.('Authorization') ?? error.config?.headers?.Authorization
+    const currentToken = authHandlers.getToken()
+    if (error.response?.status === 401 && !isLoginRequest(error.config) &&
+        currentToken && sentAuthorization === `Bearer ${currentToken}`) {
       authHandlers.onUnauthorized()
 
       if (window.location.pathname !== ROUTES.LOGIN) {

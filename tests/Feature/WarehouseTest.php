@@ -85,6 +85,9 @@ class WarehouseTest extends TestCase
         });
         (require database_path('migrations/2026_10_21_000001_add_local_pos_support.php'))->up();
         (require database_path('migrations/2026_10_21_000002_add_warehouse_completion_and_source_time.php'))->up();
+        (require database_path('migrations/2026_11_04_000001_create_aicrm_shipments.php'))->up();
+        (require database_path('migrations/2026_11_04_000002_add_aicrm_remote_order_metadata.php'))->up();
+        (require database_path('migrations/2026_11_04_000003_add_aicrm_tenant_binding.php'))->up();
         $this->shop = Shop::create(['name' => 'Assigned', 'pancake_shop_id' => 'shop-1', 'api_key' => 'test']);
         $this->otherShop = Shop::create(['name' => 'Other', 'pancake_shop_id' => 'shop-2', 'api_key' => 'test']);
         $this->actor = $this->actor('staff-sale');
@@ -93,6 +96,7 @@ class WarehouseTest extends TestCase
         $this->otherPacker = $this->actor('warehouse-second');
         config(['warehouse.activated_at' => '2026-10-21T00:00:00+07:00']);
         Carbon::setTestNow(Carbon::parse('2026-10-21T12:00:00+07:00'));
+        (require database_path('migrations/2026_11_04_000001_create_staff_account_states_table.php'))->up();
         $this->actingAs($this->actor, 'api');
         Http::preventStrayRequests();
         Queue::fake();
@@ -278,6 +282,25 @@ class WarehouseTest extends TestCase
         $this->assertSame('first-creator', $order->user_creator_id);
         $this->assertSame($this->packer->id, $order->packed_by_user_id);
         $this->assertSame(1, ActivityLog::where('action', 'warehouse.packed')->count());
+    }
+
+    public function test_pancake_sync_after_mock_shipment_preserves_tracking_and_cannot_create_again(): void
+    {
+        config(['aicrm.mode' => 'mock', 'aicrm.shipping_provider_id' => 17, 'aicrm.mock_scenario' => 'success']);
+        $source = $this->source('mock-shipment-sync', ['bill_phone_number' => '0901234567']);
+        $this->webhook($source);
+        $order = Order::sole();
+        $this->actingAs($this->packer, 'api')->postJson('/api/v1/warehouse/orders/'.$order->id.'/complete')->assertOk();
+        $response = $this->postJson('/api/v1/warehouse/orders/'.$order->id.'/viettel-post')->assertOk();
+        $number = $response->json('data.tracking_number');
+        $this->webhook(array_replace($source, ['partner' => ['order_number_vtp' => null]]));
+        $this->bulk([$source]);
+        $this->postJson('/api/v1/warehouse/orders/'.$order->id.'/viettel-post')->assertOk()
+            ->assertJsonPath('replayed', true)->assertJsonPath('data.tracking_number', $number);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 1);
+        $this->assertNull($order->fresh()->order_number_vtp);
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
     }
 
     public function test_module_disabled_or_future_preserves_legacy_import_and_does_not_backfill(): void

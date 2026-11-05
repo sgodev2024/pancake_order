@@ -7,7 +7,7 @@ import ShopSelect from '../../components/ShopSelect.jsx'
 import { getApiErrorMessage } from '../../utils/response.js'
 import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
 import { useAuthStore } from '../../auth/auth.store.js'
-import { hasPermission } from '../../auth/permissions.js'
+import { canManageProducts as canEditProducts } from '../../auth/permissions.js'
 import { getProductImage, getProductName, PRODUCT_PLACEHOLDER } from '../../utils/products.js'
 import './products.css'
 
@@ -43,7 +43,7 @@ const ProductsPage = () => {
   const queryClient = useQueryClient()
   const { message } = App.useApp()
   const user = useAuthStore((state) => state.user)
-  const canManageProducts = hasPermission(user, 'list-product')
+  const canManageProducts = canEditProducts(user)
   const [form] = Form.useForm()
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProduct, setEditingProduct] = useState(null)
