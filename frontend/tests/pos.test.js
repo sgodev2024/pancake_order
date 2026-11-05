@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { calculatePosPaymentTotals, calculatePosTotals, centsToAmount, optionalMoneyCents, POS_PAYMENT_OPTIONS, toCents } from '../src/pages/Pos/posTotals.js'
-import { formatMoneyInput, isValidMoneyInput, parseMoneyInput } from '../src/pages/Pos/posMoneyInput.js'
+import { formatLiveMoneyInput, parseLiveMoneyInput, formatMoneyInput, isValidMoneyInput, parseMoneyInput } from '../src/pages/Pos/posMoneyInput.js'
 import { canManageProducts, canUsePos, filterMenuByPermissions } from '../src/auth/permissions.js'
 import { MENU_ITEMS } from '../src/constants/menu.js'
 import { ROUTES } from '../src/constants/routes.js'
@@ -148,12 +148,33 @@ test('partial bank transfer collects only the balance as COD after receipt confi
   }
 })
 
-test('money input keeps the typed buffer instead of inserting decimals between keystrokes', () => {
-  for (const input of ['7', '70', '700', '7000', '70000', '700000', '', '70.000', '700.000,50']) {
-    const parsed = parseMoneyInput(input)
+test('money input groups the edit buffer without injecting precision decimals', () => {
+  for (const [input, expected] of [
+    ['7', '7'], ['70', '70'], ['700', '700'], ['7000', '7.000'],
+    ['70000', '70.000'], ['700000', '700.000'], ['', ''],
+    ['70.000', '70.000'], ['700.000,', '700.000,'],
+    ['700.000,5', '700.000,5'], ['700.000,50', '700.000,50'],
+    ['700.0000', '7.000.000'],
+  ]) {
+    const parsed = parseLiveMoneyInput(input)
     const value = parsed === '' ? null : Number(parsed).toFixed(2)
-    assert.equal(formatMoneyInput(value, { userTyping: true, input }), input)
+    assert.equal(formatLiveMoneyInput(value, { userTyping: true, input }), expected)
   }
-  assert.equal(formatMoneyInput('700000.00', { userTyping: false, input: '700000' }), '700.000,00')
-  assert.equal(parseMoneyInput('700.000,50'), '700000.50')
+  // Subsequent keystrokes arrive after existing grouping: append, delete, paste.
+  assert.equal(formatLiveMoneyInput('70000.00', { userTyping: true, input: '7.0000' }), '70.000')
+  assert.equal(formatLiveMoneyInput('700000.00', { userTyping: true, input: '700000' }), '700.000')
+  assert.equal(formatLiveMoneyInput('700000.00', { userTyping: false }), '700.000,00')
+  assert.equal(parseLiveMoneyInput('700.000,50'), '700000.50')
+})
+
+test('live grouping retains the numeric amount across sequential keystrokes', () => {
+  let display = ''
+  for (const digit of '700000') {
+    const raw = display + digit
+    const amount = parseLiveMoneyInput(raw)
+    display = formatLiveMoneyInput(amount, { userTyping: true, input: raw })
+    assert.equal(parseLiveMoneyInput(display), amount)
+  }
+  assert.equal(display, '700.000')
+  assert.equal(parseLiveMoneyInput('700.00'), '70000')
 })
