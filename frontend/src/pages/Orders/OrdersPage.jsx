@@ -23,7 +23,7 @@ import {
   normalizeOrderFilters,
 } from './orderFilters.js'
 import { useAuthStore } from '../../auth/auth.store.js'
-import { canUsePos, isAdmin } from '../../auth/permissions.js'
+import { canUsePos, canDeletePosOrders } from '../../auth/permissions.js'
 import './orders.css'
 
 const { RangePicker } = DatePicker
@@ -59,7 +59,7 @@ const OrdersPage = ({ origin = 'pancake' }) => {
 
   const { modal, message } = App.useApp()
   const queryClient = useQueryClient()
-  const canDelete = origin === 'local_pos' && isAdmin(user)
+  const canDelete = origin === 'local_pos' && canDeletePosOrders(user)
   const [selection, setSelection] = useState({ page: null, ids: [] })
   const confirmDelete = useCallback((ids) => modal.confirm({
     title: ids.length === 1 ? 'Xóa đơn POS?' : `Xóa ${ids.length} đơn POS?`,

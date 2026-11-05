@@ -128,6 +128,26 @@ class PosOrderTest extends TestCase
         $this->assertNotNull(Order::find($pancake->id));
     }
 
+    public function test_cskh_deletes_only_pos_orders_in_assigned_shops_and_bulk_is_atomic(): void
+    {
+        (require database_path('migrations/2026_11_04_000001_create_aicrm_shipments.php'))->up();
+        foreach (['staff-cskh', 'manager-cskh'] as $role) {
+            $this->actingAs($this->actor, 'api');
+            $first = $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->json('data.id');
+            $second = $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->json('data.id');
+            $foreign = Order::create(['shop_id' => $this->otherShop->id, 'origin' => 'local_pos', 'status' => 0]);
+            $user = $this->actor($role);
+            $this->actingAs($user, 'api');
+            $url = '/api/v1/orders/pos/delete';
+            $this->postJson($url, ['ids' => [$first, $foreign->id]])->assertForbidden();
+            $this->assertNotNull(Order::find($first));
+            $this->postJson($url, ['ids' => [$first, $second]])->assertOk();
+            $this->assertSoftDeleted('orders', ['id' => $first]);
+            $this->assertSoftDeleted('orders', ['id' => $second]);
+            $this->assertNotNull(Order::find($foreign->id));
+        }
+    }
+
     private function runMigration(): void
     {
         (require database_path('migrations/2026_10_21_000001_add_local_pos_support.php'))->up();

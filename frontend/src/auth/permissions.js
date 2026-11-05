@@ -48,3 +48,7 @@ export const filterMenuByPermissions = (items, user) =>
     visibleItems.push({ ...item, children })
     return visibleItems
   }, [])
+
+
+export const canDeletePosOrders = (user) =>
+  ['admin', 'staff-cskh', 'manager-cskh'].includes(user?.role?.slug)

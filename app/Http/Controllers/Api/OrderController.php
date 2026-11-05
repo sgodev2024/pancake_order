@@ -449,17 +449,24 @@ SQL;
 
     public function deletePosOrders(Request $request)
     {
-        abort_unless($request->user()->isAdmin(), 403, 'Chỉ Admin được xóa đơn POS.');
+        $actor = $request->user();
+        abort_unless($actor->isAdmin() || $actor->isStaffCskh() || $actor->isManagerCskh(),
+            403, 'Bạn không có quyền xóa đơn POS.');
         $data = $request->validate([
             'ids' => ['required', 'array', 'min:1', 'max:100'],
             'ids.*' => ['required', 'integer', 'min:1', 'distinct'],
         ]);
 
-        DB::transaction(function () use ($data): void {
+        DB::transaction(function () use ($data, $actor): void {
             $orders = Order::withTrashed()->whereIn('id', $data['ids'])->orderBy('id')->lockForUpdate()->get();
             abort_unless($orders->count() === count($data['ids'])
                 && $orders->every(fn (Order $order) => $order->origin === 'local_pos'),
                 422, 'Danh sách chỉ được chứa các đơn POS hợp lệ.');
+
+            foreach ($orders as $order) {
+                abort_unless($this->shopAccessService->canAccessShop($actor, (int) $order->shop_id),
+                    403, 'Bạn không có quyền xóa đơn POS của cửa hàng này.');
+            }
 
             foreach ($orders->reject(fn (Order $order) => $order->trashed()) as $order) {
                 abort_unless((string) $order->status === '0'

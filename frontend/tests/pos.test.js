@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { calculatePosPaymentTotals, calculatePosTotals, centsToAmount, optionalMoneyCents, POS_PAYMENT_OPTIONS, toCents } from '../src/pages/Pos/posTotals.js'
 import { formatLiveMoneyInput, parseLiveMoneyInput, formatMoneyInput, isValidMoneyInput, parseMoneyInput } from '../src/pages/Pos/posMoneyInput.js'
-import { canManageProducts, canUsePos, filterMenuByPermissions } from '../src/auth/permissions.js'
+import { canDeletePosOrders, canManageProducts, canUsePos, filterMenuByPermissions } from '../src/auth/permissions.js'
 import { MENU_ITEMS } from '../src/constants/menu.js'
 import { ROUTES } from '../src/constants/routes.js'
 import apiClient from '../src/api/client.js'
@@ -177,4 +177,10 @@ test('live grouping retains the numeric amount across sequential keystrokes', ()
   }
   assert.equal(display, '700.000')
   assert.equal(parseLiveMoneyInput('700.00'), '70000')
+})
+
+test('POS deletion is available to Admin and CSKH roles only', () => {
+  for (const slug of ['admin', 'staff-cskh', 'manager-cskh']) assert.equal(canDeletePosOrders({role: {slug}}), true)
+  for (const slug of ['staff-sale', 'manager-sale', 'warehouse', 'director']) assert.equal(canDeletePosOrders({role: {slug}}), false)
+  assert.equal(canDeletePosOrders(null), false)
 })
