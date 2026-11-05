@@ -87,7 +87,7 @@ class CustomerController extends Controller implements HasMiddleware
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
             $query->select([
                 'id',
-                'purchased_amount',
+                \Illuminate\Support\Facades\DB::raw(\App\Services\CustomerCrmPurchaseValue::sql().' AS purchased_amount'),
                 'shop_id',
                 'name',
                 'phone_numbers',
@@ -288,7 +288,7 @@ class CustomerController extends Controller implements HasMiddleware
                     'customers.pancake_customer_id',
                     'customers.name',
                     'customers.phone_numbers',
-                    'customers.purchased_amount',
+                    \Illuminate\Support\Facades\DB::raw(\App\Services\CustomerCrmPurchaseValue::sql().' AS purchased_amount'),
                     'customers.order_count',
                     'customers.loyalty_tier_id',
                     'customers.created_at',
@@ -299,7 +299,7 @@ class CustomerController extends Controller implements HasMiddleware
                 ->selectRaw('COALESCE(customers.order_count, 0) AS total_orders')
                 ->selectRaw('customers.last_order_at AS last_purchase_at')
                 ->selectRaw('CASE WHEN customers.last_order_at IS NULL THEN NULL ELSE GREATEST(0, TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE)) END AS inactive_days')
-                ->selectRaw('COALESCE(customers.purchased_amount, 0) AS total_value');
+                ->selectRaw(\App\Services\CustomerCrmPurchaseValue::sql().' AS total_value');
 
             if ($sortBy === 'inactive_days') {
                 $query->orderByRaw('customers.last_order_at IS NULL ASC')
@@ -310,7 +310,7 @@ class CustomerController extends Controller implements HasMiddleware
             } elseif ($sortBy === 'total_orders') {
                 $query->orderBy('customers.order_count', $sortDirection);
             } else {
-                $query->orderBy('customers.purchased_amount', $sortDirection);
+                $query->orderBy('total_value', $sortDirection);
             }
 
             $rows = $query

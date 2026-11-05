@@ -1,15 +1,16 @@
-import { FilterOutlined, ReloadOutlined } from '@ant-design/icons'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Alert, Avatar, Button, Card, Empty, Image, Input, Space, Table } from 'antd'
+import { CloseOutlined, EditOutlined, FilterOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Alert, App, Avatar, Button, Card, Empty, Form, Image, Input, InputNumber, Modal, Table, Tooltip, Upload } from 'antd'
 import { useMemo, useState } from 'react'
-import { getProducts } from '../../api/products.api.js'
+import { createProduct, getProducts, updateProduct } from '../../api/products.api.js'
 import ShopSelect from '../../components/ShopSelect.jsx'
 import { getApiErrorMessage } from '../../utils/response.js'
 import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
+import { useAuthStore } from '../../auth/auth.store.js'
+import { hasPermission } from '../../auth/permissions.js'
+import { getProductImage, getProductName, PRODUCT_PLACEHOLDER } from '../../utils/products.js'
 import './products.css'
 
-const PRODUCT_PLACEHOLDER =
-  'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2248%22 height=%2248%22 viewBox=%220 0 48 48%22%3E%3Crect width=%2248%22 height=%2248%22 rx=%226%22 fill=%22%23f1f5f9%22/%3E%3Cpath d=%22M13 31l7-8 5 5 4-4 6 7H13z%22 fill=%22%2394a3b8%22/%3E%3Ccircle cx=%2220%22 cy=%2218%22 r=%223%22 fill=%22%2394a3b8%22/%3E%3C/svg%3E'
 const EMPTY_PRODUCTS = Object.freeze([])
 
 const getInitial = (name) => name?.trim()?.charAt(0)?.toLocaleUpperCase('vi') || '—'
@@ -26,175 +27,29 @@ const formatQuantity = (value) => {
   return Number.isFinite(amount) ? new Intl.NumberFormat('vi-VN').format(amount) : '—'
 }
 
-const getNestedValue = (source, path) => {
-  if (!source || !path) return undefined
-  return path.split('.').reduce((acc, key) => acc?.[key], source)
+const formatPriceInput = (value) => {
+  if (value === null || value === undefined || value === '') return ''
+  const [integer, fraction] = String(value).split('.')
+  const groupedInteger = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return fraction === undefined ? groupedInteger : `${groupedInteger},${fraction}`
 }
 
-const getProductName = (product) => {
-  const candidates = [
-    product?.name,
-    getNestedValue(product, 'pancake_full_data.product.name'),
-    getNestedValue(product, 'pancake_full_data.variation_info.name'),
-    getNestedValue(product, 'pancake_full_data.name'),
-    'Sản phẩm',
-  ]
-
-  return candidates.find((value) => typeof value === 'string' && value.trim().length > 0) || 'Sản phẩm'
-}
-
-const toNumber = (value) => {
-  if (value === null || value === undefined || value === '') return undefined
-
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : undefined
-  }
-
-  if (typeof value !== 'string') return undefined
-
-  const text = value.trim()
-  if (!text) return undefined
-
-  const normalized = text
-    .replace(/\s+/g, '')
-    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
-    .replace(/,/g, '')
-
-  const number = Number(normalized)
-  return Number.isFinite(number) ? number : undefined
-}
-
-const findFirstImageInObject = (source) => {
-  if (!source || typeof source !== 'object') return undefined
-
-  if (Array.isArray(source)) {
-    for (const item of source) {
-      const found = findFirstImageInObject(item)
-      if (found) return found
-    }
-    return undefined
-  }
-
-  for (const [key, value] of Object.entries(source)) {
-    const normalizedKey = String(key).toLowerCase()
-    if (['image', 'images', 'thumbnail', 'thumbnail_url', 'avatar', 'media', 'url'].includes(normalizedKey)) {
-      if (Array.isArray(value)) {
-        const first = value.find((item) => typeof item === 'string' && item.trim().length > 0)
-        if (first) return first
-      }
-
-      if (typeof value === 'string' && value.trim().length > 0) {
-        return value
-      }
-    }
-
-    if (typeof value === 'object') {
-      const nested = findFirstImageInObject(value)
-      if (nested) return nested
-    }
-  }
-
-  return undefined
-}
-
-const findFirstPriceInObject = (source) => {
-  if (!source || typeof source !== 'object') return undefined
-
-  if (Array.isArray(source)) {
-    for (const item of source) {
-      const found = findFirstPriceInObject(item)
-      if (found !== undefined) return found
-    }
-    return undefined
-  }
-
-  const directCandidates = [
-    'price',
-    'selling_price',
-    'sale_price',
-    'regular_price',
-    'unit_price',
-    'base_price',
-    'final_price',
-    'discount_price',
-    'amount',
-    'price_before_discount',
-  ]
-
-  for (const key of directCandidates) {
-    const value = source[key]
-    const numericValue = toNumber(value)
-    if (numericValue !== undefined) return numericValue
-  }
-
-  for (const [key, value] of Object.entries(source)) {
-    const normalizedKey = String(key).toLowerCase()
-    if (/(price|amount|cost|unit_price|selling|regular|final|base|discount)/i.test(normalizedKey)) {
-      const numericValue = toNumber(value)
-      if (numericValue !== undefined) return numericValue
-    }
-
-    if (typeof value === 'object') {
-      const nested = findFirstPriceInObject(value)
-      if (nested !== undefined) return nested
-    }
-  }
-
-  return undefined
-}
-
-const getProductImage = (product) => {
-  const payload = product?.pancake_full_data ?? {}
-  const candidates = [
-    getNestedValue(product, 'pancake_full_data.variation_info.images'),
-    getNestedValue(product, 'pancake_full_data.images'),
-    getNestedValue(product, 'pancake_full_data.product.images'),
-    getNestedValue(product, 'pancake_full_data.product.image'),
-    getNestedValue(product, 'pancake_full_data.image'),
-    getNestedValue(product, 'pancake_full_data.product.variation_info.images'),
-    getNestedValue(product, 'pancake_full_data.product.variation_info.image'),
-    findFirstImageInObject(payload),
-    findFirstImageInObject(product),
-  ]
-
-  const firstImage = candidates.find((value) => {
-    if (Array.isArray(value)) {
-      return value.some((image) => typeof image === 'string' && image.trim().length > 0)
-    }
-
-    return typeof value === 'string' && value.trim().length > 0
-  })
-
-  if (Array.isArray(firstImage)) {
-    return firstImage.find((image) => typeof image === 'string' && image.trim().length > 0) || PRODUCT_PLACEHOLDER
-  }
-
-  return typeof firstImage === 'string' && firstImage.trim().length > 0 ? firstImage : PRODUCT_PLACEHOLDER
-}
-
-const getProductPrice = (product) => {
-  const payload = product?.pancake_full_data ?? {}
-  const candidates = [
-    getNestedValue(product, 'pancake_full_data.price'),
-    getNestedValue(product, 'pancake_full_data.selling_price'),
-    getNestedValue(product, 'pancake_full_data.sale_price'),
-    getNestedValue(product, 'pancake_full_data.regular_price'),
-    getNestedValue(product, 'pancake_full_data.unit_price'),
-    getNestedValue(product, 'pancake_full_data.product.price'),
-    getNestedValue(product, 'pancake_full_data.product.selling_price'),
-    getNestedValue(product, 'pancake_full_data.product.unit_price'),
-    getNestedValue(product, 'pancake_full_data.variation_info.price'),
-    getNestedValue(product, 'pancake_full_data.variation_info.selling_price'),
-    getNestedValue(product, 'pancake_full_data.price_before_discount'),
-    findFirstPriceInObject(payload),
-    findFirstPriceInObject(product),
-  ]
-
-  const foundValue = candidates.find((value) => value !== undefined && value !== null && value !== '')
-  return foundValue ?? 0
-}
+const parsePriceInput = (value) => value
+  ?.replace(/\./g, '')
+  .replace(',', '.')
+  .replace(/[^\d.-]/g, '') ?? ''
 
 const ProductsPage = () => {
+  const queryClient = useQueryClient()
+  const { message } = App.useApp()
+  const user = useAuthStore((state) => state.user)
+  const canManageProducts = hasPermission(user, 'list-product')
+  const [form] = Form.useForm()
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingProduct, setEditingProduct] = useState(null)
+  const [imageFiles, setImageFiles] = useState([])
+  const [imageRemoved, setImageRemoved] = useState(false)
+
   const [shopId, setShopId] = useState(undefined)
   const [search, setSearch] = useState('')
   const [appliedShopId, setAppliedShopId] = useState(undefined)
@@ -226,7 +81,7 @@ const ProductsPage = () => {
         ...product,
         displayName: getProductName(product),
         displayImage: getProductImage(product),
-        displayPrice: getProductPrice(product),
+        displayPrice: product.price,
       })),
       [products],
   )
@@ -251,8 +106,48 @@ const ProductsPage = () => {
     setPage(1)
   }
 
-  const columns = useMemo(
-    () => [
+  const saveMutation = useMutation({
+    mutationFn: (values) => {
+      const payload = {
+        ...values,
+        image: imageFiles[0]?.originFileObj,
+        remove_image: imageRemoved && !imageFiles[0]?.originFileObj,
+      }
+      return editingProduct
+        ? updateProduct({ id: editingProduct.id, ...payload })
+        : createProduct(payload)
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] })
+      setModalOpen(false)
+      message.success(result.message || 'Đã lưu sản phẩm.')
+    },
+    onError: (error) => {
+      const errors = error?.errors ?? error?.response?.data?.errors
+      if (errors) {
+        form.setFields(Object.entries(errors).map(([name, messages]) => ({
+          name, errors: Array.isArray(messages) ? messages : [messages],
+        })))
+      }
+    },
+  })
+
+  const openProductForm = (product = null) => {
+    saveMutation.reset()
+    setEditingProduct(product)
+    setImageFiles([])
+    setImageRemoved(false)
+    form.resetFields()
+    form.setFieldsValue(product ? {
+      name: product.name,
+      shop_id: String(product.shop_id),
+      selling_price: product.price,
+      initial_quantity: product.inventory_quantity,
+    } : { shop_id: shopId, initial_quantity: 0 })
+    setModalOpen(true)
+  }
+
+  const columns = [
       {
         title: 'STT',
         key: 'index',
@@ -265,7 +160,11 @@ const ProductsPage = () => {
         dataIndex: 'name',
         key: 'name',
         width: 240,
-        render: (_, record) => <span className="products-name">{record.displayName}</span>,
+        render: (_, record) => (
+          <Tooltip title={record.displayName}>
+            <span className="products-name">{record.displayName}</span>
+          </Tooltip>
+        ),
       },
       {
         title: 'Cửa hàng',
@@ -274,15 +173,15 @@ const ProductsPage = () => {
         width: 220,
         render: (shop, record) => {
           const shopName = record?.shop?.name || shop?.name || '—'
-          return shopName === '—' ? (
-            '—'
-          ) : (
-            <Space size={8} className="products-shop">
-              <Avatar size={32} className="products-shop__avatar" aria-hidden="true">
-                {getInitial(shopName)}
-              </Avatar>
-              <span>{shopName}</span>
-            </Space>
+          return shopName === '—' ? '—' : (
+            <Tooltip title={shopName}>
+              <div className="products-shop">
+                <Avatar size={32} className="products-shop__avatar" aria-hidden="true">
+                  {getInitial(shopName)}
+                </Avatar>
+                <span className="products-shop__name">{shopName}</span>
+              </div>
+            </Tooltip>
           )
         },
       },
@@ -324,13 +223,21 @@ const ProductsPage = () => {
         align: 'right',
         render: (quantity) => formatQuantity(quantity),
       },
-    ],
-    [page, pageSize],
-  )
+      ...(canManageProducts ? [{
+        title: 'Thao tác', key: 'actions', width: 110,
+        render: (_, record) => (
+          <Button icon={<EditOutlined />} onClick={() => openProductForm(record)}>Sửa</Button>
+        ),
+      }] : []),
+    ]
+
+  const currentProductImage = editingProduct ? getProductImage(editingProduct) : null
 
   return (
     <main className="products-page">
-      <Card title="Danh sách sản phẩm" className="products-card">
+      <Card title="Danh sách sản phẩm" className="products-card" extra={canManageProducts && (
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => openProductForm()}>Thêm sản phẩm</Button>
+      )}>
         <div className="products-toolbar">
           <div className="products-toolbar__field">
             <label>Cửa hàng</label>
@@ -398,6 +305,91 @@ const ProductsPage = () => {
           }}
         />
       </Card>
+      <Modal
+        title={editingProduct ? 'Sửa sản phẩm' : 'Thêm sản phẩm'}
+        open={modalOpen}
+        onCancel={() => { if (!saveMutation.isPending) setModalOpen(false) }}
+        onOk={() => form.submit()}
+        okText="Lưu sản phẩm"
+        cancelText="Hủy"
+        confirmLoading={saveMutation.isPending}
+        cancelButtonProps={{ disabled: saveMutation.isPending }}
+        closable={!saveMutation.isPending}
+        maskClosable={!saveMutation.isPending}
+        forceRender
+      >
+        {editingProduct?.pancake_product_id != null && (
+          <Alert type="info" showIcon className="products-query-alert"
+            title="Sản phẩm đồng bộ Pancake"
+            description="Shop và mã Pancake được giữ nguyên. Lần đồng bộ tiếp theo sẽ cập nhật lại tên, giá, số lượng và ảnh từ Pancake." />
+        )}
+        {saveMutation.isError && (
+          <Alert type="error" showIcon className="products-query-alert"
+            title={getApiErrorMessage(saveMutation.error, 'Không thể lưu sản phẩm.')} />
+        )}
+        <Form form={form} layout="vertical" disabled={saveMutation.isPending} onFinish={(values) => saveMutation.mutate(values)}>
+          <Form.Item name="name" label="Tên sản phẩm" rules={[{ required: true, whitespace: true, message: 'Nhập tên sản phẩm.' }, { max: 255 }]}>
+            <Input maxLength={255} />
+          </Form.Item>
+          <Form.Item name="shop_id" label="Shop" rules={[{ required: true, message: 'Chọn shop.' }]}>
+            <ShopSelect useGlobalSelection={false} disabled={saveMutation.isPending || editingProduct?.pancake_product_id != null} />
+          </Form.Item>
+          <Form.Item name="selling_price" label="Giá bán (đ)" rules={[{ required: true, message: 'Nhập giá bán.' }, { type: 'number', min: 0, max: 999999999999.99 }]}>
+            <InputNumber
+              className="products-price-input"
+              min={0}
+              max={999999999999.99}
+              precision={2}
+              formatter={formatPriceInput}
+              parser={parsePriceInput}
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+          <Form.Item name="initial_quantity" label={editingProduct ? 'Số lượng tồn gốc' : 'Số lượng tồn nhập ban đầu'}
+            rules={[{ required: true, message: 'Nhập số lượng.' }, { type: 'integer', min: 0, max: 2147483647 }]}>
+            <InputNumber min={0} max={2147483647} precision={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item label="Ảnh sản phẩm (không bắt buộc)" extra="JPG, PNG hoặc WebP, tối đa 5 MB. Không chọn ảnh mới sẽ giữ ảnh hiện tại.">
+            {currentProductImage && currentProductImage !== PRODUCT_PLACEHOLDER && !imageRemoved && (
+              <div className="products-image-editor">
+                <span className="products-image-editor__label">Ảnh hiện tại</span>
+                <div className="products-image-editor__thumbnail">
+                  <Image
+                    src={currentProductImage}
+                    fallback={PRODUCT_PLACEHOLDER}
+                    width={80}
+                    height={80}
+                    className="products-image-editor__preview"
+                    alt={`Ảnh hiện tại của ${editingProduct.name}`}
+                  />
+                  <Button
+                    className="products-image-editor__remove"
+                    type="primary"
+                    danger
+                    shape="circle"
+                    size="small"
+                    icon={<CloseOutlined />}
+                    aria-label="Xóa ảnh hiện tại"
+                    title="Xóa ảnh hiện tại"
+                    onClick={() => setImageRemoved(true)}
+                  />
+                </div>
+              </div>
+            )}
+            <Upload accept="image/jpeg,image/png,image/webp" maxCount={1} fileList={imageFiles}
+              beforeUpload={(file) => {
+                if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+                  message.error('Chọn ảnh JPG, PNG hoặc WebP không quá 5 MB.')
+                  return Upload.LIST_IGNORE
+                }
+                return false
+              }}
+              onChange={({ fileList }) => setImageFiles(fileList)}>
+              <Button icon={<UploadOutlined />}>Chọn ảnh</Button>
+            </Upload>
+          </Form.Item>
+        </Form>
+      </Modal>
     </main>
   )
 }

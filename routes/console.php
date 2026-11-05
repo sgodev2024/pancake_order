@@ -22,3 +22,5 @@ Schedule::command('customer-care:reclaim-stale', [
     ->onFailure(fn () => Log::error('Scheduled customer-care auto reclaim failed.'));
 
 Schedule::command('huongchat:sync')->everyFiveMinutes()->withoutOverlapping(15);
+
+Schedule::command('care:notify')->everyMinute()->withoutOverlapping(5);

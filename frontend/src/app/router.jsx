@@ -123,6 +123,10 @@ export const router = createBrowserRouter([
           },
           { path: '/pancake', element: <Navigate to={ROUTES.PANCAKE_ORDERS} replace /> },
           {
+            path: ROUTES.POS_ORDERS,
+            element: <LazyRoute Page={lazy(() => import('../pages/Pos/PosOrdersPage.jsx'))} />,
+          },
+          {
             path: ROUTES.POS,
             element: <LazyRoute Page={lazy(() => import('../pages/Pos/PosPage.jsx'))} />,
           },
@@ -200,6 +204,7 @@ export const router = createBrowserRouter([
               route.path !== ROUTES.ZALO_INBOX &&
               route.path !== ROUTES.ORDERS &&
               route.path !== ROUTES.PANCAKE_ORDERS &&
+              route.path !== ROUTES.POS_ORDERS &&
               route.path !== ROUTES.POS &&
               route.path !== ROUTES.WAREHOUSE &&
               route.path !== ROUTES.OPPORTUNITIES &&

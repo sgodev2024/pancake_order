@@ -13,6 +13,7 @@ export const ROUTES = Object.freeze({
   ORDERS: '/don-hang',
   PANCAKE_ORDERS: '/don-hang/pancake',
   POS: '/ban-hang',
+  POS_ORDERS: '/don-pos',
   WAREHOUSE: '/kho',
   PRODUCTS: '/san-pham',
   STAFF: '/nhan-vien',

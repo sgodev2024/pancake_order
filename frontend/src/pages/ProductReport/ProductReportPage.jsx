@@ -394,7 +394,7 @@ const buildRevenueSlices = (items, totalRevenue) => {
   const leaders = [...(items || [])].sort((a, b) => (Number(b.revenue) || 0) - (Number(a.revenue) || 0)).slice(0, 5)
   const other = Math.max(0, totalRevenue - leaders.reduce((sum, item) => sum + (Number(item.revenue) || 0), 0))
   return [
-    ...leaders.map((item, index) => ({ key: `product-${index}-${item.name}`, label: item.name, value: Number(item.revenue) || 0 })),
+    ...leaders.map((item) => ({ key: item.name, label: item.name, value: Number(item.revenue) || 0 })),
     ...(other > 0 ? [{ key: 'other', label: 'Sản phẩm khác', value: other }] : []),
   ].filter((s) => s.value > 0)
 }
@@ -428,7 +428,7 @@ const ProductReportPage = () => {
 
   const reportQuery = useQuery({
     queryKey: ['product-period-report', reportParams],
-    queryFn: ({ signal }) => getProductPeriodReport(reportParams, { signal }),
+    queryFn: () => getProductPeriodReport(reportParams),
     staleTime: 5 * 60_000,
     enabled: Boolean(selectedFrom && selectedTo),
   })

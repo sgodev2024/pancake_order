@@ -1,12 +1,15 @@
+import NotificationBell from '../components/Notifications/NotificationBell.jsx'
 import {
   BellOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  ShoppingCartOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import { Avatar, Button, Dropdown, Layout, Tooltip } from 'antd'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { canUsePos } from '../auth/permissions.js'
 import { getRouteMetadata } from '../constants/menu.js'
 import { ROUTES } from '../constants/routes.js'
 
@@ -46,15 +49,18 @@ const AppHeader = ({ collapsed, isMobile, onToggleSidebar, onLogout, user }) => 
       </div>
 
       <div className="app-header__right">
-        <Tooltip title="Thông báo">
+        {canUsePos(user) && (
           <Button
-            type="text"
-            shape="circle"
-            icon={<BellOutlined />}
-            aria-label="Thông báo"
-            className="app-header__notification"
-          />
-        </Tooltip>
+            type={location.pathname === ROUTES.POS ? 'primary' : 'default'}
+            icon={<ShoppingCartOutlined />}
+            onClick={() => navigate(ROUTES.POS)}
+            className="app-header__pos"
+          >
+            Bán hàng POS
+          </Button>
+        )}
+
+        <NotificationBell user={user} />
 
         <Dropdown menu={{ items: menuItems, onClick: handleMenuClick }} trigger={['click']}>
           <button type="button" className="user-menu" aria-label="Mở menu người dùng">

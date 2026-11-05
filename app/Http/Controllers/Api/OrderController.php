@@ -69,6 +69,7 @@ class OrderController extends Controller implements HasMiddleware
             $request->filled('shop_id') ? $request->integer('shop_id') : null
         );
 
+        $request->validate(['origin' => ['nullable','in:local_pos,pancake,huongchat_web']]);
         try {
             $inputs = $request->only(
                 'search',
@@ -88,13 +89,19 @@ class OrderController extends Controller implements HasMiddleware
             $summaryShopIds = $requestedShopId !== null
                 ? [$requestedShopId]
                 : ($this->shopAccessService->isGlobal($user) ? null : $this->shopAccessService->ids($user)->all());
-            $useOrderSummary = $isSummaryView && $totalsOnly
+            $useOrderSummary = $isSummaryView && $totalsOnly && !$request->filled('origin')
                 && ! in_array(0, $summaryShopIds ?? [], true)
                 && $this->canUseOrderSummary($user, $inputs)
                 && OrderSummaryService::isReady();
             $summaryInputs = $inputs;
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
+            if ($request->query('origin') === 'pancake') {
+                // Legacy imports before explicit source tagging are Pancake orders.
+                $query->where(function ($source) { $source->where('orders.origin','pancake')->orWhereNull('orders.origin'); });
+            } elseif ($request->filled('origin')) {
+                $query->where('orders.origin',$request->query('origin'));
+            }
             $hasOrderOrigin = Schema::hasColumn('orders', 'origin');
             if ($isSummaryView) {
                 $query->with([

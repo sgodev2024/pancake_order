@@ -27,7 +27,7 @@ const PurchaseRegionsPage = () => {
   }), [appliedScope.shop_id, selectedFrom, selectedTo])
   const chartsQuery = useQuery({
     queryKey: ['provinces-charts', chartParams],
-    queryFn: ({ signal }) => getProvinceCharts(chartParams, { signal }),
+    queryFn: () => getProvinceCharts(chartParams),
     staleTime: 5 * 60_000,
   })
   const chartData = chartsQuery.data ?? {}

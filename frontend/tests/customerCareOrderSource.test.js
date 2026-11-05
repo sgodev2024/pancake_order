@@ -81,8 +81,12 @@ test('page renders one V1-aligned filter area and preserves source/apply/reset p
   assert.match(source, /\(\) => \(\{ type: pageMeta\.apiType, context: 'v2', \.\.\.appliedFilters, page \}\)/)
   assert.match(source, /staleTime: 45_000/)
   assert.match(source, /retry: shouldRetryCustomerCareQuery/)
-  assert.match(source, /enabled: Boolean\(selectedCare\?\.id\) && selectedCareTab === 'history'/)
-  assert.match(source, /enabled: Boolean\(selectedCare\?\.id\) && selectedCareTab === 'orders'/)
+  // Both detail queries follow the selected appointment; opening its order Modal reuses the cache.
+  for (const queryName of ['historyQuery', 'ordersQuery']) {
+    const query = source.slice(source.indexOf(`const ${queryName} = useQuery`)).split('})')[0]
+    assert.match(query, /enabled: Boolean\(selectedCare\?\.id\),/)
+    assert.match(query, /staleTime: 30_000/)
+  }
   assert.match(source, /<ShopSelect[\s\S]*?useGlobalSelection=\{false\}/)
   const shopHandler = source.slice(source.indexOf('const handleShopChange'), source.indexOf('const applyFilters'))
   assert.match(shopHandler, /changeCareFilterShop/)
@@ -96,7 +100,7 @@ test('page renders one V1-aligned filter area and preserves source/apply/reset p
   assert.match(filters, /<CustomerCareOrderPageFilter/)
   assert.match(filters, /<RangePicker/)
   assert.doesNotMatch(source, /Bộ lọc nâng cao|Người tạo lịch|advancedOpen|customer-care-advanced-filters/)
-  assert.match(source, /scroll=\{\{ x: 'max-content' \}\}/)
+  assert.match(source, /scroll=\{\{ x: columns\.reduce\(\(width, column\) => width \+ column\.width, 0\) \}\}/)
   assert.match(source, /fixed: 'right'/)
 })
 

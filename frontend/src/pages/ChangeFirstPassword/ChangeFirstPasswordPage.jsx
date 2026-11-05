@@ -1,8 +1,8 @@
 import { App, Button, Form, Input } from 'antd'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { changeFirstPassword } from '../../api/auth.api.js'
-import { isSessionSuperseded, useAuthStore } from '../../auth/auth.store.js'
+import { changeFirstPassword, getMe } from '../../api/auth.api.js'
+import { useAuthStore } from '../../auth/auth.store.js'
 import { ROUTES } from '../../constants/routes.js'
 import { getApiErrorMessage } from '../../utils/response.js'
 
@@ -10,15 +10,12 @@ const ChangeFirstPasswordPage = () => {
   const [submitting, setSubmitting] = useState(false)
   const { message } = App.useApp()
   const navigate = useNavigate()
-  const completeSession = useAuthStore((state) => state.completeSession)
+  const setSession = useAuthStore((state) => state.setSession)
   const clearSession = useAuthStore((state) => state.clearSession)
-  const beginSessionAttempt = useAuthStore((state) => state.beginSessionAttempt)
-  const isCurrentSessionAttempt = useAuthStore((state) => state.isCurrentSessionAttempt)
 
   const handleSubmit = async (values) => {
     if (submitting) return
     setSubmitting(true)
-    const attempt = beginSessionAttempt()
 
     try {
       const result = await changeFirstPassword({
@@ -29,11 +26,12 @@ const ChangeFirstPasswordPage = () => {
 
       if (!result.access_token) throw new Error('Phản hồi đổi mật khẩu không có access token mới.')
 
-      await completeSession({ ...result, require_password_change: false }, { attempt })
+      setSession({ token: result.access_token, user: result.user, requirePasswordChange: false })
+      const user = await getMe()
+      setSession({ token: result.access_token, user, requirePasswordChange: false })
       message.success(result.message || 'Đổi mật khẩu thành công.')
       navigate(ROUTES.HOME, { replace: true })
     } catch (error) {
-      if (isSessionSuperseded(error) || !isCurrentSessionAttempt(attempt)) return
       message.error(getApiErrorMessage(error, 'Không thể đổi mật khẩu.'))
 
       if (error?.status === 401 || error?.response?.status === 401) {

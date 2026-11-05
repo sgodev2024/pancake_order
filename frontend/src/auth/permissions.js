@@ -21,8 +21,19 @@ export const hasPermission = (user, permissionSlug) =>
 export const hasAnyPermission = (user, permissionSlugs = []) =>
   isAdmin(user) || permissionSlugs.some((slug) => hasPermission(user, slug))
 
+export const canUsePos = (user) =>
+  (['admin', 'staff-sale', 'manager-sale'].includes(user?.role?.slug)
+    || getPermissionSlugs(user).includes('pos-create'))
+  && hasPermission(user, 'list-product') && hasPermission(user, 'list-customer')
+
+// Warehouse access is explicitly granted, including for admins; no new implicit privilege.
+export const canViewWarehouse = (user) => getPermissionSlugs(user).includes('warehouse-view')
+export const canPackOrders = (user) => canViewWarehouse(user) && getPermissionSlugs(user).includes('warehouse-pack')
+
 export const filterMenuByPermissions = (items, user) =>
   items.reduce((visibleItems, item) => {
+    if (item.posOnly && !canUsePos(user)) return visibleItems
+    if (item.warehouseOnly && !canViewWarehouse(user)) return visibleItems
     if (item.adminOnly && !isAdmin(user)) return visibleItems
     if (item.reportAccess && !canAccessReports(user)) return visibleItems
     if (!hasPermission(user, item.permission)) return visibleItems

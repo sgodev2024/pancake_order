@@ -30,7 +30,6 @@ import {
   Space,
   Spin,
   Table,
-  Tabs,
   Tag,
   Timeline,
   Tooltip,
@@ -73,6 +72,16 @@ import './customer-care.css'
 const EMPTY_CUSTOMER_CARES = Object.freeze([])
 const { RangePicker } = DatePicker
 
+const CARE_TEXT_TOOLTIP_PROPS = {
+  classNames: { root: 'customer-care-text-tooltip' },
+  getPopupContainer: () => document.body,
+}
+
+const renderCareTableText = (value) => (
+  <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={value || undefined}>
+    <span className="customer-care-cell__ellipsis">{value || '—'}</span>
+  </Tooltip>
+)
 
 const shouldRetryCustomerCareQuery = (failureCount, error) => {
   const status = error?.status ?? error?.response?.status
@@ -177,7 +186,7 @@ const CustomerCareAssignee = ({ customerCare }) => {
 
     return (
       <div className="customer-care-cell">
-        <Tooltip title={assigneeName}>
+        <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={assigneeName}>
           <span className="customer-care-cell__ellipsis">{assigneeName}</span>
         </Tooltip>
       </div>
@@ -188,7 +197,7 @@ const CustomerCareAssignee = ({ customerCare }) => {
 
   return (
     <div className="customer-care-cell">
-      <Tooltip title={display.name}>
+      <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={display.name}>
         <span className="customer-care-cell__ellipsis">{display.name}</span>
       </Tooltip>
       <small>Dữ liệu cũ</small>
@@ -206,7 +215,7 @@ const CustomerCarePage = ({ pageType }) => {
   const [appliedFilters, setAppliedFilters] = useState(() => normalizeFilters(createEmptyFilters()))
   const [page, setPage] = useState(1)
   const [selectedCare, setSelectedCare] = useState(null)
-  const [selectedCareTab, setSelectedCareTab] = useState('history')
+  const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState(false)
   const [careConfirmation, setCareConfirmation] = useState(null)
   const [careConfirmationTime, setCareConfirmationTime] = useState(null)
   const [reclaimConfirmation, setReclaimConfirmation] = useState(null)
@@ -243,14 +252,15 @@ const CustomerCarePage = ({ pageType }) => {
   const historyQuery = useQuery({
     queryKey: ['customer-care-history', selectedCare?.id],
     queryFn: () => getCustomerCareHistories(selectedCare.id),
-    enabled: Boolean(selectedCare?.id) && selectedCareTab === 'history',
+    enabled: Boolean(selectedCare?.id),
     staleTime: 30_000,
   })
 
   const ordersQuery = useQuery({
     queryKey: ['customer-care-orders', selectedCare?.id],
     queryFn: () => getCustomerCareOrders(selectedCare.id),
-    enabled: Boolean(selectedCare?.id) && selectedCareTab === 'orders',
+    // Load once with the Drawer so the button shows the actual count; reuse this cache in the Modal.
+    enabled: Boolean(selectedCare?.id),
     staleTime: 30_000,
   })
 
@@ -380,13 +390,13 @@ const CustomerCarePage = ({ pageType }) => {
   }
 
   const openCareDrawer = useCallback((record, tab = 'history') => {
-    setSelectedCareTab(tab)
+    setIsOrderHistoryOpen(tab === 'orders')
     setSelectedCare(record)
   }, [])
 
   const closeCareDrawer = () => {
     setSelectedCare(null)
-    setSelectedCareTab('history')
+    setIsOrderHistoryOpen(false)
   }
 
   const openCareConfirmation = useCallback((record) => {
@@ -565,7 +575,7 @@ const CustomerCarePage = ({ pageType }) => {
                   <Avatar size={28} className="customer-care-shop__avatar" aria-hidden="true">
                     {getInitial(shop.name)}
                   </Avatar>
-                  <Tooltip title={shop.name}>
+                  <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={shop.name}>
                     <span className="customer-care-cell__ellipsis">{shop.name}</span>
                   </Tooltip>
                 </Space>
@@ -573,7 +583,7 @@ const CustomerCarePage = ({ pageType }) => {
                 <span>—</span>
               )}
               {managerLabel && (
-                <Tooltip title={managerLabel}>
+                <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={managerLabel}>
                   <small className="customer-care-cell__ellipsis">QL: {managerLabel}</small>
                 </Tooltip>
               )}
@@ -587,7 +597,7 @@ const CustomerCarePage = ({ pageType }) => {
         key: 'user_creator',
         width: 150,
         render: (user) => (
-          <Tooltip title={user?.name}>
+          <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={user?.name}>
             <span className="customer-care-cell__ellipsis">{user?.name || '—'}</span>
           </Tooltip>
         ),
@@ -619,10 +629,12 @@ const CustomerCarePage = ({ pageType }) => {
           const phones = formatPhones(record.customer_phones)
           return (
             <div className="customer-care-cell">
-              <Tooltip title={record.customer_name}>
+              <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={record.customer_name}>
                 <span className="customer-care-cell__ellipsis">{record.customer_name || '—'}</span>
               </Tooltip>
-              <small className="customer-care-cell__ellipsis">{phones}</small>
+              <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={phones}>
+                <small className="customer-care-cell__ellipsis">{phones}</small>
+              </Tooltip>
             </div>
           )
         },
@@ -640,7 +652,15 @@ const CustomerCarePage = ({ pageType }) => {
           return (
             <div className="customer-care-cell">
               {record.pancake_order_id ? (
-                <Tooltip title={internalOrderId ? `ID nội bộ: ${internalOrderId}` : undefined}>
+                <Tooltip
+                  {...CARE_TEXT_TOOLTIP_PROPS}
+                  title={(
+                    <>
+                      <div>{record.pancake_order_id}</div>
+                      {internalOrderId && <div>ID nội bộ: {internalOrderId}</div>}
+                    </>
+                  )}
+                >
                   <Typography.Text className="customer-care-code customer-care-cell__ellipsis">
                     {record.pancake_order_id}
                   </Typography.Text>
@@ -659,7 +679,7 @@ const CustomerCarePage = ({ pageType }) => {
         key: 'order_page_name',
         width: 180,
         render: (_, record) => (
-          <Tooltip title={record.order_page_name ?? undefined}>
+          <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={record.order_page_name ?? undefined}>
             <span className="customer-care-cell__ellipsis customer-care-order-page">
               {record.order_page_name ?? '—'}
             </span>
@@ -672,8 +692,8 @@ const CustomerCarePage = ({ pageType }) => {
         key: 'customer_addresss',
         width: 240,
         render: (address) => (
-          <Tooltip title={address}>
-            <span className="customer-care-cell__clamp">{address || '—'}</span>
+          <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={address}>
+            <span className="customer-care-cell__ellipsis">{address || '—'}</span>
           </Tooltip>
         ),
       },
@@ -683,12 +703,12 @@ const CustomerCarePage = ({ pageType }) => {
         width: 280,
         render: (_, record) => (
           <div className="customer-care-cell">
-            <Tooltip title={record.note}>
-              <span className="customer-care-cell__clamp">{record.note || '—'}</span>
+            <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={record.note}>
+              <span className="customer-care-cell__ellipsis">{record.note || '—'}</span>
             </Tooltip>
             {record.reason && (
-              <Tooltip title={record.reason}>
-                <small className="customer-care-cell__clamp">Lý do: {record.reason}</small>
+              <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={record.reason}>
+                <small className="customer-care-cell__ellipsis">Lý do: {record.reason}</small>
               </Tooltip>
             )}
           </div>
@@ -858,7 +878,7 @@ const CustomerCarePage = ({ pageType }) => {
 
   const orderColumns = useMemo(
     () => [
-      { title: 'Mã đơn', dataIndex: 'pancake_order_id', key: 'pancake_order_id', width: 155 },
+      { title: 'Mã đơn', dataIndex: 'pancake_order_id', key: 'pancake_order_id', width: 155, render: renderCareTableText },
       {
         title: 'Trạng thái',
         dataIndex: 'status',
@@ -883,18 +903,17 @@ const CustomerCarePage = ({ pageType }) => {
         dataIndex: ['user_creator', 'name'],
         key: 'user_creator',
         width: 150,
-        render: (value) => value || '—',
+        render: renderCareTableText,
       },
+      { title: 'Tạo lúc', dataIndex: 'created_at', key: 'created_at', width: 165, render: formatDateTime },
+      { title: 'Cửa hàng', dataIndex: ['shop', 'name'], key: 'shop', width: 170, render: renderCareTableText },
       {
         title: 'Ghi chú',
         dataIndex: 'note',
         key: 'note',
         width: 220,
-        ellipsis: true,
-        render: (value) => value || '—',
+        render: renderCareTableText,
       },
-      { title: 'Tạo lúc', dataIndex: 'created_at', key: 'created_at', width: 165, render: formatDateTime },
-      { title: 'Cửa hàng', dataIndex: ['shop', 'name'], key: 'shop', width: 170, render: (value) => value || '—' },
     ],
     [],
   )
@@ -1061,10 +1080,11 @@ const CustomerCarePage = ({ pageType }) => {
           className="app-table"
           rowKey="id"
           columns={columns}
+          tableLayout="fixed"
           dataSource={cares}
           size="small"
           loading={careQuery.isLoading || careQuery.isFetching}
-          scroll={{ x: 'max-content' }}
+          scroll={{ x: columns.reduce((width, column) => width + column.width, 0) }}
           onChange={(pagination) => setPage(pagination.current ?? 1)}
           locale={{
             emptyText: (
@@ -1095,6 +1115,7 @@ const CustomerCarePage = ({ pageType }) => {
         open={Boolean(selectedCare)}
         size="min(720px, 100vw)"
         onClose={closeCareDrawer}
+        keyboard={!isOrderHistoryOpen}
         destroyOnHidden
         className="customer-care-detail-drawer"
       >
@@ -1131,45 +1152,65 @@ const CustomerCarePage = ({ pageType }) => {
               </Descriptions.Item>
             </Descriptions>
 
-            <Tabs
-              activeKey={selectedCareTab}
-              onChange={setSelectedCareTab}
-              items={[
-                {
-                  key: 'history',
-                  label: `Lịch sử (${historyQuery.data?.length ?? 0})`,
-                  children: historyQuery.isError ? (
-                    <Alert type="warning" showIcon message={getApiErrorMessage(historyQuery.error)} />
-                  ) : (
-                    <Spin spinning={historyQuery.isLoading}>
-                      <Timeline items={historyItems} />
-                    </Spin>
-                  ),
-                },
-                {
-                  key: 'orders',
-                  label: `Đơn hàng (${ordersQuery.data?.length ?? 0})`,
-                  children: ordersQuery.isError ? (
-                    <Alert type="warning" showIcon message={getApiErrorMessage(ordersQuery.error)} />
-                  ) : (
-                    <Table
-                      className="app-table"
-                      size="small"
-                      rowKey={(record) => record.id ?? record.pancake_order_id}
-                      columns={orderColumns}
-                      dataSource={ordersQuery.data ?? []}
-                      loading={ordersQuery.isLoading}
-                      pagination={false}
-                      scroll={{ x: 640 }}
-                      locale={{ emptyText: 'Chưa có đơn hàng liên quan.' }}
-                    />
-                  ),
-                },
-              ]}
-            />
+            <Button
+              className="customer-care-order-history-button"
+              icon={<ShoppingOutlined />}
+              onClick={() => setIsOrderHistoryOpen(true)}
+            >
+              Xem lịch sử đơn hàng ({ordersQuery.isLoading ? '…' : ordersQuery.data?.length ?? 0})
+            </Button>
+
+            <section aria-label="Lịch sử chăm sóc khách hàng">
+              <Typography.Title level={5} style={{ marginTop: 0 }}>
+                Lịch sử ({historyQuery.data?.length ?? 0})
+              </Typography.Title>
+              {historyQuery.isError ? (
+                <Alert type="warning" showIcon message={getApiErrorMessage(historyQuery.error)} />
+              ) : (
+                <Spin spinning={historyQuery.isLoading}>
+                  <Timeline items={historyItems} />
+                </Spin>
+              )}
+            </section>
           </div>
         )}
       </Drawer>
+
+      <Modal
+        title={`Lịch sử đơn hàng – ${selectedCare?.customer_name || '—'}`}
+        open={Boolean(selectedCare) && isOrderHistoryOpen}
+        onCancel={() => setIsOrderHistoryOpen(false)}
+        footer={null}
+        centered
+        destroyOnHidden
+        zIndex={1100}
+        width="min(1600px, 94vw)"
+        className="customer-care-order-history-modal"
+        styles={{
+          container: { maxHeight: '88dvh', display: 'flex', flexDirection: 'column' },
+          body: { minHeight: 0, overflow: 'auto' },
+        }}
+      >
+        {ordersQuery.isError ? (
+          <Alert type="warning" showIcon message={getApiErrorMessage(ordersQuery.error)} />
+        ) : (
+          <Table
+            className="app-table"
+            size="small"
+            rowKey={(record) => record.id ?? record.pancake_order_id}
+            columns={orderColumns}
+            tableLayout="fixed"
+            dataSource={ordersQuery.data ?? []}
+            loading={ordersQuery.isLoading}
+            pagination={false}
+            scroll={{
+              x: orderColumns.reduce((width, column) => width + column.width, 0),
+              y: 'min(62dvh, calc(88dvh - 160px))',
+            }}
+            locale={{ emptyText: 'Chưa có đơn hàng liên quan.' }}
+          />
+        )}
+      </Modal>
 
       <Modal
         title="Xác nhận"

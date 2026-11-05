@@ -31,7 +31,7 @@ const getHistoryErrorMessage = (error) => {
   return 'Không thể tải lịch sử đơn hàng. Vui lòng thử lại.'
 }
 
-const ProductCell = ({ products }) => {
+export const ProductCell = ({ products }) => {
   if (!Array.isArray(products) || products.length === 0) return '—'
 
   return (

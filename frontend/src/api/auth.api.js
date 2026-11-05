@@ -6,11 +6,8 @@ export const login = async (credentials) => {
   return response.data
 }
 
-export const getMe = async ({ token, signal } = {}) => {
-  const response = await apiClient.get(API_ROUTES.ME, {
-    ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
-    ...(signal ? { signal } : {}),
-  })
+export const getMe = async () => {
+  const response = await apiClient.get(API_ROUTES.ME)
   return response.data.data
 }
 

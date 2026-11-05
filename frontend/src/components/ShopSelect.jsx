@@ -11,6 +11,7 @@ const ShopSelect = ({
   value,
   onChange,
   useGlobalSelection = true,
+  disabled = false,
 }) => {
   const selectedShopId = useShopStore((state) => state.selectedShopId)
   const setSelectedShopId = useShopStore((state) => state.setSelectedShopId)
@@ -53,6 +54,7 @@ const ShopSelect = ({
   return (
     <div className={className} style={style}>
       <Select
+        disabled={disabled}
         allowClear
         showSearch
         loading={shopsQuery.isLoading}

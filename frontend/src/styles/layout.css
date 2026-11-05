@@ -176,6 +176,10 @@
   font-size: 17px;
 }
 
+.app-header__pos {
+  flex: 0 0 auto;
+}
+
 .user-menu {
   max-width: 260px;
   padding: 4px 7px;
@@ -356,6 +360,10 @@
 
   .app-header__left {
     gap: 8px;
+  }
+
+  .app-header__title {
+    display: none;
   }
 
   .user-menu__copy {

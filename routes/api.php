@@ -53,6 +53,12 @@ Route::prefix('v1/auth')->group(function () {
 Route::get('/v1/settings/{code}', [SettingController::class, 'show']);
 // --- Nhóm các Route Private (Yêu cầu Passport Token) ---
 Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::class])->prefix('v1')->group(function () {
+    Route::get('care-notifications', [\App\Http\Controllers\Api\CareNotificationController::class, 'index']);
+    Route::post('care-notifications/read-all', [\App\Http\Controllers\Api\CareNotificationController::class, 'readAll']);
+    Route::post('care-notifications/{id}/read', [\App\Http\Controllers\Api\CareNotificationController::class, 'read'])->whereNumber('id');
+    Route::get('care-notification-templates', [\App\Http\Controllers\Api\CareNotificationController::class, 'templates']);
+    Route::put('care-notification-templates/{type}', [\App\Http\Controllers\Api\CareNotificationController::class, 'save']);
+
     Route::post('/change-first-password', [AuthController::class, 'changeFirstPassword']);
     // Nhóm tài khoản (Profile)
     Route::prefix('me')->group(function () {
