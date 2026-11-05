@@ -22,7 +22,7 @@ class CustomerReadAccessService
     /**
      * @throws AuthorizationException
      */
-    public function authorize(User $actor, Customer $customer): void
+    public function authorize(User $actor, Customer $customer, bool $allowCskhShopCustomers = false): void
     {
         if (! $this->shopAccessService->canAccessShop($actor, (int) $customer->shop_id)) {
             throw new AuthorizationException('You do not have access to this customer shop.');
@@ -30,7 +30,8 @@ class CustomerReadAccessService
 
         if ($actor->isAdmin()
             || $actor->isManagerSale()
-            || $actor->isManagerCskh()) {
+            || $actor->isManagerCskh()
+            || ($allowCskhShopCustomers && $actor->isStaffCskh())) {
             return;
         }
 
@@ -45,11 +46,12 @@ class CustomerReadAccessService
      * Apply the same record restriction used by the existing customer list
      * endpoints. Shop scope is intentionally applied by the caller.
      */
-    public function applyRecordScope($query, User $actor, string $qualifiedAssignedColumn = 'customers.assigned_user_id'): void
+    public function applyRecordScope($query, User $actor, string $qualifiedAssignedColumn = 'customers.assigned_user_id', bool $allowCskhShopCustomers = false): void
     {
         if ($actor->isAdmin()
             || $actor->isManagerSale()
-            || $actor->isManagerCskh()) {
+            || $actor->isManagerCskh()
+            || ($allowCskhShopCustomers && $actor->isStaffCskh())) {
             return;
         }
 

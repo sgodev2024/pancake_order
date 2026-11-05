@@ -114,11 +114,11 @@ class OrderService
                 if (! $customer) {
                     throw ValidationException::withMessages(['customer_id' => 'Khách hàng không thuộc shop đã chọn.']);
                 }
-                app(CustomerReadAccessService::class)->authorize($actor, $customer);
+                app(CustomerReadAccessService::class)->authorize($actor, $customer, allowCskhShopCustomers: true);
             } else {
                 $localCustomers = Customer::where('shop_id', $input['shop_id'])
                     ->whereNull('pancake_customer_id')->where('phone_numbers', $input['customer']['phone']);
-                app(CustomerReadAccessService::class)->applyRecordScope($localCustomers, $actor);
+                app(CustomerReadAccessService::class)->applyRecordScope($localCustomers, $actor, allowCskhShopCustomers: true);
                 $customer = $localCustomers->orderBy('id')->lockForUpdate()->first();
                 if (! $customer) {
                     $customer = Customer::create([

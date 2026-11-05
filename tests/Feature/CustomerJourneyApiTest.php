@@ -35,6 +35,12 @@ class CustomerJourneyApiTest extends TestCase
         DB::purge('customer_journey_testing');
         DB::setDefaultConnection('customer_journey_testing');
         $this->createSchema();
+        (require database_path('migrations/2026_11_04_000001_create_staff_account_states_table.php'))->up();
+        Schema::table('orders', function (Blueprint $table): void {
+            $table->unsignedBigInteger('customer_id')->nullable();
+            $table->decimal('cod', 15, 2)->default(0);
+            $table->unsignedInteger('status')->default(0);
+        });
     }
 
     public function test_admin_gets_a_safe_local_customer_journey_in_chronological_order(): void
@@ -570,6 +576,9 @@ class CustomerJourneyApiTest extends TestCase
             $notOwn->id,
         ]);
         $this->assertCustomerListIds($staff, "shop_id={$shop->id}&journey_action=order.created", [$own->id]);
+        $this->grantPermission($care, 'list-customer');
+        $this->assertCustomerListIds($care, '', [$own->id, $notOwn->id]);
+        $this->actingAs($care, 'api')->getJson("/api/v1/customers?shop_id={$otherShop->id}&page=1")->assertForbidden();
         $this->actingAs($manager, 'api')
             ->getJson("/api/v1/customers?shop_id={$otherShop->id}&journey_action=order.created")
             ->assertForbidden();

@@ -432,24 +432,26 @@ class PosOrderTest extends TestCase
         $this->assertSame($before, DB::table('role_permissions')->orderBy('id')->get()->toJson());
     }
 
-    public function test_staff_cskh_pos_grant_does_not_expand_customer_scope_or_accept_forged_creator(): void
+    public function test_staff_cskh_can_use_shop_customers_in_pos_but_cannot_cross_shops_or_forge_creator(): void
     {
         $cskh = $this->actor('staff-cskh');
         (require database_path('migrations/2026_10_22_000001_add_explicit_pos_permission.php'))->up();
         RolePermission::create(['role_id' => $cskh->role_id, 'permission_id' => Permission::where('slug', 'pos-create')->sole()->id]);
-        $own = $this->customer($this->shop, $cskh);
-        $private = $this->customer($this->shop, $this->actor);
+        $this->customer($this->shop, $cskh);
+        $shopCustomer = $this->customer($this->shop, $this->actor);
+        $outside = $this->customer($this->otherShop, $this->actor);
         $this->actingAs($cskh, 'api');
         $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->shop->id)->assertOk()
-            ->assertJsonCount(1, 'data.customers')->assertJsonPath('data.customers.0.id', $own->id);
-        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $private->id]))->assertForbidden();
+            ->assertJsonCount(2, 'data.customers')->assertJsonFragment(['id' => $shopCustomer->id]);
+        $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->otherShop->id)->assertForbidden();
+        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $outside->id]))->assertUnprocessable();
         foreach (['user_id', 'created_by_user_id', 'user_creator_id', 'user_assigning_seller_id', 'role_id', 'permissions'] as $field) {
             $this->postJson('/api/v1/orders', $this->payload([$field => $field === 'permissions' ? ['pos-create'] : 1]))
                 ->assertUnprocessable()->assertJsonValidationErrors($field);
         }
         $this->assertDatabaseCount('orders', 0);
-        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $own->id]))->assertCreated()
-            ->assertJsonPath('data.created_by_user_id', $cskh->id)->assertJsonPath('data.customer_id', $own->id);
+        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $shopCustomer->id]))->assertCreated()
+            ->assertJsonPath('data.created_by_user_id', $cskh->id)->assertJsonPath('data.customer_id', $shopCustomer->id);
         Http::assertNothingSent();
     }
 

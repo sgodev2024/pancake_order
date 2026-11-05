@@ -117,7 +117,7 @@ class CustomerController extends Controller implements HasMiddleware
                 $query->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
             }
             if (! $this->shopAccessService->isGlobal($user)) {
-                $this->customerReadAccessService->applyRecordScope($query, $user, 'assigned_user_id');
+                $this->customerReadAccessService->applyRecordScope($query, $user, 'assigned_user_id', allowCskhShopCustomers: true);
             }
             $this->customerJourneyFilterService->apply($query, $journeyFilters);
             $pageNumber = $inputs['page'];
@@ -154,7 +154,7 @@ class CustomerController extends Controller implements HasMiddleware
         ]);
         $this->shopAccessService->authorizeRequestedShopId($request->user(), $data['shop_id']);
         $query = Customer::where('shop_id', $data['shop_id']);
-        $this->customerReadAccessService->applyRecordScope($query, $request->user());
+        $this->customerReadAccessService->applyRecordScope($query, $request->user(), allowCskhShopCustomers: true);
         if (! empty($data['search'])) {
             $query->where(function ($q) use ($data) {
                 $q->where('name', 'like', '%'.$data['search'].'%')
