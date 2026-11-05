@@ -42,6 +42,21 @@ class WarehouseTest extends TestCase
 
     private Product $local;
 
+    public function test_warehouse_role_can_be_registered_twice_without_changing_existing_roles_or_memberships(): void
+    {
+        $before = DB::table('role_permissions')->orderBy('id')->get()->toJson();
+        $memberships = DB::table('shop_users')->orderBy('id')->get()->toJson();
+        $migration = require database_path('migrations/2026_11_05_000002_add_warehouse_role.php');
+        $migration->up();
+        $migration->up();
+        $role = Role::where('slug', 'warehouse')->sole();
+        $this->assertSame('Kho', $role->name);
+        $this->assertSame(['warehouse-pack', 'warehouse-view'], $role->permissions()->orderBy('slug')->pluck('slug')->all());
+        $this->assertSame($before, DB::table('role_permissions')->where('role_id', '!=', $role->id)->orderBy('id')->get()->toJson());
+        $this->assertSame($memberships, DB::table('shop_users')->orderBy('id')->get()->toJson());
+        $this->assertSame(0, User::where('role_id', $role->id)->count());
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
