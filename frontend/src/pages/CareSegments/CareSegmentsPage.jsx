@@ -5,7 +5,6 @@ import dayjs from 'dayjs'
 import 'dayjs/locale/vi'
 import viPicker from 'antd/locale/vi_VN'
 
-dayjs.locale('vi')
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../../api/client.js'
 import { getShops } from '../../api/shops.api.js'
@@ -14,6 +13,14 @@ import { useAuthStore } from '../../auth/auth.store.js'
 import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
 import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
 import { ROUTES } from '../../constants/routes.js'
+
+const monthLocale = {
+  ...viPicker.DatePicker,
+  lang: {
+    ...viPicker.DatePicker.lang,
+    shortMonths: Array.from({ length: 12 }, (_, index) => `Tháng ${index + 1}`),
+  },
+}
 
 const initial = () => ({ months: [dayjs().startOf('month'), dayjs().endOf('month')], shops: [], sources: [], products: [], match: 'any', search: '' })
 const paramsFor = (filters) => ({
@@ -106,7 +113,7 @@ export default function CareSegmentsPage() {
         allowClear showSearch placeholder="Tất cả nguồn đơn" value={draft.sources} onChange={(v) => update('sources', v)}
         loading={sourceOptions.isFetching} disabled={!draft.months?.[0] || !draft.months?.[1]}
         options={sourceOptions.data ?? []} filterOption={filterOrderSource} optionRender={renderOrderSourceOption} /></div>
-      <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" locale={viPicker.DatePicker} format="[Tháng] MM/YYYY" placeholder={['Từ tháng', 'Đến tháng']} value={draft.months} onChange={(v) => setDraft((old) => ({ ...old, months: v, sources: [] }))} style={{ width: '100%' }} /></div>
+      <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" locale={monthLocale} format="[Tháng] MM/YYYY" placeholder={['Từ tháng', 'Đến tháng']} value={draft.months} onChange={(v) => setDraft((old) => ({ ...old, months: v, sources: [] }))} style={{ width: '100%' }} /></div>
       <div><label>Sản phẩm đã mua</label><Select aria-label="Sản phẩm đã mua" mode="multiple" showSearch optionFilterProp="search"
         placeholder="Tên hoặc mã sản phẩm" style={{ width: '100%' }} value={draft.products} onChange={(v) => update('products', v)}
         options={(report.data?.products ?? []).map((p) => ({ ...p, search: `${p.label} ${p.code}`, label: p.code ? `${p.label} · ${p.code}` : p.label }))} /></div>
