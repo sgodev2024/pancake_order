@@ -42,6 +42,14 @@ class OrderService
                 return $existing;
             }
             Shop::whereKey($input['shop_id'])->sharedLock()->firstOrFail();
+            $page = null;
+            if (isset($input['order_page_id'])) {
+                $page = app(OrderPageOptionsService::class)->query($actor, (int) $input['shop_id'])
+                    ->where('pancake_order_page_id', $input['order_page_id'])->first();
+                if (! $page) {
+                    throw ValidationException::withMessages(['order_page_id' => 'Nguồn đơn không khả dụng cho cửa hàng này.']);
+                }
+            }
             $products = Product::where('shop_id', $input['shop_id'])
                 ->whereIn('id', array_column($input['items'], 'product_id'))
                 ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
@@ -157,6 +165,10 @@ class OrderService
                     ]],
                 ],
             ];
+            if ($page) {
+                $orderData['pancake_order_page_id'] = $page->id;
+                $orderData['pancake_order_page_name'] = $page->name;
+            }
             if (Schema::hasColumn('orders', 'prepaid_amount')) {
                 $orderData['prepaid_amount'] = self::moneyString($paid);
             }

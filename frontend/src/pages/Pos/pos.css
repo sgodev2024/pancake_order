@@ -5,7 +5,7 @@
 .pos-layout .ant-card { border-radius: 12px; }
 .pos-layout .ant-card-head { padding-inline: 20px; }
 .pos-layout .ant-card-body { padding: 20px; }
-.pos-product-filters { display: grid; grid-template-columns: minmax(150px, .8fr) 1.2fr; gap: 12px; margin-bottom: 12px; }
+.pos-product-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 1.4fr); gap: 12px; margin-bottom: 12px; }
 .pos-product-filters .ant-select { width: 100%; }
 .pos-product-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .pos-product { display: flex; flex-direction: column; gap: 8px; border: 1px solid #e2e8f0; border-radius: 10px; background: white; padding: 12px; text-align: left; cursor: pointer; font: inherit; min-width: 0; transition: border-color .15s, box-shadow .15s; }

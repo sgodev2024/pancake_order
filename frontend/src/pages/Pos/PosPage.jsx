@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getProducts } from '../../api/products.api.js'
 import { getCustomers } from '../../api/customers.api.js'
-import { createOrder, getOrder } from '../../api/orders.api.js'
+import { createOrder, getOrder, getOrderPages } from '../../api/orders.api.js'
 import { posShopOptionsQueryOptions } from '../../api/shops.api.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import { canUsePos } from '../../auth/permissions.js'
@@ -90,7 +90,13 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const shopDialog = useRef(null)
   const paymentDialog = useRef(null)
   const currentDraft = useRef(null)
-  const draftFingerprint = JSON.stringify({ cart, fields, moneyInputErrors })
+  const [orderPageId, setOrderPageId] = useState()
+  const pagesQuery = useQuery({
+    queryKey: ['pos-order-pages', user?.id, shopId],
+    queryFn: ({ signal }) => getOrderPages({ shop_id: shopId }, { signal }),
+    enabled: shopsReady && !!shopId,
+  })
+  const draftFingerprint = JSON.stringify({ cart, fields, moneyInputErrors, orderPageId })
   useLayoutEffect(() => {
     currentDraft.current = draftFingerprint
     return () => { currentDraft.current = null }
@@ -165,6 +171,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
         setPaymentConfirmed(false)
       }
       const errors = error?.errors ?? error?.response?.data?.errors
+      if (errors?.order_page_id) message.error(errors.order_page_id[0])
       if (errors) form.setFields(Object.entries(errors).map(([name, messages]) => ({
         name: name.split('.'), errors: Array.isArray(messages) ? messages : [messages],
       })))
@@ -173,6 +180,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const draftLocked = mutation.isPending || lockedRequest || !!created
   const disabled = draftLocked || !shopsReady || !shopId
   const resetDraft = () => {
+    setOrderPageId(undefined)
     setCart([]); setCreated(null); pendingRequest.current = null; setLockedRequest(false)
     setPaymentConfirmed(false); setMoneyInputErrors({})
     form.resetFields(); mutation.reset(); setCustomerSearch(''); setCustomerTerm(''); setSelectedCustomer(null)
@@ -205,6 +213,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
         ? { customer_id: values.customer_id }
         : { customer: { name: values.customer_name, phone: values.customer_phone } }),
       shipping_address: values.shipping_address,
+      ...(orderPageId ? { order_page_id: orderPageId } : {}),
       items: cart.map(({ product_id, quantity, unit_price }) => ({ product_id, quantity, unit_price })),
       discount_amount: centsToAmount(submittedTotals.discount), shipping_fee: centsToAmount(submittedTotals.shipping), surcharge: centsToAmount(submittedTotals.surcharge),
       payment_mode: values.payment_mode ?? 'cod',
@@ -250,6 +259,11 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
       <Card className="pos-products" title="Sản phẩm">
         <div className="pos-product-filters"><ShopSelectInput shopsQuery={shopsQuery} value={shopsReady ? shopId : undefined}
           onChange={changeShop} disabled={draftLocked || !shopsReady} allowClear={(shopsQuery.data?.length ?? 0) > 1} />
+          <Select aria-label="Nguồn đơn" placeholder="Chọn nguồn đơn" allowClear showSearch
+            optionFilterProp="label" value={orderPageId} onChange={setOrderPageId} disabled={disabled}
+            loading={pagesQuery.isFetching} status={pagesQuery.isError ? 'error' : undefined}
+            notFoundContent={pagesQuery.isError ? 'Không thể tải nguồn đơn' : 'Không có nguồn đơn'}
+            options={(pagesQuery.data ?? []).map(({ id, name }) => ({ value: String(id), label: name }))} />
           <Input prefix={<SearchOutlined />} value={search} disabled={!shopId || disabled} allowClear onChange={(event) => setSearch(event.target.value)} placeholder="Tên, mã sản phẩm hoặc barcode" aria-label="Tìm sản phẩm POS" /></div>
         {shopsQuery.isError ? <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
           : !shopsReady ? <Spin tip="Đang tải cửa hàng"><Empty description="Đang tải danh sách cửa hàng" /></Spin>

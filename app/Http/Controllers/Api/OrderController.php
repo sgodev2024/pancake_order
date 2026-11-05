@@ -476,6 +476,7 @@ SQL;
             'role_id' => ['prohibited'],
             'permissions' => ['prohibited'],
             'idempotency_key' => ['required', 'uuid'],
+            'order_page_id' => ['sometimes', 'required', 'string', 'max:255'],
             'shop_id' => ['required', 'integer', Rule::exists('shops', 'id')->whereNull('deleted_at')],
             'customer_id' => ['nullable', 'integer', 'prohibits:customer'],
             'customer' => ['required_without:customer_id', 'array:name,phone', 'prohibits:customer_id'],
@@ -531,6 +532,7 @@ SQL;
 
         return array_merge($order->load('shop:id,name', 'user_creator')->toArray(), [
             'reference' => $order->origin === 'local_pos' ? 'POS-'.$order->id : $order->pancake_order_id,
+            'order_page_name' => $order->pancake_order_page_name,
             'totals' => $payload['pos_totals'] ?? null,
             'items' => $payload['items'] ?? [], 'payments' => $payload['payments'] ?? [],
         ]);

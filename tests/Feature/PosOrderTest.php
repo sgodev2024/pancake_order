@@ -87,6 +87,23 @@ class PosOrderTest extends TestCase
         Queue::fake();
     }
 
+    public function test_pos_saves_a_source_from_its_shop_without_changing_order_origin(): void
+    {
+        Order::create([
+            'shop_id' => $this->shop->id, 'origin' => 'pancake',
+            'user_creator_id' => $this->actor->pancake_user_id,
+            'pancake_order_page_id' => 'page-1', 'pancake_order_page_name' => 'Facebook Shop',
+        ]);
+        $this->postJson('/api/v1/orders', $this->payload(['order_page_id' => 'unknown']))
+            ->assertUnprocessable()->assertJsonValidationErrors('order_page_id');
+        $input = $this->payload(['order_page_id' => 'page-1']);
+        $this->postJson('/api/v1/orders', $input)->assertCreated()
+            ->assertJsonPath('data.origin', 'local_pos')
+            ->assertJsonPath('data.pancake_order_page_id', 'page-1')
+            ->assertJsonPath('data.order_page_name', 'Facebook Shop');
+        $this->postJson('/api/v1/orders', $input)->assertOk()->assertJsonPath('replayed', true);
+    }
+
     private function runMigration(): void
     {
         (require database_path('migrations/2026_10_21_000001_add_local_pos_support.php'))->up();

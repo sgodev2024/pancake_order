@@ -205,7 +205,7 @@ const OrdersPage = ({ origin = 'pancake' }) => {
         key: 'order_page_name',
         width: 180,
         render: (pageName, record) => {
-          if (record.order_origin === 'local_pos') return <Tag color="blue">POS Local</Tag>
+          if (record.order_origin === 'local_pos' && !pageName) return <Tag color="blue">POS Local</Tag>
           const displayName = getOrderSourceDisplayName(pageName, record.order_source_name)
           if (displayName === '—') return displayName
 
