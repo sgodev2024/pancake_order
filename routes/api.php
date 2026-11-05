@@ -105,6 +105,7 @@ Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::cl
     Route::get('orders/monthly-counts', [OrderController::class, 'monthlyCounts'])
         ->middleware(AdminOnlyMiddleware::class.':allow-director');
     Route::get('orders/sales-chart-data', [OrderController::class, 'salesChartData']);
+    Route::post('orders/pos/delete', [OrderController::class, 'deletePosOrders']);
     Route::apiResource('orders', OrderController::class);
     Route::get('warehouse/orders', [\App\Http\Controllers\Api\WarehouseController::class, 'index']);
     Route::get('warehouse/orders/{order}', [\App\Http\Controllers\Api\WarehouseController::class, 'show']);

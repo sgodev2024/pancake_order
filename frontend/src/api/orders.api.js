@@ -88,3 +88,6 @@ export const getOrderHistory = async (orderId, params = {}) => {
 
 export const createOrder = async (payload) => (await apiClient.post(API_ROUTES.ORDERS, payload)).data
 export const getOrder = async (id) => (await apiClient.get(`${API_ROUTES.ORDERS}/${id}`)).data.data
+
+
+export const deletePosOrders = async (ids) => (await apiClient.post(`${API_ROUTES.ORDERS}/pos/delete`, { ids })).data

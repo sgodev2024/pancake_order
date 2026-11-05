@@ -105,6 +105,29 @@ class PosOrderTest extends TestCase
         $this->postJson('/api/v1/orders', $input)->assertOk()->assertJsonPath('replayed', true);
     }
 
+    public function test_admin_can_soft_delete_multiple_new_pos_orders_atomically(): void
+    {
+        (require database_path('migrations/2026_11_04_000001_create_aicrm_shipments.php'))->up();
+        $first = $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->json('data.id');
+        $second = $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->json('data.id');
+        $pancake = Order::create(['shop_id' => $this->shop->id, 'origin' => 'pancake']);
+        $url = '/api/v1/orders/pos/delete';
+
+        $this->postJson($url, ['ids' => [$first]])->assertForbidden();
+        $this->actingAs($this->actor('admin'), 'api');
+        $this->postJson($url, ['ids' => [$first, $pancake->id]])->assertUnprocessable();
+        Order::findOrFail($second)->forceFill(['warehouse_status' => Order::WAREHOUSE_PACKED])->save();
+        $this->postJson($url, ['ids' => [$first, $second]])->assertConflict();
+        $this->assertNotNull(Order::find($first));
+        Order::findOrFail($second)->forceFill(['warehouse_status' => Order::WAREHOUSE_WAITING])->save();
+
+        $this->postJson($url, ['ids' => [$first, $second]])->assertOk();
+        $this->postJson($url, ['ids' => [$first]])->assertOk();
+        $this->assertSoftDeleted('orders', ['id' => $first]);
+        $this->assertSoftDeleted('orders', ['id' => $second]);
+        $this->assertNotNull(Order::find($pancake->id));
+    }
+
     private function runMigration(): void
     {
         (require database_path('migrations/2026_10_21_000001_add_local_pos_support.php'))->up();

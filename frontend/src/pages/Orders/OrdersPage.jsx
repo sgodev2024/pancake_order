@@ -1,10 +1,10 @@
-import { EyeOutlined, FilterOutlined, MoreOutlined, ReloadOutlined } from '@ant-design/icons'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Avatar, Button, Card, DatePicker, Descriptions, Dropdown, Empty, Input, InputNumber, Modal, Result, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import { DeleteOutlined, EyeOutlined, FilterOutlined, MoreOutlined, ReloadOutlined } from '@ant-design/icons'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
+import { App, Avatar, Button, Card, DatePicker, Descriptions, Dropdown, Empty, Input, InputNumber, Modal, Result, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import dayjs from 'dayjs'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getOrders, getOrderTotals, orderPageQueryOptions } from '../../api/orders.api.js'
+import { deletePosOrders, getOrders, getOrderTotals, orderPageQueryOptions } from '../../api/orders.api.js'
 import ShopSelect from '../../components/ShopSelect.jsx'
 import {
   DEFAULT_ORDER_PAGE_SIZE,
@@ -13,7 +13,7 @@ import {
   ORDER_STATUSES,
 } from '../../constants/order.js'
 import { ROUTES } from '../../constants/routes.js'
-import { isPermissionError, isUnauthorizedError } from '../../utils/response.js'
+import { getApiErrorMessage, isPermissionError, isUnauthorizedError } from '../../utils/response.js'
 import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
 import {
   changeOrderFilterShop,
@@ -23,7 +23,7 @@ import {
   normalizeOrderFilters,
 } from './orderFilters.js'
 import { useAuthStore } from '../../auth/auth.store.js'
-import { canUsePos } from '../../auth/permissions.js'
+import { canUsePos, isAdmin } from '../../auth/permissions.js'
 import './orders.css'
 
 const { RangePicker } = DatePicker
@@ -45,6 +45,9 @@ const formatVnd = (value) => {
 
 const getInitial = (name) => name?.trim()?.charAt(0)?.toLocaleUpperCase('vi') || '—'
 
+const isDeletablePos = (order) => String(order.status) === '0'
+  && !order.packed_at && order.warehouse_status !== 'packed' && !order.order_number_vtp
+
 const OrdersPage = ({ origin = 'pancake' }) => {
   const navigate = useNavigate()
   const user = useAuthStore((state) => state.user)
@@ -53,6 +56,30 @@ const OrdersPage = ({ origin = 'pancake' }) => {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_ORDER_PAGE_SIZE)
   const [selectedOrder, setSelectedOrder] = useState(null)
+
+  const { modal, message } = App.useApp()
+  const queryClient = useQueryClient()
+  const canDelete = origin === 'local_pos' && isAdmin(user)
+  const [selection, setSelection] = useState({ page: null, ids: [] })
+  const confirmDelete = useCallback((ids) => modal.confirm({
+    title: ids.length === 1 ? 'Xóa đơn POS?' : `Xóa ${ids.length} đơn POS?`,
+    content: 'Đơn sẽ bị xóa khỏi CRM. Thao tác này không hoàn tiền hoặc điều chỉnh tồn kho.',
+    okText: 'Xóa đơn', okButtonProps: { danger: true }, cancelText: 'Hủy',
+    onOk: async () => {
+      try {
+        await deletePosOrders(ids)
+        setSelection({ page: null, ids: [] })
+        setSelectedOrder(null)
+        setPage(1)
+        for (const key of ['orders', 'order-totals', 'order-detail', 'warehouse-orders', 'warehouse-order', 'overview', 'customers']) {
+          queryClient.invalidateQueries({ queryKey: [key] })
+        }
+        message.success('Đã xóa đơn POS.')
+      } catch (error) {
+        message.error(getApiErrorMessage(error, 'Không thể xóa đơn POS.'))
+      }
+    },
+  }), [message, modal, queryClient])
 
   const orderParams = useMemo(
     () => ({ ...appliedFilters, origin, page, page_size: pageSize }),
@@ -120,6 +147,7 @@ const OrdersPage = ({ origin = 'pancake' }) => {
   }
 
   const orders = ordersQuery.data?.orders ?? []
+  const selectedIds = selection.page === orderParams ? selection.ids : []
   const totalItems = orderTotalsQuery.data?.total_items
   const totalRevenue = orderTotalsQuery.data?.total_revenue
   const hasMore = ordersQuery.data?.has_more === true
@@ -286,7 +314,14 @@ const OrdersPage = ({ origin = 'pancake' }) => {
                 icon: <EyeOutlined />,
                 label: 'Xem chi tiết',
                 onClick: () => setSelectedOrder(order),
-              }],
+              }, ...(canDelete ? [{
+                key: 'delete',
+                icon: <DeleteOutlined />,
+                label: 'Xóa đơn',
+                danger: true,
+                disabled: !isDeletablePos(order) || ordersQuery.isPlaceholderData,
+                onClick: () => confirmDelete([order.id]),
+              }] : [])],
             }}
             trigger={['click']}
             placement="bottomRight"
@@ -302,7 +337,7 @@ const OrdersPage = ({ origin = 'pancake' }) => {
         ),
       },
     ].filter((col) => !col.hidden),
-    [page, pageSize],
+    [page, pageSize, canDelete, confirmDelete, ordersQuery.isPlaceholderData],
   )
 
   const tableScrollX = useMemo(
@@ -465,12 +500,22 @@ const OrdersPage = ({ origin = 'pancake' }) => {
           />
         )}
 
+        {canDelete && <Button danger icon={<DeleteOutlined />} disabled={!selectedIds.length}
+          onClick={() => confirmDelete(selectedIds)}>
+          Xóa đơn đã chọn ({selectedIds.length})
+        </Button>}
+
         <Table
           className="app-table"
           rowKey={(record) => record.id ?? record.pancake_order_id}
           tableLayout="fixed"
           columns={columns}
           dataSource={orders}
+          rowSelection={canDelete ? {
+            selectedRowKeys: selectedIds,
+            onChange: (ids) => setSelection({ page: orderParams, ids }),
+            getCheckboxProps: (order) => ({ disabled: !isDeletablePos(order) || ordersQuery.isPlaceholderData }),
+          } : undefined}
           loading={ordersQuery.isLoading}
           scroll={{ x: tableScrollX }}
           onChange={handleTableChange}

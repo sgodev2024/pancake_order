@@ -236,6 +236,9 @@ class OrderController extends Controller implements HasMiddleware
                         ->limit(1),
                     'province_name'
                 );
+                if ($request->query('origin') === 'local_pos') {
+                    $query->addSelect(['warehouse_status', 'packed_at']);
+                }
             } else {
                 $query->select([
                     'id',
@@ -442,6 +445,32 @@ SQL;
                 'message' => 'Đã có lỗi xảy ra: '.$th->getMessage(),
             ], 500);
         }
+    }
+
+    public function deletePosOrders(Request $request)
+    {
+        abort_unless($request->user()->isAdmin(), 403, 'Chỉ Admin được xóa đơn POS.');
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:100'],
+            'ids.*' => ['required', 'integer', 'min:1', 'distinct'],
+        ]);
+
+        DB::transaction(function () use ($data): void {
+            $orders = Order::withTrashed()->whereIn('id', $data['ids'])->orderBy('id')->lockForUpdate()->get();
+            abort_unless($orders->count() === count($data['ids'])
+                && $orders->every(fn (Order $order) => $order->origin === 'local_pos'),
+                422, 'Danh sách chỉ được chứa các đơn POS hợp lệ.');
+
+            foreach ($orders->reject(fn (Order $order) => $order->trashed()) as $order) {
+                abort_unless((string) $order->status === '0'
+                    && blank($order->packed_at) && $order->warehouse_status !== Order::WAREHOUSE_PACKED
+                    && blank($order->order_number_vtp) && ! $order->aicrmShipment()->exists(),
+                    409, 'Chỉ xóa được đơn POS mới, chưa đóng gói và chưa có vận đơn.');
+                $order->delete();
+            }
+        }, 3);
+
+        return response()->json(['success' => true, 'message' => 'Đã xóa đơn POS khỏi CRM.']);
     }
 
     public function store(Request $request, OrderService $service)
