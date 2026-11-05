@@ -56,9 +56,9 @@ export const getOrderPages = async ({ shop_id: shopId, context, type } = {}, { s
     : []
 }
 
-export const orderPageQueryOptions = (userId, shopId) => ({
-  queryKey: ['order-pages', userId, shopId == null ? null : String(shopId)],
-  queryFn: ({ signal }) => getOrderPages({ shop_id: shopId }, { signal }),
+export const orderPageQueryOptions = (userId, shopId, context) => ({
+  queryKey: ['order-pages', userId, shopId == null ? null : String(shopId), context],
+  queryFn: ({ signal }) => getOrderPages({ shop_id: shopId, context }, { signal }),
   enabled: Boolean(shopId),
   staleTime: 5 * 60_000,
 })

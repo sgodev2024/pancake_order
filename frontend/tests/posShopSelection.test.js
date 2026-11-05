@@ -83,6 +83,9 @@ const mount = async (user = actor(101), options = {}) => {
   apiClient.get = async (url, config = {}) => {
     const userId = useAuthStore.getState().user?.id
     calls.push({ url, userId, ...config })
+    if (url === '/customer-cares/55/pos-draft') return { data: { data: {
+      shop_id: 22, customer: { id: 987, name: 'Khách lịch hẹn', phone: '0912345678', address: 'Địa chỉ lịch hẹn' },
+    } } }
     if (url === '/shops') return { data: { data: await getShops() } }
     const id = Number(config.params?.shop_id)
     if (url === '/order-pages') return { data: { data: [{ id: 'page-'+id, name: 'Nguồn '+id }] } }
@@ -488,4 +491,24 @@ test('POS loads order pages for the selected shop and clears the previous source
   await settle()
   assert.equal(source().props.value, undefined)
   assert.deepEqual(source().props.options, [{ value: 'page-22', label: 'Nguồn 22' }])
+})
+
+test('POS opens an appointment with its authorized shop and customer prefilled', async () => {
+  await mount(actor(222), { shops: [shopA, shopB], url: '/ban-hang?care_id=55' })
+  await settle()
+  assert.equal(select().props.value, '22')
+  assert.equal(select().props.disabled, true)
+  const values = form().props.form.getFieldsValue()
+  assert.equal(values.customer_id, 987)
+  assert.equal(values.customer_name, 'Khách lịch hẹn')
+  assert.equal(values.customer_phone, '0912345678')
+  assert.equal(values.shipping_address, 'Địa chỉ lịch hẹn')
+  assert.equal(posts.length, 0)
+})
+
+test('POS does not open an appointment draft for a shop outside the current scope', async () => {
+  await mount(actor(223), { shops: [shopA], url: '/ban-hang?care_id=55' })
+  await settle()
+  assert.equal(dataCalls().length, 0)
+  assert.equal(posts.length, 0)
 })

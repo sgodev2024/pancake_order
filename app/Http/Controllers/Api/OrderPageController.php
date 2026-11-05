@@ -18,14 +18,21 @@ class OrderPageController extends Controller
         $opportunityContext = $request->query('context') === 'opportunity';
         $validated = $request->validate([
             'shop_id' => ['required', 'integer', 'min:1'],
-            'context' => ['nullable', Rule::in(['customer_care', 'opportunity'])],
+            'context' => ['nullable', Rule::in(['customer_care', 'opportunity', 'pos'])],
             'type' => [Rule::requiredIf($careContext), 'nullable', Rule::in([
                 'customer_care_today', 'customer_care_pending', 'customer_care_expire', 'customer_care_edit',
             ])],
         ]);
         $shopId = $shopAccess->authorizeRequestedShopId($request->user(), (int) $validated['shop_id']);
 
-        if ($opportunityContext) {
+        if ($request->query('context') === 'pos') {
+            $user = $request->user();
+            abort_unless($user->isAdmin() || $user->isStaffSale() || $user->isManagerSale() || can_access('pos-create'), 403);
+            $options = $pages->posQuery($user, $shopId)->get()->map(static fn ($page): array => [
+                'id' => (string) $page->id,
+                'name' => $page->name,
+            ]);
+        } elseif ($opportunityContext) {
             abort_unless(can_access('view-chance'), 403, 'Bạn không có quyền xem cơ hội.');
             $options = $pages->opportunityQuery($request->user(), $shopId)->get()->map(static fn ($page): array => [
                 'id' => (string) $page->id,

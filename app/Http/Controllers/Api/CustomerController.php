@@ -155,13 +155,35 @@ class CustomerController extends Controller implements HasMiddleware
         $this->shopAccessService->authorizeRequestedShopId($request->user(), $data['shop_id']);
         $query = Customer::where('shop_id', $data['shop_id']);
         $this->customerReadAccessService->applyRecordScope($query, $request->user(), allowCskhShopCustomers: true);
-        if (! empty($data['search'])) {
-            $query->where(function ($q) use ($data) {
-                $q->where('name', 'like', '%'.$data['search'].'%')
-                    ->orWhere('phone_numbers', 'like', '%'.$data['search'].'%');
-            });
+        $search = trim($data['search'] ?? '');
+        if ($search !== '') {
+            if (preg_match('/^\+?[0-9\s().-]+$/D', $search) && preg_match('/[0-9]/', $search)) {
+                $digits = preg_replace('/[^0-9]/', '', $search);
+                $variants = [$digits];
+                if (preg_match('/^84([0-9]{9,10})$/D', $digits, $match)) {
+                    $variants[] = '0'.$match[1];
+                } elseif (preg_match('/^0([0-9]{9,10})$/D', $digits, $match)) {
+                    $variants[] = '84'.$match[1];
+                }
+                $phone = 'phone_numbers';
+                foreach ([' ', '.', '-', '(', ')', '+'] as $separator) {
+                    $phone = "REPLACE({$phone}, '{$separator}', '')";
+                }
+                $query->where(function ($matches) use ($phone, $variants): void {
+                    foreach ($variants as $variant) {
+                        $matches->orWhereRaw("{$phone} LIKE ?", ['%'.$variant.'%']);
+                    }
+                });
+                $placeholders = implode(', ', array_fill(0, count($variants), '?'));
+                $query->orderByRaw("CASE WHEN {$phone} IN ({$placeholders}) THEN 0 ELSE 1 END", $variants);
+            } else {
+                $query->where(function ($matches) use ($search): void {
+                    $matches->where('name', 'like', '%'.$search.'%')
+                        ->orWhere('phone_numbers', 'like', '%'.$search.'%');
+                });
+            }
         }
-        $rows = $query->orderBy('name')->paginate(20, ['id', 'name', 'phone_numbers', 'pancake_full_data'], 'page', $data['page'] ?? 1);
+        $rows = $query->orderBy('name')->orderBy('id')->paginate(20, ['id', 'name', 'phone_numbers', 'pancake_full_data'], 'page', $data['page'] ?? 1);
 
         return response()->json(['success' => true, 'data' => [
             'customers' => collect($rows->items())->map(function ($customer) {

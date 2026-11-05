@@ -209,6 +209,37 @@ class CustomerJourneyApiTest extends TestCase
         $this->assertArrayNotHasKey('successful_purchase_count', $response->json('data.summary'));
     }
 
+    public function test_appointment_pos_draft_uses_the_exact_shop_customer_and_requires_care_access(): void
+    {
+        $shop = $this->createShop('POS shop');
+        $otherShop = $this->createShop('Other shop');
+        $customer = $this->createCustomer($shop, ['pancake_customer_id' => 'SAME-ID', 'name' => 'POS Customer']);
+        $this->createCustomer($otherShop, ['pancake_customer_id' => 'SAME-ID']);
+        $order = $this->createOrder($shop);
+        $care = $this->createCare($shop, $customer, $order);
+        $this->createAssignment($shop, $care, $order);
+        $care->forceFill(['customer_phones' => '0912345678', 'customer_addresss' => 'Appointment address'])->save();
+
+        $manager = $this->createUser('manager-cskh', 'Manager');
+        $this->attach($manager, $shop);
+        foreach (['list-product', 'list-customer', 'pos-create'] as $permission) {
+            $this->grantPermission($manager, $permission);
+        }
+        $url = '/api/v1/customer-cares/'.$care->id.'/pos-draft';
+        $this->actingAs($manager, 'api')->getJson($url)->assertOk()
+            ->assertJsonPath('data.shop_id', $shop->id)
+            ->assertJsonPath('data.customer.id', $customer->id)
+            ->assertJsonPath('data.customer.name', 'POS Customer')
+            ->assertJsonPath('data.customer.address', 'Appointment address');
+
+        $staff = $this->createUser('staff-cskh', 'Other employee');
+        $this->attach($staff, $shop);
+        foreach (['list-product', 'list-customer', 'pos-create'] as $permission) {
+            $this->grantPermission($staff, $permission);
+        }
+        $this->actingAs($staff, 'api')->getJson($url)->assertForbidden();
+    }
+
     public function test_customer_journey_preserves_shop_and_staff_customer_visibility(): void
     {
         $shopOne = $this->createShop('Shop One');
@@ -733,6 +764,8 @@ class CustomerJourneyApiTest extends TestCase
         });
         Schema::create('customer_cares', function (Blueprint $table): void {
             $table->id();
+            $table->string('customer_phones')->nullable();
+            $table->string('customer_addresss')->nullable();
             $table->unsignedBigInteger('shop_id');
             $table->string('pancake_customer_id');
             $table->string('pancake_order_id')->nullable();

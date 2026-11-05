@@ -34,6 +34,7 @@ class CustomerCareOrderSourceTest extends TestCase
         DB::setDefaultConnection('care_source_testing');
         Http::preventStrayRequests();
         $this->schema();
+        (require database_path('migrations/2026_11_04_000001_create_staff_account_states_table.php'))->up();
         $this->shop = Shop::create(['name' => 'Allowed shop']);
         $this->admin = $this->user('admin');
         $this->actingAs($this->admin, 'api');
@@ -407,7 +408,8 @@ class CustomerCareOrderSourceTest extends TestCase
         $this->assertSame($order->id, $row['order']['id']);
         $this->assertSame($care->id, $row['active_assignment']['customer_care_id']);
         $this->assertSame($care->id, $row['current_assignment']['customer_care_id']);
-        $this->assertLessThanOrEqual(8, count($queries));
+        // The account-state middleware adds one lookup per request.
+        $this->assertLessThanOrEqual(9, count($queries));
         foreach ([
             'assignable_order_id', 'legacy_user_assigning', 'created_at', 'updated_at',
             'total_edit', 'is_confirm_care', 'user_creator_id', 'user_care_id',

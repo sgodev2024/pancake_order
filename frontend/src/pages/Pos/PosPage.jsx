@@ -5,6 +5,7 @@ import { Alert, App, Button, Card, Empty, Form, Image, Input, InputNumber, Pagin
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getProducts } from '../../api/products.api.js'
+import { getCustomerCarePosDraft } from '../../api/customer-care.api.js'
 import { getCustomers } from '../../api/customers.api.js'
 import { createOrder, getOrder, orderPageQueryOptions } from '../../api/orders.api.js'
 import { posShopOptionsQueryOptions } from '../../api/shops.api.js'
@@ -35,15 +36,25 @@ const PosShopSession = ({ user, allowed }) => {
   const queryClient = useQueryClient()
   const [params] = useSearchParams()
   const orderId = params.get('order_id')
+  const careId = orderId ? null : params.get('care_id')
+  const careQuery = useQuery({
+    queryKey: ['pos-care-draft', user?.id, careId],
+    queryFn: ({ signal }) => getCustomerCarePosDraft(careId, { signal }),
+    enabled: allowed && !!careId,
+    gcTime: 0,
+    retry: false,
+  })
+  const careDraft = careQuery.data
   const shopsQuery = useQuery({ ...posShopOptionsQueryOptions(user?.id), enabled: allowed && !orderId })
   const shops = shopsQuery.data ?? []
   const scopeKey = JSON.stringify(shops.map((shop) => String(shop.id)).sort())
   const [selection, setSelection] = useState({})
   const chosenShop = selection.scopeKey === scopeKey && shops.some((shop) => String(shop.id) === selection.shopId)
     ? selection.shopId : undefined
-  const shopId = chosenShop ?? (shops.length === 1 ? String(shops[0].id) : undefined)
+  const careShop = shops.find((shop) => String(shop.id) === String(careDraft?.shop_id))
+  const shopId = careId ? (careShop ? String(careShop.id) : undefined) : chosenShop ?? (shops.length === 1 ? String(shops[0].id) : undefined)
   const shopsReady = allowed && shopsQuery.isSuccess && shopsQuery.isFetchedAfterMount && !shopsQuery.isFetching
-  const draftKey = JSON.stringify([scopeKey, shopId, allowed, orderId])
+  const draftKey = JSON.stringify([scopeKey, shopId, allowed, orderId, careId])
   const activeScope = useRef(null)
   useLayoutEffect(() => {
     activeScope.current = { draftKey, shopsReady }
@@ -61,7 +72,14 @@ const PosShopSession = ({ user, allowed }) => {
   const isCurrentScope = () => activeScope.current?.draftKey === draftKey && activeScope.current?.shopsReady
     && useAuthStore.getState().user?.id === user?.id
 
-  return <PosDraft key={draftKey} user={user} allowed={allowed} orderId={orderId}
+  if (allowed && careId) {
+    if (careQuery.isError) return <QueryErrorAlert error={careQuery.error} onRetry={careQuery.refetch} />
+    if (shopsQuery.isError) return <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
+    if (!careDraft || !shopsQuery.isFetchedAfterMount) return <Spin tip="Đang tải thông tin lịch hẹn"><div style={{ minHeight: 80 }} /></Spin>
+    if (!careShop) return <Result status="403" title="Bạn không có quyền bán hàng tại cửa hàng của lịch hẹn" />
+  }
+
+  return <PosDraft key={draftKey} careDraft={careDraft} user={user} allowed={allowed} orderId={orderId}
     shopsQuery={shopsQuery} shopsReady={shopsReady} shopId={shopId} isCurrentScope={isCurrentScope}
     onShopChange={(next) => {
       if (!isCurrentScope()) return
@@ -70,17 +88,25 @@ const PosShopSession = ({ user, allowed }) => {
     }} />
 }
 
-const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onShopChange, isCurrentScope }) => {
+const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onShopChange, isCurrentScope, careDraft }) => {
   const { message, modal } = App.useApp()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [form] = Form.useForm()
-  const fields = Form.useWatch([], form) ?? INITIAL
+  const careCustomer = careDraft?.customer
+  const initialValues = useMemo(() => careCustomer ? {
+    ...INITIAL,
+    customer_id: careCustomer.id ?? undefined,
+    customer_name: careCustomer.name ?? '',
+    customer_phone: careCustomer.phone ?? '',
+    shipping_address: careCustomer.address ?? '',
+  } : INITIAL, [careCustomer])
+  const fields = Form.useWatch([], form) ?? initialValues
   const [search, setSearch] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
   const [customerSearch, setCustomerSearch] = useState('')
   const [customerTerm, setCustomerTerm] = useState('')
-  const [selectedCustomer, setSelectedCustomer] = useState(null)
+  const [selectedCustomer, setSelectedCustomer] = useState(() => careCustomer?.id ? careCustomer : null)
   const [page, setPage] = useState(1)
   const [cart, setCart] = useState([])
   const [created, setCreated] = useState(null)
@@ -93,7 +119,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const currentDraft = useRef(null)
   const [orderPageId, setOrderPageId] = useState()
   const pagesQuery = useQuery({
-    ...orderPageQueryOptions(user?.id, shopId),
+    ...orderPageQueryOptions(user?.id, shopId, 'pos'),
     enabled: shopsReady && !!shopId,
   })
   const draftFingerprint = JSON.stringify({ cart, fields, moneyInputErrors, orderPageId })
@@ -122,9 +148,10 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
     queryFn: ({ signal }) => getCustomers({ view: 'pos', shop_id: shopId, search: customerTerm, page: 1 }, { signal }),
     enabled: shopsReady && !!shopId && !orderId,
   })
+  const customerSearchPending = customerSearch.trim() !== customerTerm || customersQuery.isFetching
   const customerOptions = useMemo(() => {
     if (!shopsReady) return []
-    const customers = customersQuery.data?.customers ?? []
+    const customers = customerSearchPending ? [] : customersQuery.data?.customers ?? []
     const options = customers.map((customer) => ({
       value: customer.id,
       label: `${customer.name || 'Khách hàng'} · ${customer.phone || ''}`,
@@ -136,7 +163,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
       })
     }
     return options
-  }, [customersQuery.data, selectedCustomer, shopsReady])
+  }, [customersQuery.data, selectedCustomer, shopsReady, customerSearchPending])
   const orderQuery = useQuery({
     queryKey: ['order-detail', user?.id, orderId], queryFn: () => getOrder(orderId), enabled: !!orderId,
     retry: false,
@@ -180,6 +207,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const draftLocked = mutation.isPending || lockedRequest || !!created
   const disabled = draftLocked || !shopsReady || !shopId
   const resetDraft = () => {
+    if (careDraft) { navigate(ROUTES.POS, { replace: true }); return }
     setOrderPageId(undefined)
     setCart([]); setCreated(null); pendingRequest.current = null; setLockedRequest(false)
     setPaymentConfirmed(false); setMoneyInputErrors({})
@@ -258,7 +286,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
     <div className="pos-layout">
       <Card className="pos-products" title="Sản phẩm">
         <div className="pos-product-filters"><ShopSelectInput shopsQuery={shopsQuery} value={shopsReady ? shopId : undefined}
-          onChange={changeShop} disabled={draftLocked || !shopsReady} allowClear={(shopsQuery.data?.length ?? 0) > 1} />
+          onChange={changeShop} disabled={!!careDraft || draftLocked || !shopsReady} allowClear={!careDraft && (shopsQuery.data?.length ?? 0) > 1} />
           <Select aria-label="Nguồn đơn" placeholder="Chọn nguồn đơn" allowClear showSearch
             optionFilterProp="label" value={orderPageId} onChange={setOrderPageId} disabled={disabled}
             loading={pagesQuery.isFetching} status={pagesQuery.isError ? 'error' : undefined}
@@ -279,10 +307,10 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
         {created ? <><PosOrderReceipt order={created} /><Button type="primary" block size="large" style={{ marginTop: 20 }} onClick={resetDraft}>Tạo đơn mới</Button></> : <>
           {mutation.isError && <Alert type="error" showIcon title={getApiErrorMessage(mutation.error, 'Không thể tạo đơn.')}
             description={lockedRequest ? 'Giỏ hàng được giữ nguyên. Gửi lại đúng yêu cầu này để nhận kết quả, tránh tạo đơn trùng.' : 'Kiểm tra dữ liệu và thử lại.'} />}
-          <Form form={form} layout="vertical" initialValues={INITIAL} disabled={disabled} onFinish={submit}>
+          <Form form={form} layout="vertical" initialValues={initialValues} disabled={disabled} onFinish={submit}>
             <Form.Item name="customer_id" label="Tìm khách hàng có sẵn (không bắt buộc)"
               extra="Chọn khách hàng đã có hoặc để trống để nhập thông tin khách mới.">
-              <Select allowClear showSearch filterOption={false} disabled={!shopId || disabled} loading={customersQuery.isFetching}
+              <Select allowClear showSearch filterOption={false} disabled={!shopId || disabled} loading={customerSearchPending} notFoundContent={customerSearchPending ? 'Đang tìm khách hàng...' : 'Không tìm thấy khách hàng'}
                 placeholder="Tìm theo tên hoặc số điện thoại" onSearch={setCustomerSearch}
                 options={customerOptions}
                 onChange={(id) => {
@@ -291,6 +319,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
                     customer = customersQuery.data?.customers?.find((item) => String(item.id) === String(id))
                       ?? (String(selectedCustomer?.id) === String(id) ? selectedCustomer : null)
                   }
+                  setCustomerSearch('')
                   setSelectedCustomer(customer)
                   form.setFieldsValue({
                     customer_name: customer?.name || '',

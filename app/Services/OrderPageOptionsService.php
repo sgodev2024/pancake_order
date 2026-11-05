@@ -31,6 +31,13 @@ class OrderPageOptionsService
         return $this->fromSnapshots($snapshots);
     }
 
+    public function posQuery(User $user, int $shopId): Builder
+    {
+        $this->shopAccess->authorizeRequestedShopId($user, $shopId);
+
+        return $this->fromSnapshots(Order::query()->where('shop_id', $shopId));
+    }
+
     /** Return page options from the exact order-opportunity pool for one authorized shop. */
     public function opportunityQuery(User $user, int $shopId): Builder
     {

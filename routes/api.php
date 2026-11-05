@@ -158,6 +158,7 @@ Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::cl
     Route::post('customer-cares/{id}/accept', [CustomerCareController::class, 'accept']);
     Route::post('customer-cares/{id}/reclaim', [CustomerCareController::class, 'reclaim']);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, 'getHistory']);
+    Route::get('customer-cares/{id}/pos-draft', [CustomerCareController::class, 'posDraft'])->whereNumber('id');
     Route::get('customer-cares/{id}/orders', [CustomerCareController::class, 'getOrder']);
     Route::apiResource('customer-cares', CustomerCareController::class);
 

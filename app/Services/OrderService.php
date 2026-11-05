@@ -44,7 +44,7 @@ class OrderService
             Shop::whereKey($input['shop_id'])->sharedLock()->firstOrFail();
             $page = null;
             if (isset($input['order_page_id'])) {
-                $page = app(OrderPageOptionsService::class)->query($actor, (int) $input['shop_id'])
+                $page = app(OrderPageOptionsService::class)->posQuery($actor, (int) $input['shop_id'])
                     ->where('pancake_order_page_id', $input['order_page_id'])->first();
                 if (! $page) {
                     throw ValidationException::withMessages(['order_page_id' => 'Nguồn đơn không khả dụng cho cửa hàng này.']);

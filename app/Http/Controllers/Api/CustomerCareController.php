@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\CustomerCareListAccessMiddleware;
+use App\Models\Customer;
 use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
@@ -42,7 +43,7 @@ class CustomerCareController extends Controller implements HasMiddleware
     public static function middleware(): array
     {
         return [
-            new Middleware(CustomerCareListAccessMiddleware::class, only: ['index', 'getHistory', 'getOrder']),
+            new Middleware(CustomerCareListAccessMiddleware::class, only: ['index', 'getHistory', 'getOrder', 'posDraft']),
         ];
     }
 
@@ -426,6 +427,35 @@ class CustomerCareController extends Controller implements HasMiddleware
             'success' => true,
             'data' => $ordersQuery->get(),
         ]);
+    }
+
+    public function posDraft(Request $request, int $id)
+    {
+        $actor = $request->user();
+        abort_unless(($actor->isAdmin() || can_access('pos-create'))
+            && can_access('list-product') && can_access('list-customer'), 403);
+        $care = $this->authorizeCustomerCareRead($request, $id);
+        $this->ensureCustomerCareOrderLinkIsConsistent($care, $actor);
+
+        $matches = collect();
+        if (filled($care->pancake_customer_id)) {
+            $matches = Customer::where('shop_id', $care->shop_id)
+                ->where('pancake_customer_id', $care->pancake_customer_id)->limit(2)->get();
+        }
+        abort_if($matches->count() > 1, 409, 'Lịch hẹn khớp nhiều hồ sơ khách hàng. Vui lòng kiểm tra lại.');
+        $customer = $matches->first();
+        $address = $care->customer_addresss ?: (data_get($customer?->pancake_full_data, 'address')
+            ?? data_get($customer?->pancake_full_data, 'addresses.0.full_address'));
+
+        return response()->json(['success' => true, 'data' => [
+            'shop_id' => (int) $care->shop_id,
+            'customer' => [
+                'id' => $customer?->id,
+                'name' => $customer?->name ?: $care->customer_name,
+                'phone' => $customer?->phone_numbers ?: $care->customer_phones,
+                'address' => is_string($address) ? $address : '',
+            ],
+        ]]);
     }
 
     private function authorizeCustomerCareRead(Request $request, int|string $id): CustomerCare

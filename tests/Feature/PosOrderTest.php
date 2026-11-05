@@ -440,7 +440,20 @@ class PosOrderTest extends TestCase
         $this->customer($this->shop, $cskh);
         $shopCustomer = $this->customer($this->shop, $this->actor);
         $outside = $this->customer($this->otherShop, $this->actor);
+        $shopCustomer->update(['phone_numbers' => '+84 912.345.678']);
+        Order::create([
+            'shop_id' => $this->shop->id, 'origin' => 'pancake',
+            'user_creator_id' => $this->actor->pancake_user_id,
+            'pancake_order_page_id' => 'shared-page', 'pancake_order_page_name' => 'Shared source',
+        ]);
         $this->actingAs($cskh, 'api');
+        $this->getJson('/api/v1/order-pages?context=pos&shop_id='.$this->shop->id)
+            ->assertOk()->assertJsonPath('data.0.id', 'shared-page');
+        $this->getJson('/api/v1/order-pages?context=pos&shop_id='.$this->otherShop->id)->assertForbidden();
+        foreach (['0912345678', '+84 912-345-678'] as $phone) {
+            $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->shop->id.'&search='.urlencode($phone))
+                ->assertOk()->assertJsonCount(1, 'data.customers')->assertJsonPath('data.customers.0.id', $shopCustomer->id);
+        }
         $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->shop->id)->assertOk()
             ->assertJsonCount(2, 'data.customers')->assertJsonFragment(['id' => $shopCustomer->id]);
         $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->otherShop->id)->assertForbidden();
@@ -449,9 +462,10 @@ class PosOrderTest extends TestCase
             $this->postJson('/api/v1/orders', $this->payload([$field => $field === 'permissions' ? ['pos-create'] : 1]))
                 ->assertUnprocessable()->assertJsonValidationErrors($field);
         }
-        $this->assertDatabaseCount('orders', 0);
-        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $shopCustomer->id]))->assertCreated()
-            ->assertJsonPath('data.created_by_user_id', $cskh->id)->assertJsonPath('data.customer_id', $shopCustomer->id);
+        $this->assertDatabaseCount('orders', 1);
+        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $shopCustomer->id, 'order_page_id' => 'shared-page']))->assertCreated()
+            ->assertJsonPath('data.created_by_user_id', $cskh->id)->assertJsonPath('data.customer_id', $shopCustomer->id)
+            ->assertJsonPath('data.order_page_name', 'Shared source');
         Http::assertNothingSent();
     }
 

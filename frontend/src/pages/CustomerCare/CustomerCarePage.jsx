@@ -47,7 +47,7 @@ import {
   reclaimCustomerCare,
 } from '../../api/customer-care.api.js'
 import { useAuthStore } from '../../auth/auth.store.js'
-import { hasPermission, isAdmin } from '../../auth/permissions.js'
+import { canUsePos, hasPermission, isAdmin } from '../../auth/permissions.js'
 import { getAllUsers } from '../../api/users.api.js'
 import ShopSelect from '../../components/ShopSelect.jsx'
 import {
@@ -804,6 +804,15 @@ const CustomerCarePage = ({ pageType }) => {
             })
           }
 
+          if (canUsePos(currentUser)) {
+            actionItems.push({
+              key: 'create-pos',
+              icon: <ShoppingOutlined />,
+              label: 'Tạo đơn POS',
+              onClick: () => navigate(`${ROUTES.POS}?care_id=${encodeURIComponent(record.id)}`),
+            })
+          }
+
           actionItems.push(
             { type: 'divider' },
             {
@@ -842,6 +851,7 @@ const CustomerCarePage = ({ pageType }) => {
       isMarkingCustomerCare,
       isReclaimingCustomerCare,
       markCareMutationVariables?.customerCareId,
+      navigate,
       openAcceptConfirmation,
       openCareConfirmation,
       openCareDrawer,
