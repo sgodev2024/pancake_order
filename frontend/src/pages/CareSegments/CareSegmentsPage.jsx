@@ -63,7 +63,11 @@ export default function CareSegmentsPage() {
   const apply = () => {
     if (!draft.months?.[0] || !draft.months?.[1]) { message.error('Chọn khoảng tháng.'); return }
     if (draft.max != null && draft.min != null && draft.max < draft.min) { message.error('Số lượng tối đa phải lớn hơn hoặc bằng tối thiểu.'); return }
-    setFilters({ ...draft }); setPage(1); setSelected([])
+    const next = { ...draft, shops: [...draft.shops], sources: [...draft.sources], products: [...draft.products] }
+    if (page === 1 && JSON.stringify(paramsFor(next)) === JSON.stringify(paramsFor(filters))) {
+      report.refetch()
+    }
+    setFilters(next); setPage(1); setSelected([])
   }
   const exportFile = async () => {
     setExporting(true)
@@ -106,7 +110,7 @@ export default function CareSegmentsPage() {
         allowClear showSearch placeholder="Tất cả nguồn đơn" value={draft.sources} onChange={(v) => update('sources', v)}
         loading={sourceOptions.isFetching} disabled={!draft.months?.[0] || !draft.months?.[1]}
         options={sourceOptions.data ?? []} /></div>
-      <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" locale={monthLocale} format="[Tháng] MM/YYYY" placeholder={['Từ tháng', 'Đến tháng']} value={draft.months} onChange={(v) => setDraft((old) => ({ ...old, months: v, sources: [] }))} style={{ width: '100%' }} /></div>
+      <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" locale={monthLocale} format="[Tháng] MM/YYYY" placeholder={['Từ tháng', 'Đến tháng']} value={draft.months} onChange={(v) => setDraft((old) => ({ ...old, months: v }))} style={{ width: '100%' }} /></div>
       <div><label>Sản phẩm đã mua</label><Select aria-label="Sản phẩm đã mua" mode="multiple" showSearch optionFilterProp="search"
         placeholder="Tên hoặc mã sản phẩm" style={{ width: '100%' }} value={draft.products} onChange={(v) => update('products', v)}
         options={(report.data?.products ?? []).map((p) => ({ ...p, search: `${p.label} ${p.code}`, label: p.code ? `${p.label} · ${p.code}` : p.label }))} /></div>
