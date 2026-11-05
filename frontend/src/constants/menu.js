@@ -53,6 +53,13 @@ export const MENU_ITEMS = [
     permission: 'list-customer',
   },
   {
+    key: ROUTES.CARE_SEGMENTS,
+    label: 'Lọc CSKH',
+    path: ROUTES.CARE_SEGMENTS,
+    icon: TeamOutlined,
+    permission: 'care-segment-view',
+  },
+  {
     key: 'opportunities',
     label: 'Cơ hội',
     icon: UserOutlined,

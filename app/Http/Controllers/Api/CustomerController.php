@@ -151,11 +151,15 @@ class CustomerController extends Controller implements HasMiddleware
         $data = $request->validate([
             'shop_id' => ['required', 'integer', 'min:1'],
             'search' => ['nullable', 'string', 'max:255'],
+            'customer_id' => ['nullable', 'integer', 'min:1'],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
         $this->shopAccessService->authorizeRequestedShopId($request->user(), $data['shop_id']);
         $query = Customer::where('shop_id', $data['shop_id']);
         $this->customerReadAccessService->applyRecordScope($query, $request->user(), allowCskhShopCustomers: true);
+        if (! empty($data['customer_id'])) {
+            $query->whereKey($data['customer_id']);
+        }
         $search = trim($data['search'] ?? '');
         if ($search !== '') {
             if (preg_match('/^\+?[0-9\s().-]+$/D', $search) && preg_match('/[0-9]/', $search)) {

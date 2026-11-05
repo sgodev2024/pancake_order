@@ -1,4 +1,4 @@
-import { renderOrderSourceOption, filterOrderSource, orderSourceNote } from '../../components/OrderSourceOption.jsx'
+import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
 import { createRequestId } from '../../utils/requestId.js'
 import { MinusOutlined, PlusOutlined, SearchOutlined, ShoppingCartOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -38,6 +38,18 @@ const PosShopSession = ({ user, allowed }) => {
   const [params] = useSearchParams()
   const orderId = params.get('order_id')
   const careId = orderId ? null : params.get('care_id')
+  const customerId = !orderId && !careId ? params.get('customer_id') : null
+  const requestedShop = params.get('shop_id')
+  const customerDraftQuery = useQuery({
+    queryKey: ['pos-customer-draft', user?.id, requestedShop, customerId],
+    queryFn: async ({ signal }) => {
+      const data = await getCustomers({ view: 'pos', shop_id: requestedShop, customer_id: customerId }, { signal })
+      const customer = data.customers?.find((c) => String(c.id) === customerId)
+      if (!customer) throw new Error('Không tìm thấy khách hàng trong cửa hàng được phân công.')
+      return { shop_id: requestedShop, customer }
+    },
+    enabled: allowed && !!customerId && !!requestedShop, retry: false, gcTime: 0,
+  })
   const careQuery = useQuery({
     queryKey: ['pos-care-draft', user?.id, careId],
     queryFn: ({ signal }) => getCustomerCarePosDraft(careId, { signal }),
@@ -45,7 +57,7 @@ const PosShopSession = ({ user, allowed }) => {
     gcTime: 0,
     retry: false,
   })
-  const careDraft = careQuery.data
+  const careDraft = customerId ? customerDraftQuery.data : careQuery.data
   const shopsQuery = useQuery({ ...posShopOptionsQueryOptions(user?.id), enabled: allowed && !orderId })
   const shops = shopsQuery.data ?? []
   const scopeKey = JSON.stringify(shops.map((shop) => String(shop.id)).sort())
@@ -53,9 +65,9 @@ const PosShopSession = ({ user, allowed }) => {
   const chosenShop = selection.scopeKey === scopeKey && shops.some((shop) => String(shop.id) === selection.shopId)
     ? selection.shopId : undefined
   const careShop = shops.find((shop) => String(shop.id) === String(careDraft?.shop_id))
-  const shopId = careId ? (careShop ? String(careShop.id) : undefined) : chosenShop ?? (shops.length === 1 ? String(shops[0].id) : undefined)
+  const shopId = (careId || customerId) ? (careShop ? String(careShop.id) : undefined) : chosenShop ?? (shops.length === 1 ? String(shops[0].id) : undefined)
   const shopsReady = allowed && shopsQuery.isSuccess && shopsQuery.isFetchedAfterMount && !shopsQuery.isFetching
-  const draftKey = JSON.stringify([scopeKey, shopId, allowed, orderId, careId])
+  const draftKey = JSON.stringify([scopeKey, shopId, allowed, orderId, careId, customerId])
   const activeScope = useRef(null)
   useLayoutEffect(() => {
     activeScope.current = { draftKey, shopsReady }
@@ -73,7 +85,9 @@ const PosShopSession = ({ user, allowed }) => {
   const isCurrentScope = () => activeScope.current?.draftKey === draftKey && activeScope.current?.shopsReady
     && useAuthStore.getState().user?.id === user?.id
 
-  if (allowed && careId) {
+  if (allowed && customerId && !requestedShop) return <Result status="400" title="Thiếu cửa hàng của khách hàng" />
+  if (allowed && (careId || customerId)) {
+    if (customerDraftQuery.isError) return <QueryErrorAlert error={customerDraftQuery.error} onRetry={customerDraftQuery.refetch} />
     if (careQuery.isError) return <QueryErrorAlert error={careQuery.error} onRetry={careQuery.refetch} />
     if (shopsQuery.isError) return <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
     if (!careDraft || !shopsQuery.isFetchedAfterMount) return <Spin tip="Đang tải thông tin lịch hẹn"><div style={{ minHeight: 80 }} /></Spin>
@@ -294,7 +308,6 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
             notFoundContent={pagesQuery.isLoading ? 'Đang tải...' : pagesQuery.isError ? 'Không thể tải nguồn đơn' : 'Không có nguồn đơn'}
             options={getOrderPageOptions(pagesQuery.data)} optionRender={renderOrderSourceOption} filterOption={filterOrderSource} />
           <Input prefix={<SearchOutlined />} value={search} disabled={!shopId || disabled} allowClear onChange={(event) => setSearch(event.target.value)} placeholder="Tên, mã sản phẩm hoặc barcode" aria-label="Tìm sản phẩm POS" /></div>
-        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>{orderSourceNote}</Typography.Text>
         {shopsQuery.isError ? <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
           : !shopsReady ? <Spin tip="Đang tải cửa hàng"><Empty description="Đang tải danh sách cửa hàng" /></Spin>
           : !shopsQuery.data.length ? <Empty description="Bạn chưa được phân công cửa hàng để bán hàng" />

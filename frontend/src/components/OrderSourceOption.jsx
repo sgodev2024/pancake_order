@@ -1,4 +1,3 @@
-export const orderSourceNote = 'Các nguồn có thể trùng tên. Vui lòng kiểm tra kênh và mã nguồn trước khi chọn.'
 
 export const filterOrderSource = (input, option) =>
   `${option?.label ?? ''} ${option?.value ?? ''}`.toLocaleLowerCase('vi').includes(input.toLocaleLowerCase('vi'))

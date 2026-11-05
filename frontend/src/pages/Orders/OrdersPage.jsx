@@ -1,4 +1,4 @@
-import { renderOrderSourceOption, filterOrderSource, orderSourceNote } from '../../components/OrderSourceOption.jsx'
+import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
 import { DeleteOutlined, EyeOutlined, FilterOutlined, MoreOutlined, ReloadOutlined } from '@ant-design/icons'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App, Avatar, Button, Card, DatePicker, Descriptions, Dropdown, Empty, Input, InputNumber, Modal, Result, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
@@ -415,7 +415,6 @@ const OrdersPage = ({ origin = 'pancake' }) => {
                       : 'Không có nguồn đơn'
                 }
               />
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>{orderSourceNote}</Typography.Text>
               {orderPagesQuery.isError && (
                 <Typography.Text type="danger" className="orders-field__error" aria-live="polite">
                   Không thể tải danh sách nguồn đơn.

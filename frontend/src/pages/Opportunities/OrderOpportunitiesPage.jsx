@@ -1,4 +1,4 @@
-import { renderOrderSourceOption, filterOrderSource, orderSourceNote } from '../../components/OrderSourceOption.jsx'
+import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
 import { EyeOutlined, FilterOutlined, MoreOutlined, ReloadOutlined, UserSwitchOutlined } from '@ant-design/icons'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -468,7 +468,6 @@ const OrderOpportunitiesPage = () => {
                       : 'Không có nguồn đơn'
                 }
               />
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>{orderSourceNote}</Typography.Text>
               {orderPagesQuery.isError && (
                 <Typography.Text
                   type="danger"

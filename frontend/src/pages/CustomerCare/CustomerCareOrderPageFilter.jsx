@@ -1,4 +1,4 @@
-import { renderOrderSourceOption, filterOrderSource, orderSourceNote } from '../../components/OrderSourceOption.jsx'
+import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
 import { Select, Typography } from 'antd'
 
 const CustomerCareOrderPageFilter = ({ shopId, value, options, query, onChange }) => (
@@ -21,7 +21,6 @@ const CustomerCareOrderPageFilter = ({ shopId, value, options, query, onChange }
       notFoundContent={query.isFetching ? 'Đang tải…' : 'Không có nguồn đơn'}
       onChange={(nextValue) => onChange(nextValue == null ? undefined : String(nextValue))}
     />
-    <Typography.Text type="secondary" style={{ fontSize: 12 }}>{orderSourceNote}</Typography.Text>
     {query.isError && (
       <Typography.Text type="danger" role="alert">
         Không thể tải nguồn đơn. Vui lòng thử chọn lại cửa hàng.

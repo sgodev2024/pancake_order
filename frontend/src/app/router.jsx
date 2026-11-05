@@ -210,6 +210,7 @@ export const router = createBrowserRouter([
               route.path !== ROUTES.OPPORTUNITIES &&
               route.path !== ROUTES.STAFF_ASSIGNMENTS &&
               route.path !== ROUTES.CUSTOMERS &&
+              route.path !== ROUTES.CARE_SEGMENTS &&
               route.path !== ROUTES.SHOPS &&
               route.path !== ROUTES.PRODUCTS &&
               route.path !== ROUTES.STAFF &&
@@ -224,6 +225,10 @@ export const router = createBrowserRouter([
             path: route.path,
             element: <LazyRoute Page={lazy(() => import('../pages/Placeholder/PlaceholderPage.jsx'))} />,
           })),
+          {
+            path: ROUTES.CARE_SEGMENTS,
+            element: <LazyRoute Page={lazy(() => import('../pages/CareSegments/CareSegmentsPage.jsx'))} />,
+          },
           {
             path: ROUTES.CUSTOMERS,
             element: <LazyRoute Page={lazy(() => import('../pages/Customers/CustomersPage.jsx'))} />,

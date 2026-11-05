@@ -148,6 +148,49 @@ class PosOrderTest extends TestCase
         }
     }
 
+    public function test_care_segment_counts_only_delivered_products_and_enforces_shop_scope(): void
+    {
+        $admin = $this->actor('admin');
+        $this->actingAs($admin, 'api');
+        $customer = $this->customer($this->shop, $this->actor);
+        $ids = [];
+        foreach ([['Local', 2], ['Pancake', 3], ['Local', 7]] as [$name, $quantity]) {
+            $product = $name === 'Local' ? $this->local : $this->synced;
+            $id = $this->postJson('/api/v1/orders', $this->payload([
+                'customer_id' => $customer->id,
+                'items' => [['product_id' => $product->id, 'quantity' => $quantity]],
+            ]))->assertCreated()->json('data.id');
+            $ids[] = $id;
+            Order::findOrFail($id)->update(['status' => count($ids) === 3 ? 0 : 3]);
+        }
+        $month = now()->format('Y-m');
+        $url = '/api/v1/care-segments?month_from='.$month.'&month_to='.$month;
+        $response = $this->getJson($url)->assertOk()->assertJsonPath('data.total', 1)
+            ->assertJsonPath('data.customers.0.order_count', 2)
+            ->assertJsonPath('data.customers.0.quantity', 5);
+        $this->assertCount(2, $response->json('data.products'));
+        $local = sha1(mb_strtolower('Local'));
+        $pancake = sha1(mb_strtolower('Pancake'));
+        $this->getJson($url.'&products[]='.$local)->assertOk()
+            ->assertJsonPath('data.customers.0.quantity', 2)->assertJsonPath('data.customers.0.order_count', 1);
+        $this->getJson($url.'&products[]='.$local.'&products[]='.$pancake.'&match=all')->assertOk()
+            ->assertJsonPath('data.total', 1);
+        $this->getJson($url.'&quantity_min=6')->assertOk()->assertJsonPath('data.total', 0);
+
+        $staff = $this->actor('staff-cskh');
+        $group = PermissionGroup::firstOrCreate(['name' => 'Lọc CSKH']);
+        $permission = Permission::firstOrCreate(['slug' => 'care-segment-view'], ['permission_group_id' => $group->id, 'name' => 'View']);
+        RolePermission::firstOrCreate(['role_id' => $staff->role_id, 'permission_id' => $permission->id]);
+        $this->actingAs($staff, 'api');
+        $this->getJson($url)->assertOk()->assertJsonPath('data.total', 1);
+        $this->getJson($url.'&shop_ids[]='.$this->otherShop->id)->assertForbidden();
+        $this->postJson('/api/v1/care-segments/export', ['month_from' => $month, 'month_to' => $month, 'export' => true])->assertForbidden();
+        $this->actingAs($admin, 'api');
+        $export = $this->postJson('/api/v1/care-segments/export', ['month_from' => $month, 'month_to' => $month, 'export' => true])
+            ->assertOk()->assertDownload('loc-cskh.xlsx');
+        $this->assertStringStartsWith('PK', $export->streamedContent());
+    }
+
     private function runMigration(): void
     {
         (require database_path('migrations/2026_10_21_000001_add_local_pos_support.php'))->up();

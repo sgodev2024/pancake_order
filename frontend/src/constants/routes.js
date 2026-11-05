@@ -6,6 +6,7 @@ export const ROUTES = Object.freeze({
   CHANGE_FIRST_PASSWORD: '/cap-nhat-mat-khau',
   SHOPS: '/cua-hang',
   CUSTOMERS: '/khach-hang',
+  CARE_SEGMENTS: '/loc-cskh',
   OPPORTUNITIES: '/co-hoi',
   OPPORTUNITIES_IMPORT: '/co-hoi/import',
   CUSTOMER_ASSIGNMENTS: '/theo-doi-phan-bo-khach-hang',
