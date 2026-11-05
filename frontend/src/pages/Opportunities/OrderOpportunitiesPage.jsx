@@ -1,3 +1,4 @@
+import { renderOrderSourceOption, filterOrderSource, orderSourceNote } from '../../components/OrderSourceOption.jsx'
 import { EyeOutlined, FilterOutlined, MoreOutlined, ReloadOutlined, UserSwitchOutlined } from '@ant-design/icons'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -455,6 +456,8 @@ const OrderOpportunitiesPage = () => {
                 status={orderPagesQuery.isError ? 'error' : undefined}
                 value={draftFilters.orderPageId}
                 options={orderPageOptions}
+                optionRender={renderOrderSourceOption}
+                filterOption={filterOrderSource}
                 placeholder="Chọn nguồn đơn"
                 onChange={(value) => updateDraft('orderPageId', value)}
                 notFoundContent={
@@ -465,6 +468,7 @@ const OrderOpportunitiesPage = () => {
                       : 'Không có nguồn đơn'
                 }
               />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>{orderSourceNote}</Typography.Text>
               {orderPagesQuery.isError && (
                 <Typography.Text
                   type="danger"

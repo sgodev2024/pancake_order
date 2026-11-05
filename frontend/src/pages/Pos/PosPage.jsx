@@ -1,3 +1,4 @@
+import { renderOrderSourceOption, filterOrderSource, orderSourceNote } from '../../components/OrderSourceOption.jsx'
 import { createRequestId } from '../../utils/requestId.js'
 import { MinusOutlined, PlusOutlined, SearchOutlined, ShoppingCartOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -291,8 +292,9 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
             optionFilterProp="label" value={orderPageId} onChange={setOrderPageId} disabled={disabled}
             loading={pagesQuery.isFetching} status={pagesQuery.isError ? 'error' : undefined}
             notFoundContent={pagesQuery.isLoading ? 'Đang tải...' : pagesQuery.isError ? 'Không thể tải nguồn đơn' : 'Không có nguồn đơn'}
-            options={getOrderPageOptions(pagesQuery.data)} />
+            options={getOrderPageOptions(pagesQuery.data)} optionRender={renderOrderSourceOption} filterOption={filterOrderSource} />
           <Input prefix={<SearchOutlined />} value={search} disabled={!shopId || disabled} allowClear onChange={(event) => setSearch(event.target.value)} placeholder="Tên, mã sản phẩm hoặc barcode" aria-label="Tìm sản phẩm POS" /></div>
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>{orderSourceNote}</Typography.Text>
         {shopsQuery.isError ? <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
           : !shopsReady ? <Spin tip="Đang tải cửa hàng"><Empty description="Đang tải danh sách cửa hàng" /></Spin>
           : !shopsQuery.data.length ? <Empty description="Bạn chưa được phân công cửa hàng để bán hàng" />
