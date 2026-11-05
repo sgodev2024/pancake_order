@@ -19,6 +19,7 @@ import { createShop, deleteShop, getShops, syncShopData, updateShop } from '../.
 import { getApiErrorMessage } from '../../utils/response.js'
 import { hasPermission, isAdmin } from '../../auth/permissions.js'
 import { useAuthStore } from '../../auth/auth.store.js'
+import { renderOrderSourceOption } from '../../components/OrderSourceOption.jsx'
 import './shops.css'
 
 const EMPTY_FILTERS = { search: '', dates: null }
@@ -101,6 +102,14 @@ const ShopsPage = () => {
       dataIndex: 'name',
       width: 160,
       render: (name) => <Space><Avatar className="shops-avatar">{getInitial(name)}</Avatar><strong>{name}</strong></Space>,
+    },
+    {
+      title: 'Nguồn đơn',
+      dataIndex: 'order_pages',
+      width: 280,
+      render: (sources = []) => sources.length ? <div style={{ maxHeight: 130, overflowY: 'auto', display: 'grid', gap: 8 }}>
+        {sources.map((source) => <div key={source.id}>{renderOrderSourceOption({ value: source.id, label: source.name })}</div>)}
+      </div> : '—',
     },
     { title: 'Doanh thu (vnđ)', dataIndex: 'total_cod', width: 160, align: 'right', render: formatMoney },
     { title: 'SL đơn hàng', dataIndex: 'orders_count', width: 64, align: 'center', render: (value) => formatMoney(value) },

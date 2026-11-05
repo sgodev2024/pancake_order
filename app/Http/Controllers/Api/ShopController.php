@@ -98,9 +98,24 @@ class ShopController extends Controller implements HasMiddleware
                     $userQuery->where('users.id', auth()->id());
                 });
             }
+            $rows = $shops->latest()->get();
+            $snapshots = \App\Models\Order::query()->whereIn('shop_id', $rows->pluck('id'))
+                ->whereNotNull('pancake_order_page_id')->whereRaw("TRIM(pancake_order_page_id) <> ''")
+                ->select(['shop_id', 'pancake_order_page_id', 'pancake_order_page_name'])
+                ->selectRaw('ROW_NUMBER() OVER (PARTITION BY shop_id, pancake_order_page_id ORDER BY created_at DESC, id DESC) AS source_rank');
+            $sources = \Illuminate\Support\Facades\DB::query()->fromSub($snapshots->toBase(), 'shop_sources')
+                ->where('source_rank', 1)
+                ->selectRaw("shop_id, pancake_order_page_id AS id, COALESCE(NULLIF(TRIM(pancake_order_page_name), ''), pancake_order_page_id) AS name")
+                ->orderBy('name')->orderBy('id')->get()->groupBy('shop_id');
+            foreach ($rows as $shop) {
+                $shop->setAttribute('order_pages', $sources->get($shop->id, collect())->map(
+                    fn ($source) => ['id' => (string) $source->id, 'name' => $source->name]
+                )->values());
+            }
+
             return response()->json([
-                "success" => true,
-                "data"    => $shops->latest()->get()
+                'success' => true,
+                'data' => $rows,
             ]);
         } catch (\Throwable $th) {
             return response()->json([ 
