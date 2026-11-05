@@ -28,7 +28,7 @@ class OrderPageController extends Controller
         if ($request->query('context') === 'catalog') {
             $user = $request->user();
             abort_unless($user->isAdmin() || $user->isManagerCskh() || $user->isStaffCskh()
-                || $user->isManagerSale() || can_access('list-customer') || can_access('view-chance'), 403);
+                || $user->isManagerSale() || can_access('list-customer') || can_access('view-chance') || can_access('pos-create'), 403);
             $options = $pages->posQuery($user, $shopId)->get()->map(static fn ($page): array => [
                 'id' => (string) $page->id,
                 'name' => $page->name,

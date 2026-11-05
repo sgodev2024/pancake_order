@@ -124,7 +124,7 @@ const ShopsPage = () => {
       dataIndex: 'order_pages',
       width: 280,
       render: (sources = [], shop) => sources.length ? <div style={{ maxHeight: 130, overflowY: 'auto', display: 'grid', gap: 8 }}>
-        {sources.map((source) => <div key={source.id}>{renderOrderSourceOption({ value: source.id, label: source.name })}
+        {sources.map((source) => <div key={source.id}>{renderOrderSourceOption({ value: source.id, label: source.name, alias: source.alias, original_name: source.original_name })}
           {isUserAdmin && <Button type="link" size="small" icon={<EditOutlined />} onClick={() => {
             setSourceEdit({ shopId: shop.id, source }); setSourceAlias(source.alias ?? '')
           }}>Đặt tên gợi nhớ</Button>}

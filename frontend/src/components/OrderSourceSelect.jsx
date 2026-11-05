@@ -14,9 +14,14 @@ export default function OrderSourceSelect({ shopId, ...props }) {
     staleTime: 0,
     retry: false,
   })
-  const options = shopId ? getOrderPageOptions(catalog.data) : props.options
+  const options = [...(shopId ? getOrderPageOptions(catalog.data) : props.options ?? [])]
+    .sort((a, b) => Number(!!b.alias) - Number(!!a.alias))
   return <Select {...props} allowClear showSearch
     options={options}
+    onOpenChange={(open) => {
+      props.onOpenChange?.(open)
+      if (open && shopId) catalog.refetch()
+    }}
     loading={shopId ? catalog.isFetching : props.loading}
     status={catalog.isError ? 'error' : props.status}
     notFoundContent={catalog.isError ? 'Không tải được nguồn đơn. Vui lòng thử lại.' : props.notFoundContent}

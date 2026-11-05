@@ -54,6 +54,7 @@ export default function CareSegmentsPage() {
       }, signal })).data.data
       return Array.from(new Map((data.sources ?? []).map((source) => [String(source.id), {
         value: String(source.id), label: source.name,
+        ...(source.alias ? { alias: source.alias, original_name: source.original_name } : {}),
       }])).values())
     },
     enabled: allowed && !!draft.months?.[0] && !!draft.months?.[1], retry: false,

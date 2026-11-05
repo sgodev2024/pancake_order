@@ -28,4 +28,5 @@ export const getOpportunityOrderPageOptions = (pages = []) =>
     .map((page) => ({
       value: String(page.id),
       label: page.name,
+      ...(page.alias ? { alias: page.alias, original_name: page.original_name } : {}),
     }))

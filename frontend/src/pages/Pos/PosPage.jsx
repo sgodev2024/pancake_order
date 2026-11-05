@@ -302,7 +302,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
       <Card className="pos-products" title="Sản phẩm">
         <div className="pos-product-filters"><ShopSelectInput shopsQuery={shopsQuery} value={shopsReady ? shopId : undefined}
           onChange={changeShop} disabled={!!careDraft || draftLocked || !shopsReady} allowClear={!careDraft && (shopsQuery.data?.length ?? 0) > 1} />
-          <OrderSourceSelect aria-label="Nguồn đơn" placeholder="Tất cả nguồn đơn" allowClear showSearch
+          <OrderSourceSelect shopId={shopId} aria-label="Nguồn đơn" placeholder="Tất cả nguồn đơn" allowClear showSearch
             optionFilterProp="label" value={orderPageId} onChange={setOrderPageId} disabled={disabled}
             loading={pagesQuery.isFetching} status={pagesQuery.isError ? 'error' : undefined}
             notFoundContent={pagesQuery.isLoading ? 'Đang tải...' : pagesQuery.isError ? 'Không thể tải nguồn đơn' : 'Không có nguồn đơn'}
