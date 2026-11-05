@@ -134,6 +134,8 @@ Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::cl
 
     Route::get('customers/{customer}/journey', [CustomerJourneyController::class, 'show'])
         ->middleware(PermissionCheckMiddleware::class.':list-customer,strict');
+    Route::get('care-segments/customers/{customer}/care', [\App\Http\Controllers\Api\CareSegmentController::class, 'careOptions']);
+    Route::post('care-segments/customers/{customer}/care', [\App\Http\Controllers\Api\CareSegmentController::class, 'saveCare']);
     Route::post('care-segments/export', [\App\Http\Controllers\Api\CareSegmentController::class, 'index']);
     Route::get('care-segments', [\App\Http\Controllers\Api\CareSegmentController::class, 'index']);
     Route::get('customers/order-insights', [CustomerController::class, 'orderInsights']);

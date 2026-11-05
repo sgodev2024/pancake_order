@@ -13,3 +13,8 @@ export const Typography = { Paragraph: element('p'), Text: element('span') }
 export const Space = Object.assign(element('div'), { Compact: element('div') })
 const message = { error() {}, success() {} }
 export const App = { useApp: () => ({ message }) }
+export const Form = Object.assign(element('segment-form'), {
+  Item: element('segment-form-item'),
+  useForm: () => React.useMemo(() => [{ resetFields() {}, submit() {} }], []),
+})
+Input.TextArea = element('segment-textarea')

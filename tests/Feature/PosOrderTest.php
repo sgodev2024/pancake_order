@@ -220,6 +220,62 @@ class PosOrderTest extends TestCase
         $this->getJson('/api/v1/order-pages?shop_id='.$this->shop->id)->assertOk()->assertJsonPath('data.0.name', 'Original');
     }
 
+    public function test_segment_care_schedules_once_reuses_pending_and_continues_existing_workflow(): void
+    {
+        foreach ([
+            '2026_05_10_023452_create_customer_cares_table.php',
+            '2026_05_14_042746_add_time_care_to_customer_cares_table.php',
+            '2026_05_16_091606_add_is_accept_to_customer_cares_table.php',
+            '2026_05_16_155328_add_total_edit_column_to_customer_cares_table.php',
+            '2026_05_19_090003_add_reason_column_to_customer_cares.php',
+            '2026_05_23_165321_add_is_confirm_care_to_customer_cares_table.php',
+            '2026_05_23_162926_create_customer_assigneds_table.php',
+            '2026_08_21_000000_create_customer_care_assignments_table.php',
+            '2026_08_27_010000_create_customer_care_journey_sequences_table.php',
+            '2026_11_05_000006_create_care_segment_entries.php',
+        ] as $file) {
+            (require database_path('migrations/'.$file))->up();
+        }
+        $actor = $this->actor('staff-cskh');
+        $group = PermissionGroup::firstOrCreate(['name' => 'Segments']);
+        $permission = Permission::firstOrCreate(['slug' => 'care-segment-view'], ['permission_group_id' => $group->id, 'name' => 'View']);
+        RolePermission::firstOrCreate(['role_id' => $actor->role_id, 'permission_id' => $permission->id]);
+        $customer = $this->customer($this->shop, $actor);
+        $this->actingAs($actor, 'api');
+        $url = '/api/v1/care-segments/customers/'.$customer->id.'/care';
+        $payload = ['request_id' => (string) Str::uuid(), 'note' => 'Đã tư vấn', 'next_date' => now()->addDay()->toDateString(), 'context' => 'Canxi tháng 10'];
+        $this->getJson($url)->assertOk()->assertJsonCount(0, 'data.pending');
+        $nextId = $this->postJson($url, $payload)->assertOk()->json('data.care_id');
+        $this->postJson($url, $payload)->assertOk()->assertJsonPath('data.replayed', true);
+        $this->assertDatabaseCount('customer_cares', 2);
+        $this->assertDatabaseCount('care_segment_entries', 1);
+        $this->assertDatabaseHas('customer_cares', ['id' => $nextId, 'status' => 0, 'date_care' => $payload['next_date']]);
+        $this->getJson($url)->assertOk()->assertJsonCount(1, 'data.pending');
+        $this->getJson('/api/v1/customer-cares?type=customer_care_pending&page=1&context=v2')->assertOk()
+            ->assertJsonFragment(['id' => $nextId]);
+        $payload['request_id'] = (string) Str::uuid();
+        $payload['note'] = 'Đã chăm sóc lần nữa';
+        $secondId = $this->postJson($url, $payload)->assertOk()->json('data.care_id');
+        $this->assertDatabaseCount('customer_cares', 3);
+        $this->assertDatabaseHas('customer_cares', ['id' => $nextId, 'status' => 1]);
+        $this->putJson('/api/v1/customer-cares/'.$secondId, ['status' => 1, 'note' => 'Theo lịch hiện tại',
+            'date' => now()->format('Y-m-d H:i:00'), 'next_date_care' => now()->addDays(2)->toDateString()])
+            ->assertOk()->assertJsonPath('success', true);
+        $pending = app(\App\Services\CareSegmentSchedulingService::class)->pending($customer)->get();
+        $this->assertCount(1, $pending);
+        $this->assertStringStartsWith('[Lọc CSKH]', $pending->first()->customerCare->note);
+        $this->assertSame(3, \App\Models\ActivityLog::where('action', 'customer_care.completed')->count());
+        $another = $this->actor('staff-cskh');
+        $this->actingAs($another, 'api')->postJson($url, array_replace($payload, ['request_id' => (string) Str::uuid()]))->assertConflict();
+        $this->actingAs($actor, 'api');
+        app(\App\Services\CustomerCareReclaimService::class)->reclaimManually(
+            $pending->first()->customer_care_id, $this->actor('admin'), 'Test reclaim');
+        $this->assertCount(0, app(\App\Services\CareSegmentSchedulingService::class)->pending($customer)->get());
+        $other = $this->customer($this->otherShop, $actor);
+        $this->postJson('/api/v1/care-segments/customers/'.$other->id.'/care', $payload)->assertForbidden();
+        Http::assertNothingSent();
+    }
+
     private function runMigration(): void
     {
         (require database_path('migrations/2026_10_21_000001_add_local_pos_support.php'))->up();

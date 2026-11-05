@@ -122,10 +122,26 @@ class CareSegmentService
             return $search === '' || str_contains(mb_strtolower($row['name'].' '.$row['phone']), $search);
         }));
         usort($rows, fn ($a, $b) => ($b['quantity'] <=> $a['quantity']) ?: strcmp($a['key'], $b['key']));
+        $careEntries = collect();
+        $nextAssignments = collect();
+        if ($rows !== [] && \Illuminate\Support\Facades\Schema::hasTable('care_segment_entries')) {
+            $entryQuery = DB::table('care_segment_entries')->whereIn('customer_id', array_column($rows, 'customer_id'))
+                ->select(['customer_id', 'source_type', 'source_id', 'cared_at', 'note'])
+                ->selectRaw('ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY id DESC) AS entry_rank');
+            $careEntries = DB::query()->fromSub($entryQuery, 'care_entries')->where('entry_rank', 1)->get()->keyBy('customer_id');
+            $nextAssignments = DB::table('customer_care_assignments as a')->join('customer_cares as c', 'c.id', '=', 'a.customer_care_id')
+                ->whereIn('a.source_id', $careEntries->pluck('source_id'))->where('a.status', 'active')->whereNull('a.cared_at')->where('c.status', 0)
+                ->select(['a.source_type', 'a.source_id', 'a.shop_id', 'c.date_care'])
+                ->get()->keyBy(fn ($r) => $r->shop_id.':'.$r->source_type.':'.$r->source_id);
+        }
         $shops = DB::table('shops')->whereIn('id', array_column($rows, 'shop_id'))->pluck('name', 'id');
         $assignees = User::whereIn('pancake_user_id', array_filter(array_column($rows, 'assigned_user_id')))
             ->get(['id', 'pancake_user_id', 'name'])->keyBy('pancake_user_id');
         foreach ($rows as &$row) {
+            $entry = $careEntries->get($row['customer_id']);
+            $row['last_cared_at'] = $entry?->cared_at;
+            $row['care_note'] = $entry?->note;
+            $row['next_care_date'] = $entry ? $nextAssignments->get($row['shop_id'].':'.$entry->source_type.':'.$entry->source_id)?->date_care : null;
             $row['shop_name'] = $shops[$row['shop_id']] ?? '—';
             $row['staff_name'] = $assignees->get($row['assigned_user_id'])?->name ?? 'Chưa gán';
             $row['products'] = array_values($row['products']);

@@ -32,6 +32,8 @@ test('selected sources survive month confirmation, applying and repeating the fi
     }],
   })
   let renderer
+  const originalPost = apiClient.post
+  const posts = []
   const original = apiClient.get
   const requests = []
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -40,9 +42,11 @@ test('selected sources survive month confirmation, applying and repeating the fi
     const Page = (await import(`data:text/javascript;base64,${Buffer.from(output[0].code).toString('base64')}`)).default
     apiClient.get = async (url, config) => {
       requests.push({ url, params: config?.params })
+      if (url.includes('/customers/')) return { data: { data: { staff: [{id: 1, name: 'Care'}], pending: [] } } }
       return { data: { data: url === '/shops' ? [{ id: 39, name: 'Shop' }]
         : { customers: [], total: 0, products: [], sources: [{ id: 'source-a', name: 'Source A' }], unmatched_orders: 0 } } }
     }
+    apiClient.post = async (url, payload) => { posts.push({ url, payload }); return { data: { success: true } } }
     const settle = async () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
     await act(async () => {
       renderer = create(React.createElement(QueryClientProvider, { client },
@@ -66,10 +70,30 @@ test('selected sources survive month confirmation, applying and repeating the fi
     await settle()
     assert.ok(reports().length > count)
     assert.deepEqual(reports().at(-1).params.order_page_ids, ['source-a'])
+    const table = renderer.root.findAllByType('segment-table')[0]
+    const action = table.props.columns.find((c) => c.title === 'Thao tác').render(null, {
+      customer_id: 55, shop_id: 39, name: 'Customer', phone: '0912345678', products: [{ name: 'Canxi', quantity: 2 }],
+    })
+    const careButton = action.props.children.find((child) => child?.props?.children === 'Chăm sóc & Hẹn tiếp')
+    await act(async () => careButton.props.onClick())
+    await settle()
+    assert.equal(renderer.root.findAllByType('segment-modal')[0].props.open, true)
+    await act(async () => renderer.root.findByType('segment-form').props.onFinish({
+      note: ' Đã tư vấn ', nextDate: dayjs('2026-11-10'), assignee: 1,
+    }))
+    await settle()
+    assert.equal(posts.length, 1)
+    assert.equal(posts[0].url, '/care-segments/customers/55/care')
+    assert.equal(posts[0].payload.note, 'Đã tư vấn')
+    assert.equal(posts[0].payload.next_date, '2026-11-10')
+    assert.match(posts[0].payload.context, /Canxi × 2/)
+    assert.equal(renderer.root.findAllByType('segment-modal')[0].props.open, false)
+
   } finally {
     if (renderer) await act(async () => renderer.unmount())
     client.clear()
     apiClient.get = original
+    apiClient.post = originalPost
     await bundle.close()
   }
 })

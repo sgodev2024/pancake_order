@@ -631,6 +631,7 @@ const CustomerCarePage = ({ pageType }) => {
             <div className="customer-care-cell">
               <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={record.customer_name}>
                 <span className="customer-care-cell__ellipsis">{record.customer_name || '—'}</span>
+                {record.note?.startsWith('[Lọc CSKH]') && <Tag color="cyan">Lọc CSKH</Tag>}
               </Tooltip>
               <Tooltip {...CARE_TEXT_TOOLTIP_PROPS} title={phones}>
                 <small className="customer-care-cell__ellipsis">{phones}</small>

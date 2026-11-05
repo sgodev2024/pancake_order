@@ -1,7 +1,7 @@
 import OrderSourceSelect from '../../components/OrderSourceSelect.jsx'
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Alert, App, Button, Card, DatePicker, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Alert, App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd'
 import dayjs from 'dayjs'
 import 'dayjs/locale/vi'
 import { monthLocale, dateLocale } from './calendarLocale.js'
@@ -9,9 +9,11 @@ import { monthLocale, dateLocale } from './calendarLocale.js'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../../api/client.js'
 import { getShops } from '../../api/shops.api.js'
-import { hasPermission, canUsePos } from '../../auth/permissions.js'
+import { hasPermission, canUsePos, isAdmin } from '../../auth/permissions.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
+import { createRequestId } from '../../utils/requestId.js'
+import { getApiErrorMessage } from '../../utils/response.js'
 import { ROUTES } from '../../constants/routes.js'
 
 const initial = () => ({ months: [dayjs().startOf('month'), dayjs().endOf('month')], shops: [], sources: [], products: [], match: 'any', search: '' })
@@ -39,6 +41,43 @@ export default function CareSegmentsPage() {
   const [selected, setSelected] = useState([])
   const [detail, setDetail] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const client = useQueryClient()
+  const [care, setCare] = useState(null)
+  const [careForm] = Form.useForm()
+  const canCare = isAdmin(user) || ['staff-cskh', 'manager-cskh'].includes(user?.role?.slug)
+  const canAssign = isAdmin(user) || user?.role?.slug === 'manager-cskh'
+  const careOptions = useQuery({
+    queryKey: ['segment-care-options', user?.id, care?.row.customer_id],
+    queryFn: async ({ signal }) => (await apiClient.get(`/care-segments/customers/${care.row.customer_id}/care`, { signal })).data.data,
+    enabled: !!care, retry: false,
+  })
+  const careMutation = useMutation({
+    mutationFn: async (values) => (await apiClient.post(`/care-segments/customers/${care.row.customer_id}/care`, {
+      request_id: care.requestId, note: values.note.trim(), next_date: values.nextDate.format('YYYY-MM-DD'),
+      assignee_id: canAssign ? values.assignee : user.id, context: care.context,
+    })).data,
+    retry: false,
+    onSuccess: () => {
+      message.success('Đã ghi nhận chăm sóc và lịch hẹn tiếp theo.')
+      setCare(null)
+      careForm.resetFields()
+      for (const key of ['care-segments', 'customer-cares', 'customer-care-history', 'overview', 'care-notifications']) {
+        client.invalidateQueries({ queryKey: [key] })
+      }
+    },
+    onError: (error) => {
+      message.error(getApiErrorMessage(error, 'Không lưu được lịch chăm sóc.'))
+      careOptions.refetch()
+    },
+  })
+  const openCare = (row) => {
+    careForm.resetFields()
+    careMutation.reset()
+    setCare({
+      row, requestId: createRequestId(),
+      context: `Sản phẩm: ${row.products.map((p) => p.name + ' × ' + p.quantity).join('; ')}. Kỳ mua: ${filters.months[0].format('MM/YYYY')} – ${filters.months[1].format('MM/YYYY')}.`.slice(0, 2000),
+    })
+  }
   const shops = useQuery({ queryKey: ['shops', 'segments', user?.id], queryFn: () => getShops({ view: 'summary' }), enabled: allowed })
   const report = useQuery({
     queryKey: ['care-segments', user?.id, paramsFor(filters), page],
@@ -93,8 +132,12 @@ export default function CareSegmentsPage() {
     { title: 'Số lượng', dataIndex: 'quantity', width: 100 },
     { title: 'Số đơn', dataIndex: 'order_count', width: 90 },
     { title: 'Mua gần nhất trong kỳ', dataIndex: 'last_purchase_at', width: 180, render: (date) => dayjs(date).format('DD/MM/YYYY HH:mm') },
+    { title: 'Chăm sóc gần nhất', width: 210, render: (_, row) => row.last_cared_at
+      ? <div>{dayjs(row.last_cared_at).format('DD/MM/YYYY HH:mm')}<div>{row.care_note}</div></div> : 'Chưa ghi nhận từ Lọc CSKH' },
+    { title: 'Hẹn chăm sóc tiếp', dataIndex: 'next_care_date', width: 160, render: (date) => date ? dayjs(date).format('DD/MM/YYYY') : '—' },
     { title: 'Thao tác', key: 'actions', width: 220, render: (_, row) => <Space wrap>
       <Button onClick={() => setDetail(row)}>Lịch sử mua</Button>
+      {canCare && <Button type="primary" onClick={() => openCare(row)}>Chăm sóc & Hẹn tiếp</Button>}
       {canUsePos(user) && <Button onClick={() => navigate(`${ROUTES.POS}?customer_id=${row.customer_id}&shop_id=${row.shop_id}`)}>Tạo POS</Button>}
     </Space> },
   ]
@@ -139,6 +182,28 @@ export default function CareSegmentsPage() {
     <Table rowKey="key" columns={columns} dataSource={report.data?.customers ?? []} loading={report.isFetching}
       rowSelection={{ selectedRowKeys: selected, preserveSelectedRowKeys: true, onChange: setSelected }}
       scroll={{ x: 1560 }} pagination={{ current: page, pageSize: 30, total: report.data?.total ?? 0, onChange: setPage, showSizeChanger: false }} />
+    <Modal open={!!care} title={`Ghi nhận chăm sóc · ${care?.row.name ?? ''}`} okText="Lưu chăm sóc & Hẹn tiếp" cancelText="Hủy"
+      confirmLoading={careMutation.isPending}
+      okButtonProps={{ disabled: careOptions.isPending || careOptions.isError || careMutation.isPending || (careOptions.data?.pending?.length ?? 0) > 1 }}
+      onCancel={() => { if (!careMutation.isPending) setCare(null) }} onOk={() => careForm.submit()}>
+      {careOptions.isError && <QueryErrorAlert error={careOptions.error} onRetry={careOptions.refetch} />}
+      {!!careOptions.data?.pending?.length && <Alert type="info" showIcon
+        title={`Khách đang có ${careOptions.data.pending.length} lịch chờ. Hệ thống sẽ ghi nhận chăm sóc trên lịch hiện có rồi hẹn tiếp.`}
+        description={careOptions.data.pending.map((p) => `Lịch #${p.id} · ${dayjs(p.date).format('DD/MM/YYYY')} · ${careOptions.data.staff.find((u) => u.id === p.assignee_id)?.name ?? p.assignee_id}`).join('; ')} />}
+      <p>{care?.row.shop_name} · {care?.row.phone}</p>
+      <p>Thời gian chăm sóc được ghi nhận khi lưu. Nguồn khởi tạo: Lọc CSKH.</p>
+      <Form form={careForm} layout="vertical" onFinish={(values) => careMutation.mutate(values)} disabled={careMutation.isPending}>
+        <Form.Item name="note" label="Nội dung chăm sóc" rules={[{ required: true, whitespace: true, message: 'Nhập nội dung chăm sóc.' }]}>
+          <Input.TextArea rows={4} maxLength={5000} />
+        </Form.Item>
+        <Form.Item name="nextDate" label="Ngày chăm sóc tiếp" rules={[{ required: true, message: 'Chọn ngày chăm sóc tiếp.' }]}>
+          <DatePicker locale={dateLocale} format="DD/MM/YYYY" placeholder="Chọn ngày" style={{ width: '100%' }} />
+        </Form.Item>
+        {canAssign && <Form.Item name="assignee" label="Nhân viên phụ trách" rules={[{ required: true, message: 'Chọn nhân viên CSKH phụ trách.' }]}>
+          <Select showSearch optionFilterProp="label" options={(careOptions.data?.staff ?? []).map((u) => ({value: u.id, label: u.name}))} />
+        </Form.Item>}
+      </Form>
+    </Modal>
     <Modal open={!!detail} onCancel={() => setDetail(null)} footer={null} title={`Lịch sử mua trong kỳ · ${detail?.name ?? ''}`} width={850}>
       <Table rowKey="id" pagination={{ pageSize: 10 }} dataSource={detail?.orders ?? []} columns={[
         {title: 'Mã đơn', dataIndex: 'reference'}, {title: 'Ngày tạo', dataIndex: 'created_at'},

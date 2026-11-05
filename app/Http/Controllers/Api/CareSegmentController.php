@@ -11,6 +11,45 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class CareSegmentController extends Controller
 {
+    private function authorizeCare(Request $request, \App\Models\Customer $customer): void
+    {
+        $user = $request->user();
+        abort_unless($user->isAdmin() || can_access('care-segment-view'), 403);
+        app(\App\Services\CustomerCareWriteAccessService::class)->authorizeFeature($user);
+        abort_unless(app(\App\Services\ShopAccessService::class)->canAccessShop($user, (int)$customer->shop_id), 403);
+    }
+
+    public function careOptions(Request $request, \App\Models\Customer $customer, \App\Services\CareSegmentSchedulingService $service)
+    {
+        $this->authorizeCare($request, $customer);
+        $staff = \App\Models\User::whereHas('shops', fn ($q) => $q->where('shops.id', $customer->shop_id))
+            ->whereHas('role', fn ($q) => $q->whereIn('slug', ['staff-cskh', 'manager-cskh']))
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('staff_account_states')->whereColumn('user_id', 'users.id'))
+            ->get(['id', 'name']);
+        $pending = $service->pending($customer)->with('customerCare')->get()->map(fn ($row) => [
+            'id' => $row->customer_care_id, 'assignee_id' => $row->assignee_user_id, 'date' => $row->customerCare?->date_care,
+        ]);
+        return response()->json(['success' => true, 'data' => ['staff' => $staff, 'pending' => $pending]]);
+    }
+
+    public function saveCare(Request $request, \App\Models\Customer $customer, \App\Services\CareSegmentSchedulingService $service)
+    {
+        $this->authorizeCare($request, $customer);
+        $data = $request->validate([
+            'request_id' => ['required', 'uuid'], 'note' => ['required', 'string', 'max:5000'],
+            'context' => ['nullable', 'string', 'max:2000'],
+            'next_date' => ['required', 'date_format:Y-m-d'],
+            'assignee_id' => ['nullable', 'integer', 'min:1'],
+        ]);
+        abort_if(trim($data['note']) === '', 422, 'Nhập nội dung chăm sóc.');
+        try {
+            $result = $service->save($request->user(), $customer, $data);
+        } catch (\DomainException $error) {
+            abort(409, $error->getMessage());
+        }
+        return response()->json(['success' => true, 'message' => 'Đã ghi nhận chăm sóc và lịch hẹn tiếp theo.', 'data' => $result]);
+    }
+
     public function index(Request $request, CareSegmentService $service)
     {
         $actor = $request->user();

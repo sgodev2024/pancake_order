@@ -183,6 +183,10 @@ class CustomerCareController extends Controller implements HasMiddleware
                 throw new AuthorizationException('Unauthenticated.');
             }
             $note = $request->note ?? null;
+            if (str_starts_with((string) $customer_care->note, '[Lọc CSKH]')
+                && ! str_starts_with((string) $note, '[Lọc CSKH]')) {
+                $note = "[Lọc CSKH]\n".$note;
+            }
             $time_care = $request->date ?? null;
             $is_admin = $actor->isAdmin() || $actor->isManagerCskh();
             $is_care_completion = (int) $request->input('status') === 1;
@@ -261,6 +265,7 @@ class CustomerCareController extends Controller implements HasMiddleware
                         'customer_name' => $lockedCustomerCare->customer_name,
                         'customer_addresss' => $lockedCustomerCare->customer_addresss,
                         'date_care' => $request->next_date_care,
+                        'note' => str_starts_with((string) $lockedCustomerCare->note, '[Lọc CSKH]') ? '[Lọc CSKH]' : null,
                         'user_creator_id' => $lockedCustomerCare->user_creator_id,
                         // "user_care_id"              => $lockedCustomerCare->user_care_id,
                         // "user_assigning_seller_id"  => $lockedCustomerCare->user_assigning_seller_id
@@ -444,6 +449,10 @@ class CustomerCareController extends Controller implements HasMiddleware
         }
         abort_if($matches->count() > 1, 409, 'Lịch hẹn khớp nhiều hồ sơ khách hàng. Vui lòng kiểm tra lại.');
         $customer = $matches->first();
+        $segmentAssignment = $care->activeAssignments()->where('source_type', CustomerCareAssignment::SOURCE_CARE_SEGMENT)->first();
+        if ($segmentAssignment) {
+            $customer = Customer::whereKey($segmentAssignment->source_id)->where('shop_id', $care->shop_id)->firstOrFail();
+        }
         $address = $customer?->crm_shipping_address ?: ($care->customer_addresss ?: $customer?->shippingAddress());
 
         return response()->json(['success' => true, 'data' => [

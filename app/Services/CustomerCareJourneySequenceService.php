@@ -58,6 +58,12 @@ class CustomerCareJourneySequenceService
     ): array {
         $shopId = (int) $assignment->shop_id;
 
+        if ($assignment->source_type === CustomerCareAssignment::SOURCE_CARE_SEGMENT) {
+            $customer = Customer::whereKey($assignment->source_id)->where('shop_id', $shopId)->firstOrFail();
+            return ['shop_id' => $shopId, 'scope' => 'customer_shop', 'key' => 'customer:'.$customer->id,
+                'customer_id' => (int) $customer->id, 'order_id' => null];
+        }
+
         if ($assignment->source_type === CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY) {
             return [
                 'shop_id' => $shopId,
