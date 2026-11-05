@@ -18,11 +18,13 @@ class CareSegmentController extends Controller
         $data = $request->validate([
             'shop_ids' => ['nullable', 'array', 'max:100'], 'shop_ids.*' => ['integer', 'min:1', 'distinct'],
             'month_from' => ['required', 'date_format:Y-m'], 'month_to' => ['required', 'date_format:Y-m', 'after_or_equal:month_from'],
+            'order_page_ids' => ['nullable', 'array', 'max:100'], 'order_page_ids.*' => ['string', 'max:255', 'distinct'],
             'products' => ['nullable', 'array', 'max:100'], 'products.*' => ['string', 'size:40'],
             'match' => ['nullable', 'in:any,all'], 'quantity_min' => ['nullable', 'numeric', 'min:0'],
             'quantity_max' => ['nullable', 'numeric', 'min:0'],
             'last_purchase_before' => ['nullable', 'date_format:Y-m-d'], 'search' => ['nullable', 'string', 'max:255'],
             'page' => ['nullable', 'integer', 'min:1'], 'page_size' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'sources_only' => ['nullable', 'boolean'],
             'export' => ['nullable', 'boolean'], 'selected' => ['nullable', 'array', 'max:10000'],
             'selected.*' => ['string', 'max:80'],
         ]);
@@ -62,7 +64,7 @@ class CareSegmentController extends Controller
         $size = $data['page_size'] ?? 30;
         return response()->json(['success' => true, 'data' => [
             'customers' => array_slice($rows, ($page - 1) * $size, $size),
-            'total' => count($rows), 'products' => $report['products'],
+            'total' => count($rows), 'products' => $report['products'], 'sources' => $report['sources'],
             'unmatched_orders' => $report['unmatched_orders'],
         ]]);
     }

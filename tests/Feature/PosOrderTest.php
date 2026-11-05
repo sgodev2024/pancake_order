@@ -163,12 +163,21 @@ class PosOrderTest extends TestCase
             $ids[] = $id;
             Order::findOrFail($id)->update(['status' => count($ids) === 3 ? 0 : 3]);
         }
+        Order::findOrFail($ids[0])->update(['pancake_order_page_id' => 'source-a', 'pancake_order_page_name' => 'Nguồn A']);
+        Order::findOrFail($ids[1])->update(['pancake_order_page_id' => 'source-b', 'pancake_order_page_name' => 'Nguồn B']);
         $month = now()->format('Y-m');
         $url = '/api/v1/care-segments?month_from='.$month.'&month_to='.$month;
         $response = $this->getJson($url)->assertOk()->assertJsonPath('data.total', 1)
             ->assertJsonPath('data.customers.0.order_count', 2)
             ->assertJsonPath('data.customers.0.quantity', 5);
         $this->assertCount(2, $response->json('data.products'));
+        $this->getJson($url.'&order_page_ids[]=source-a')->assertOk()
+            ->assertJsonPath('data.customers.0.quantity', 2)->assertJsonPath('data.customers.0.order_count', 1)
+            ->assertJsonCount(2, 'data.sources');
+        $this->getJson($url.'&sources_only=1')->assertOk()->assertJsonCount(2, 'data.sources')
+            ->assertJsonCount(0, 'data.customers');
+        $this->getJson($url.'&order_page_ids[]=missing-source')->assertOk()->assertJsonPath('data.total', 0);
+
         $local = sha1(mb_strtolower('Local'));
         $pancake = sha1(mb_strtolower('Pancake'));
         $this->getJson($url.'&products[]='.$local)->assertOk()

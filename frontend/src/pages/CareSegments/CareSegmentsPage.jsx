@@ -8,11 +8,13 @@ import { getShops } from '../../api/shops.api.js'
 import { hasPermission, canUsePos } from '../../auth/permissions.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
+import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
 import { ROUTES } from '../../constants/routes.js'
 
-const initial = () => ({ months: [dayjs().startOf('month'), dayjs().endOf('month')], shops: [], products: [], match: 'any', search: '' })
+const initial = () => ({ months: [dayjs().startOf('month'), dayjs().endOf('month')], shops: [], sources: [], products: [], match: 'any', search: '' })
 const paramsFor = (filters) => ({
   shop_ids: filters.shops.length ? filters.shops : undefined,
+  order_page_ids: filters.sources.length ? filters.sources : undefined,
   products: filters.products.length ? filters.products : undefined,
   month_from: filters.months[0].format('YYYY-MM'),
   month_to: filters.months[1].format('YYYY-MM'),
@@ -39,6 +41,19 @@ export default function CareSegmentsPage() {
     queryKey: ['care-segments', user?.id, paramsFor(filters), page],
     queryFn: async ({ signal }) => (await apiClient.get('/care-segments', { params: { ...paramsFor(filters), page, page_size: 30 }, signal })).data.data,
     enabled: allowed, retry: false,
+  })
+  const sourceOptions = useQuery({
+    queryKey: ['segment-sources', user?.id, draft.shops, draft.months?.map((m) => m?.format('YYYY-MM'))],
+    queryFn: async ({ signal }) => {
+      const data = (await apiClient.get('/care-segments', { params: {
+        shop_ids: draft.shops.length ? draft.shops : undefined,
+        month_from: draft.months[0].format('YYYY-MM'), month_to: draft.months[1].format('YYYY-MM'), sources_only: 1,
+      }, signal })).data.data
+      return Array.from(new Map((data.sources ?? []).map((source) => [String(source.id), {
+        value: String(source.id), label: source.name,
+      }])).values())
+    },
+    enabled: allowed && !!draft.months?.[0] && !!draft.months?.[1], retry: false,
   })
   const update = (field, value) => setDraft((old) => ({ ...old, [field]: value }))
   const apply = () => {
@@ -81,9 +96,13 @@ export default function CareSegmentsPage() {
     </Typography.Paragraph>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 16 }}>
       <div><label>Cửa hàng</label><Select aria-label="Cửa hàng Lọc CSKH" mode="multiple" style={{ width: '100%' }} allowClear
-        placeholder="Tất cả cửa hàng được phân công" value={draft.shops} onChange={(v) => setDraft((old) => ({ ...old, shops: v, products: [] }))}
+        placeholder="Tất cả cửa hàng được phân công" value={draft.shops} onChange={(v) => setDraft((old) => ({ ...old, shops: v, sources: [], products: [] }))}
         loading={shops.isFetching} options={(shops.data ?? []).map((s) => ({ value: s.id, label: s.name }))} /></div>
-      <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" value={draft.months} onChange={(v) => update('months', v)} style={{ width: '100%' }} /></div>
+      <div><label>Nguồn đơn</label><Select aria-label="Nguồn đơn Lọc CSKH" mode="multiple" style={{ width: '100%' }}
+        allowClear showSearch placeholder="Tất cả nguồn đơn" value={draft.sources} onChange={(v) => update('sources', v)}
+        loading={sourceOptions.isFetching} disabled={!draft.months?.[0] || !draft.months?.[1]}
+        options={sourceOptions.data ?? []} filterOption={filterOrderSource} optionRender={renderOrderSourceOption} /></div>
+      <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" value={draft.months} onChange={(v) => setDraft((old) => ({ ...old, months: v, sources: [] }))} style={{ width: '100%' }} /></div>
       <div><label>Sản phẩm đã mua</label><Select aria-label="Sản phẩm đã mua" mode="multiple" showSearch optionFilterProp="search"
         placeholder="Tên hoặc mã sản phẩm" style={{ width: '100%' }} value={draft.products} onChange={(v) => update('products', v)}
         options={(report.data?.products ?? []).map((p) => ({ ...p, search: `${p.label} ${p.code}`, label: p.code ? `${p.label} · ${p.code}` : p.label }))} /></div>
@@ -104,6 +123,7 @@ export default function CareSegmentsPage() {
       </Button>}
       <Typography.Text>Tổng khách trong cửa hàng phù hợp: <strong>{report.data?.total ?? 0}</strong></Typography.Text>
     </Space>
+    {sourceOptions.isError && <QueryErrorAlert error={sourceOptions.error} onRetry={sourceOptions.refetch} />}
     {shops.isError && <QueryErrorAlert error={shops.error} onRetry={shops.refetch} />}
     {report.isError && <QueryErrorAlert error={report.error} onRetry={report.refetch} />}
     {!!report.data?.unmatched_orders && <Alert style={{ marginBottom: 16 }} showIcon type="warning"

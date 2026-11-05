@@ -22,6 +22,19 @@ class CareSegmentService
         $orders = Order::query()->whereIn('status', [3, 16])
             ->where('created_at', '>=', $start)->where('created_at', '<', $end)
             ->when($shopIds !== null, fn ($q) => $q->whereIn('shop_id', $shopIds));
+        $sourceRows = (clone $orders)->whereNotNull('pancake_order_page_id')
+            ->whereRaw("TRIM(pancake_order_page_id) <> ''")
+            ->select(['shop_id', 'pancake_order_page_id', 'pancake_order_page_name'])
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY shop_id, pancake_order_page_id ORDER BY created_at DESC, id DESC) AS source_rank');
+        $sources = DB::query()->fromSub($sourceRows->toBase(), 'segment_sources')->where('source_rank', 1)
+            ->selectRaw("shop_id, pancake_order_page_id AS id, COALESCE(NULLIF(TRIM(pancake_order_page_name), ''), pancake_order_page_id) AS name")
+            ->orderBy('name')->orderBy('id')->get();
+        if (! empty($filters['sources_only'])) {
+            return ['rows' => [], 'products' => [], 'unmatched_orders' => 0, 'sources' => $sources];
+        }
+        if (! empty($filters['order_page_ids'])) {
+            $orders->whereIn('pancake_order_page_id', $filters['order_page_ids']);
+        }
         $groups = [];
         $options = [];
         $skipped = 0;
@@ -120,6 +133,6 @@ class CareSegmentService
         unset($row);
         $options = array_values($options);
         usort($options, fn ($a, $b) => strnatcasecmp($a['label'], $b['label']));
-        return ['rows' => $rows, 'products' => $options, 'unmatched_orders' => $skipped];
+        return ['rows' => $rows, 'products' => $options, 'unmatched_orders' => $skipped, 'sources' => $sources];
     }
 }
