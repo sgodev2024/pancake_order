@@ -578,6 +578,9 @@ class PosOrderTest extends TestCase
             'pancake_order_page_id' => 'shared-page', 'pancake_order_page_name' => 'Shared source',
         ]);
         $this->actingAs($cskh, 'api');
+        $this->getJson('/api/v1/order-pages?context=catalog&shop_id='.$this->shop->id)
+            ->assertOk()->assertJsonPath('data.0.id', 'shared-page');
+        $this->getJson('/api/v1/order-pages?context=catalog&shop_id='.$this->otherShop->id)->assertForbidden();
         $this->getJson('/api/v1/order-pages?context=pos&shop_id='.$this->shop->id)
             ->assertOk()->assertJsonPath('data.0.id', 'shared-page');
         $this->getJson('/api/v1/order-pages?context=pos&shop_id='.$this->otherShop->id)->assertForbidden();

@@ -81,6 +81,7 @@ const OrderReportPage = () => {
             <div className="orders-field">
               <label htmlFor="report-order-source">Nguồn đơn</label>
               <OrderSourceSelect
+                shopId={draftFilters.shopId}
                 id="report-order-source"
                 allowClear
                 showSearch

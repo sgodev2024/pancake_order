@@ -77,13 +77,15 @@ for (const [pageType, { apiType }] of Object.entries(CUSTOMER_CARE_TYPES)) {
 }
 
 test('source selector renders disabled without shop, enabled with shop, and accessible error', () => {
+  const sourceClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const renderFilter = (props) => renderToStaticMarkup(React.createElement(QueryClientProvider, { client: sourceClient }, React.createElement(Filter, props)))
   const props = { options: [], query: {}, onChange: () => {} }
-  const disabled = renderToStaticMarkup(React.createElement(Filter, props))
+  const disabled = renderFilter(props)
   assert.match(disabled, /id="customer-care-order-page"[^>]*disabled=""|disabled=""[^>]*id="customer-care-order-page"/)
   assert.match(disabled, /Chọn cửa hàng trước/)
-  const enabled = renderToStaticMarkup(React.createElement(Filter, { ...props, shopId: '34' }))
+  const enabled = renderFilter({ ...props, shopId: '34' })
   assert.doesNotMatch(enabled, /disabled=""/)
   assert.match(enabled, /aria-label="Nguồn đơn"/)
-  const error = renderToStaticMarkup(React.createElement(Filter, { ...props, shopId: '34', query: { isError: true } }))
+  const error = renderFilter({ ...props, shopId: '34', query: { isError: true } })
   assert.match(error, /role="alert"/)
 })

@@ -393,6 +393,7 @@ const OrdersPage = ({ origin = 'pancake' }) => {
             <div className="orders-field">
               <label htmlFor="orders-source">Nguồn đơn</label>
               <OrderSourceSelect
+                shopId={draftFilters.shopId}
                 id="orders-source"
                 aria-label="Nguồn đơn"
                 allowClear

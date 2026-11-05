@@ -5,6 +5,7 @@ const CustomerCareOrderPageFilter = ({ shopId, value, options, query, onChange }
   <div className="customer-care-field">
     <label htmlFor="customer-care-order-page">Nguồn đơn</label>
     <OrderSourceSelect
+      shopId={shopId}
       id="customer-care-order-page"
       aria-label="Nguồn đơn"
       allowClear

@@ -446,6 +446,7 @@ const OrderOpportunitiesPage = () => {
             <div className="order-opportunities-field">
               <label htmlFor="order-opportunities-source">Nguồn đơn</label>
               <OrderSourceSelect
+                shopId={draftFilters.shopId}
                 id="order-opportunities-source"
                 aria-label="Nguồn đơn"
                 allowClear
