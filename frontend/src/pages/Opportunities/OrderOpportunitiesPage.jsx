@@ -1,4 +1,4 @@
-import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
+import OrderSourceSelect from '../../components/OrderSourceSelect.jsx'
 import { EyeOutlined, FilterOutlined, MoreOutlined, ReloadOutlined, UserSwitchOutlined } from '@ant-design/icons'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -445,7 +445,7 @@ const OrderOpportunitiesPage = () => {
 
             <div className="order-opportunities-field">
               <label htmlFor="order-opportunities-source">Nguồn đơn</label>
-              <Select
+              <OrderSourceSelect
                 id="order-opportunities-source"
                 aria-label="Nguồn đơn"
                 allowClear
@@ -456,9 +456,7 @@ const OrderOpportunitiesPage = () => {
                 status={orderPagesQuery.isError ? 'error' : undefined}
                 value={draftFilters.orderPageId}
                 options={orderPageOptions}
-                optionRender={renderOrderSourceOption}
-                filterOption={filterOrderSource}
-                placeholder="Chọn nguồn đơn"
+                placeholder="Tất cả nguồn đơn"
                 onChange={(value) => updateDraft('orderPageId', value)}
                 notFoundContent={
                   orderPagesQuery.isLoading

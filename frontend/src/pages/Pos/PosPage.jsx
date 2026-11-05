@@ -1,4 +1,4 @@
-import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
+import OrderSourceSelect from '../../components/OrderSourceSelect.jsx'
 import { createRequestId } from '../../utils/requestId.js'
 import { MinusOutlined, PlusOutlined, SearchOutlined, ShoppingCartOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -302,11 +302,11 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
       <Card className="pos-products" title="Sản phẩm">
         <div className="pos-product-filters"><ShopSelectInput shopsQuery={shopsQuery} value={shopsReady ? shopId : undefined}
           onChange={changeShop} disabled={!!careDraft || draftLocked || !shopsReady} allowClear={!careDraft && (shopsQuery.data?.length ?? 0) > 1} />
-          <Select aria-label="Nguồn đơn" placeholder="Chọn nguồn đơn" allowClear showSearch
+          <OrderSourceSelect aria-label="Nguồn đơn" placeholder="Tất cả nguồn đơn" allowClear showSearch
             optionFilterProp="label" value={orderPageId} onChange={setOrderPageId} disabled={disabled}
             loading={pagesQuery.isFetching} status={pagesQuery.isError ? 'error' : undefined}
             notFoundContent={pagesQuery.isLoading ? 'Đang tải...' : pagesQuery.isError ? 'Không thể tải nguồn đơn' : 'Không có nguồn đơn'}
-            options={getOrderPageOptions(pagesQuery.data)} optionRender={renderOrderSourceOption} filterOption={filterOrderSource} />
+            options={getOrderPageOptions(pagesQuery.data)} />
           <Input prefix={<SearchOutlined />} value={search} disabled={!shopId || disabled} allowClear onChange={(event) => setSearch(event.target.value)} placeholder="Tên, mã sản phẩm hoặc barcode" aria-label="Tìm sản phẩm POS" /></div>
         {shopsQuery.isError ? <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
           : !shopsReady ? <Spin tip="Đang tải cửa hàng"><Empty description="Đang tải danh sách cửa hàng" /></Spin>

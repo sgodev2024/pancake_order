@@ -1,3 +1,4 @@
+import OrderSourceSelect from '../../components/OrderSourceSelect.jsx'
 import { FilterOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Card, Input, Select, Typography } from 'antd'
@@ -79,7 +80,7 @@ const OrderReportPage = () => {
             </div>
             <div className="orders-field">
               <label htmlFor="report-order-source">Nguồn đơn</label>
-              <Select
+              <OrderSourceSelect
                 id="report-order-source"
                 allowClear
                 showSearch
@@ -89,7 +90,7 @@ const OrderReportPage = () => {
                 status={orderPagesQuery.isError ? 'error' : undefined}
                 value={draftFilters.orderPageId}
                 options={orderPageOptions}
-                placeholder="Chọn nguồn đơn"
+                placeholder="Tất cả nguồn đơn"
                 onChange={(value) => updateDraft('orderPageId', value)}
               />
               {orderPagesQuery.isError && (

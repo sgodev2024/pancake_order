@@ -1,10 +1,10 @@
-import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
+import OrderSourceSelect from '../../components/OrderSourceSelect.jsx'
 import { Select, Typography } from 'antd'
 
 const CustomerCareOrderPageFilter = ({ shopId, value, options, query, onChange }) => (
   <div className="customer-care-field">
     <label htmlFor="customer-care-order-page">Nguồn đơn</label>
-    <Select
+    <OrderSourceSelect
       id="customer-care-order-page"
       aria-label="Nguồn đơn"
       allowClear
@@ -15,8 +15,6 @@ const CustomerCareOrderPageFilter = ({ shopId, value, options, query, onChange }
       status={query.isError ? 'error' : undefined}
       value={value}
       options={shopId ? options : []}
-      optionRender={renderOrderSourceOption}
-      filterOption={filterOrderSource}
       placeholder={shopId ? 'Tất cả nguồn đơn' : 'Chọn cửa hàng trước'}
       notFoundContent={query.isFetching ? 'Đang tải…' : 'Không có nguồn đơn'}
       onChange={(nextValue) => onChange(nextValue == null ? undefined : String(nextValue))}

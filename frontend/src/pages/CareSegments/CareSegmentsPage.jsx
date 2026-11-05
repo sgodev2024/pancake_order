@@ -1,3 +1,4 @@
+import OrderSourceSelect from '../../components/OrderSourceSelect.jsx'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, App, Button, Card, DatePicker, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd'
@@ -11,7 +12,6 @@ import { getShops } from '../../api/shops.api.js'
 import { hasPermission, canUsePos } from '../../auth/permissions.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
-import { renderOrderSourceOption, filterOrderSource } from '../../components/OrderSourceOption.jsx'
 import { ROUTES } from '../../constants/routes.js'
 
 const initial = () => ({ months: [dayjs().startOf('month'), dayjs().endOf('month')], shops: [], sources: [], products: [], match: 'any', search: '' })
@@ -101,10 +101,10 @@ export default function CareSegmentsPage() {
       <div><label>Cửa hàng</label><Select aria-label="Cửa hàng Lọc CSKH" mode="multiple" style={{ width: '100%' }} allowClear
         placeholder="Tất cả cửa hàng được phân công" value={draft.shops} onChange={(v) => setDraft((old) => ({ ...old, shops: v, sources: [], products: [] }))}
         loading={shops.isFetching} options={(shops.data ?? []).map((s) => ({ value: s.id, label: s.name }))} /></div>
-      <div><label>Nguồn đơn</label><Select aria-label="Nguồn đơn Lọc CSKH" mode="multiple" style={{ width: '100%' }}
+      <div><label>Nguồn đơn</label><OrderSourceSelect aria-label="Nguồn đơn Lọc CSKH" mode="multiple" style={{ width: '100%' }}
         allowClear showSearch placeholder="Tất cả nguồn đơn" value={draft.sources} onChange={(v) => update('sources', v)}
         loading={sourceOptions.isFetching} disabled={!draft.months?.[0] || !draft.months?.[1]}
-        options={sourceOptions.data ?? []} filterOption={filterOrderSource} optionRender={renderOrderSourceOption} /></div>
+        options={sourceOptions.data ?? []} /></div>
       <div><label>Tháng mua hàng</label><DatePicker.RangePicker picker="month" locale={monthLocale} format="[Tháng] MM/YYYY" placeholder={['Từ tháng', 'Đến tháng']} value={draft.months} onChange={(v) => setDraft((old) => ({ ...old, months: v, sources: [] }))} style={{ width: '100%' }} /></div>
       <div><label>Sản phẩm đã mua</label><Select aria-label="Sản phẩm đã mua" mode="multiple" showSearch optionFilterProp="search"
         placeholder="Tên hoặc mã sản phẩm" style={{ width: '100%' }} value={draft.products} onChange={(v) => update('products', v)}
