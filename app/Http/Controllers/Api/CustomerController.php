@@ -93,6 +93,7 @@ class CustomerController extends Controller implements HasMiddleware
                 'phone_numbers',
                 'pancake_customer_id',
                 'pancake_full_data',
+                'crm_shipping_address',
                 'created_at',
                 'loyalty_tier_id',
                 'order_count',
@@ -183,16 +184,13 @@ class CustomerController extends Controller implements HasMiddleware
                 });
             }
         }
-        $rows = $query->orderBy('name')->orderBy('id')->paginate(20, ['id', 'name', 'phone_numbers', 'pancake_full_data'], 'page', $data['page'] ?? 1);
+        $rows = $query->orderBy('name')->orderBy('id')->paginate(20, ['id', 'name', 'phone_numbers', 'pancake_full_data', 'crm_shipping_address'], 'page', $data['page'] ?? 1);
 
         return response()->json(['success' => true, 'data' => [
             'customers' => collect($rows->items())->map(function ($customer) {
-                $address = data_get($customer->pancake_full_data, 'address')
-                    ?? data_get($customer->pancake_full_data, 'addresses.0.full_address');
-
                 return [
                     'id' => $customer->id, 'name' => $customer->name, 'phone' => $customer->phone_numbers,
-                    'address' => is_string($address) ? $address : '',
+                    'address' => $customer->shippingAddress(),
                 ];
             })->values(),
             'total_items' => $rows->total(),

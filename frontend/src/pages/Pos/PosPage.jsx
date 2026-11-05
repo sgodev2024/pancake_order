@@ -343,7 +343,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
               </Form.Item>
             </div>
             {customersQuery.isError && <QueryErrorAlert error={customersQuery.error} onRetry={customersQuery.refetch} />}
-            <Form.Item name="shipping_address" label="Địa chỉ giao hàng" rules={[{ required: true, whitespace: true, message: 'Nhập địa chỉ giao hàng.' }, { max: 1000 }]}><Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} /></Form.Item>
+            <Form.Item name="shipping_address" label="Địa chỉ giao hàng" extra={fields.customer_id ? 'Địa chỉ đã sửa sẽ được lưu vào hồ sơ khách khi tạo đơn.' : undefined} rules={[{ required: true, whitespace: true, message: 'Nhập địa chỉ giao hàng.' }, { max: 1000 }]}><Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} /></Form.Item>
             <div className="pos-cart" aria-label="Giỏ hàng">{!cart.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chọn sản phẩm ở bên trái" /> : cart.map((item) => <div className="pos-cart-row" key={item.product_id}>
               <div className="pos-cart-name"><strong>{item.name}</strong><span>{money(item.unit_price)} / sản phẩm</span></div>
               <Space.Compact><Button aria-label={`Giảm ${item.name}`} disabled={disabled || item.quantity <= 1} icon={<MinusOutlined />} onClick={() => setQuantity(item.product_id, item.quantity - 1)} />

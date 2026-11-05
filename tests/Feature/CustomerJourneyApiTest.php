@@ -35,6 +35,7 @@ class CustomerJourneyApiTest extends TestCase
         DB::purge('customer_journey_testing');
         DB::setDefaultConnection('customer_journey_testing');
         $this->createSchema();
+        (require database_path('migrations/2026_11_05_000003_add_crm_shipping_address_to_customers.php'))->up();
         (require database_path('migrations/2026_11_04_000001_create_staff_account_states_table.php'))->up();
         Schema::table('orders', function (Blueprint $table): void {
             $table->unsignedBigInteger('customer_id')->nullable();

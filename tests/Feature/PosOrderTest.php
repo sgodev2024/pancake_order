@@ -76,6 +76,7 @@ class PosOrderTest extends TestCase
             $table->unsignedInteger('province_id')->nullable();
         });
         $this->runMigration();
+        (require database_path('migrations/2026_11_05_000003_add_crm_shipping_address_to_customers.php'))->up();
         $this->shop = Shop::create(['name' => 'Assigned', 'pancake_shop_id' => 'shop-1', 'api_key' => 'test']);
         $this->otherShop = Shop::create(['name' => 'Other', 'pancake_shop_id' => 'shop-2', 'api_key' => 'test']);
         $this->actor = $this->actor('staff-sale');
@@ -203,14 +204,29 @@ class PosOrderTest extends TestCase
         $this->assertDatabaseCount('orders', 1);
     }
 
-    public function test_existing_customer_is_scoped_and_snapshot_is_not_changed_with_profile(): void
+    public function test_pos_prefills_imported_address_and_saves_edits_without_changing_old_orders(): void
     {
         $customer = $this->customer($this->shop, $this->actor);
-        $response = $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $customer->id, 'customer' => null]));
-        $response->assertCreated()->assertJsonPath('data.customer_id', $customer->id);
-        $id = $response->json('data.id');
-        $customer->update(['name' => 'Changed profile']);
-        $this->getJson('/api/v1/orders/'.$id)->assertOk()->assertJsonPath('data.customer_name', 'Existing');
+        $profile = ['address' => '', 'shop_customer_addresses' => [['full_address' => 'Địa chỉ đã đồng bộ']]];
+        $customer->update(['pancake_full_data' => $profile]);
+        $options = '/api/v1/customers?view=pos&shop_id='.$this->shop->id;
+        $this->getJson($options)->assertOk()->assertJsonPath('data.customers.0.address', 'Địa chỉ đã đồng bộ');
+
+        $first = $this->payload(['customer_id' => $customer->id, 'shipping_address' => 'Địa chỉ mới']);
+        $id = $this->postJson('/api/v1/orders', $first)->assertCreated()
+            ->assertJsonPath('data.customer_id', $customer->id)->json('data.id');
+        $this->getJson($options)->assertOk()->assertJsonPath('data.customers.0.address', 'Địa chỉ mới');
+        $this->assertSame($profile, $customer->fresh()->pancake_full_data);
+
+        $this->postJson('/api/v1/orders', $this->payload([
+            'customer_id' => $customer->id, 'shipping_address' => 'Địa chỉ mới hơn',
+        ]))->assertCreated();
+        $this->postJson('/api/v1/orders', $first)->assertOk()->assertJsonPath('replayed', true);
+        $this->assertSame('Địa chỉ mới hơn', $customer->fresh()->crm_shipping_address);
+        $customer->update(['name' => 'Changed profile', 'pancake_full_data' => []]);
+        $this->getJson($options)->assertOk()->assertJsonPath('data.customers.0.address', 'Địa chỉ mới hơn');
+        $this->getJson('/api/v1/orders/'.$id)->assertOk()
+            ->assertJsonPath('data.customer_name', 'Existing')->assertJsonPath('data.customer_address', 'Địa chỉ mới');
         $this->assertDatabaseCount('customers', 1);
     }
 

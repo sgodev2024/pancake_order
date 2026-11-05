@@ -131,6 +131,10 @@ class OrderService
                     app(CustomerEnteredSystemEventWriter::class)->write($customer, 'local_pos');
                 }
             }
+            if ($customer->shippingAddress() !== $input['shipping_address']) {
+                $customer->crm_shipping_address = $input['shipping_address'];
+                $customer->save();
+            }
             $totals = [
                 'subtotal' => self::moneyString($subtotal), 'discount_amount' => self::moneyString($discount),
                 'shipping_fee' => self::moneyString($shipping), 'surcharge' => self::moneyString($surcharge),

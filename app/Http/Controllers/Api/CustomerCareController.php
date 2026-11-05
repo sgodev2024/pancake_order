@@ -444,8 +444,7 @@ class CustomerCareController extends Controller implements HasMiddleware
         }
         abort_if($matches->count() > 1, 409, 'Lịch hẹn khớp nhiều hồ sơ khách hàng. Vui lòng kiểm tra lại.');
         $customer = $matches->first();
-        $address = $care->customer_addresss ?: (data_get($customer?->pancake_full_data, 'address')
-            ?? data_get($customer?->pancake_full_data, 'addresses.0.full_address'));
+        $address = $customer?->crm_shipping_address ?: ($care->customer_addresss ?: $customer?->shippingAddress());
 
         return response()->json(['success' => true, 'data' => [
             'shop_id' => (int) $care->shop_id,

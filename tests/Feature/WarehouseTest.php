@@ -99,6 +99,7 @@ class WarehouseTest extends TestCase
             $table->unsignedInteger('province_id')->nullable();
         });
         (require database_path('migrations/2026_10_21_000001_add_local_pos_support.php'))->up();
+        (require database_path('migrations/2026_11_05_000003_add_crm_shipping_address_to_customers.php'))->up();
         (require database_path('migrations/2026_10_21_000002_add_warehouse_completion_and_source_time.php'))->up();
         (require database_path('migrations/2026_11_04_000001_create_aicrm_shipments.php'))->up();
         (require database_path('migrations/2026_11_04_000002_add_aicrm_remote_order_metadata.php'))->up();

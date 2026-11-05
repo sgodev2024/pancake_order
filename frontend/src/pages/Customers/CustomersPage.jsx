@@ -64,6 +64,7 @@ const getPhoneNumbers = (value) => {
 }
 
 const getCustomerAddress = (customer) => {
+  if (customer?.crm_shipping_address?.trim()) return customer.crm_shipping_address.trim()
   const addresses = customer?.pancake_full_data?.shop_customer_addresses
   if (!Array.isArray(addresses)) return '—'
 
