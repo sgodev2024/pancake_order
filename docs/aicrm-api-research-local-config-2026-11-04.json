@@ -1,0 +1,30 @@
+{
+  "php_version": "8.4.26",
+  "environment": "local",
+  "database_host_is_loopback": true,
+  "mode": "mock",
+  "live_enabled": false,
+  "live_creation_enabled": false,
+  "live_contract_confirmed": false,
+  "live_configured": {
+    "base_url": false,
+    "hosts": false,
+    "auth_header": false,
+    "auth_token": false,
+    "tenant_mode": false,
+    "tenant_header": false,
+    "credential_tenant": false,
+    "shop_tenants": false,
+    "shipping_provider_id": false,
+    "auth_check_path": false,
+    "providers_path": false,
+    "orders_path": false,
+    "order_detail_path": false
+  },
+  "zns_key_present_separate_service_not_used": true,
+  "check_type": "local_configuration_only_no_network_or_database_access",
+  "configuration_gate": {
+    "http_status": 409,
+    "message": "Kết nối Live AICRM đang tắt."
+  }
+}

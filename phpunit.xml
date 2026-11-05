@@ -19,6 +19,9 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <!-- Ordinary automated tests must never inherit enabled Live credentials. -->
+        <env name="AICRM_LIVE_ENABLED" value="false" force="true"/>
+        <env name="AICRM_LIVE_CREATION_ENABLED" value="false" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_STORE" value="array"/>

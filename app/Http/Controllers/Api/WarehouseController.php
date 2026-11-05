@@ -45,7 +45,7 @@ class WarehouseController extends Controller implements HasMiddleware
             ->where(function ($birth) use ($at) {
                 $birth->where(fn ($local) => $local->where('origin', 'local_pos')->where('created_at', '>=', $at))
                     ->orWhere(fn ($pancake) => $pancake->where('origin', 'pancake')->where('source_created_at', '>=', $at));
-            })->with(['shop:id,name', 'packedBy', 'user_creator', 'packingLog:id,subject_id,actor_user_id,actor_name']);
+            })->with(['shop:id,name', 'packedBy', 'user_creator', 'packingLog:id,subject_id,actor_user_id,actor_name', 'aicrmShipment']);
         if ($status === Order::WAREHOUSE_WAITING) {
             $query->whereIn('status', WarehouseService::PACKABLE_STATUSES);
         }
@@ -71,6 +71,9 @@ class WarehouseController extends Controller implements HasMiddleware
             'orders' => collect($rows->items())->map(fn ($order) => $this->orderData($order)),
             'current_page' => $rows->currentPage(), 'per_page' => $rows->perPage(),
             'total_items' => $rows->total(), 'module' => $configuration,
+            'shipping' => ['mode' => config('aicrm.mode'),
+                'live_enabled' => config('aicrm.live.enabled') === true,
+                'live_creation_enabled' => config('aicrm.live.creation_enabled') === true],
         ]]);
     }
 
@@ -95,11 +98,22 @@ class WarehouseController extends Controller implements HasMiddleware
 
     private function orderData(Order $order, bool $history = false): array
     {
-        $order->loadMissing('shop:id,name', 'packedBy', 'user_creator', 'packingLog:id,subject_id,actor_user_id,actor_name');
+        $order->loadMissing('shop:id,name', 'packedBy', 'user_creator', 'packingLog:id,subject_id,actor_user_id,actor_name', 'aicrmShipment');
         $data = $order->only(['id', 'shop_id', 'origin', 'warehouse_status', 'warehouse_queued_at', 'source_created_at',
             'first_synced_at', 'packed_by_user_id', 'packed_at', 'created_at', 'customer_name', 'customer_phone', 'customer_address', 'note', 'total_quantity', 'status']);
         $data['reference'] = $order->origin === 'local_pos' ? 'POS-'.$order->id : $order->pancake_order_id;
         $data['shop'] = $order->shop?->only(['id', 'name']);
+        $data['shipment'] = $order->aicrmShipment?->summary($history);
+        $data['existing_tracking_number'] = $order->order_number_vtp ?: data_get($order->pancake_full_data, 'partner.order_number_vtp');
+        $data['can_create_shipment'] = $order->warehouse_status === Order::WAREHOUSE_PACKED && $order->packed_at
+            && $this->warehouse->packableStatus($order->status) && blank($data['existing_tracking_number'])
+            && (! $order->aicrmShipment || ($order->aicrmShipment->status === 'failed' && $order->aicrmShipment->mode === config('aicrm.mode')));
+        if (config('aicrm.mode') === 'live') {
+            $data['can_create_shipment'] = $data['can_create_shipment'] && config('aicrm.live.enabled') === true
+                && config('aicrm.live.creation_enabled') === true && config('aicrm.live.contract_confirmed') === true
+                && config('aicrm.live.reconciliation_confirmed') === true
+                && (string) config('aicrm.live.approved_order_id') === (string) $order->id;
+        }
         $data['packed_by'] = $order->packedBy?->only(['id', 'name']) ?? ($order->packingLog ? [
             'id' => $order->packed_by_user_id, 'name' => $order->packingLog->actor_name,
         ] : null);

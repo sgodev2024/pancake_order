@@ -70,6 +70,11 @@ class Order extends Model
         return $this->belongsTo(Customer::class);
     }
 
+    public function aicrmShipment()
+    {
+        return $this->hasOne(AicrmShipment::class);
+    }
+
     public function packedBy()
     {
         return $this->belongsTo(User::class, 'packed_by_user_id')->select('id', 'name');
