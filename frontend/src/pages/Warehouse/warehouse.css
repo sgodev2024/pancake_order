@@ -1,0 +1,13 @@
+.warehouse-page { max-width: 1800px; margin: auto; }
+.warehouse-page > .ant-card { border-radius: 12px; }
+.warehouse-alert { margin-bottom: 20px; }
+.warehouse-filters { display: grid; grid-template-columns: minmax(160px, 230px) minmax(240px, 1fr) auto; gap: 16px; align-items: end; margin-bottom: 20px; }
+.warehouse-filters label { display: block; margin-bottom: 6px; font-size: 13px; color: #64748b; }
+.warehouse-filters .ant-select { width: 100%; }
+.warehouse-single-line { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-customer-cell { display: flex; width: 100%; min-width: 0; align-items: flex-start; }
+.warehouse-customer-cell > .ant-space-item { width: 100%; max-width: 100%; min-width: 0; }
+.warehouse-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+.warehouse-note--table { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.warehouse-detail-products { padding-block: 16px; margin-block: 16px; border-block: 1px solid #e2e8f0; }
+@media (max-width: 760px) { .warehouse-filters { grid-template-columns: 1fr; gap: 12px; } .warehouse-page .ant-card-body { padding: 16px; } }

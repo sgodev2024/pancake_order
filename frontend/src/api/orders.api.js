@@ -1,6 +1,10 @@
 import { API_ROUTES } from '../constants/routes.js'
 import apiClient from './client.js'
 
+export const createOrder = async (payload) => (await apiClient.post(API_ROUTES.ORDERS, payload)).data
+
+export const getOrder = async (id) => (await apiClient.get(`${API_ROUTES.ORDERS}/${id}`)).data.data
+
 const removeEmptyParams = (params) =>
   Object.fromEntries(
     Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),

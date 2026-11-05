@@ -11,6 +11,8 @@ export const ROUTES = Object.freeze({
   CUSTOMER_ASSIGNMENTS: '/theo-doi-phan-bo-khach-hang',
   STAFF_ASSIGNMENTS: '/theo-doi-phan-bo-nhan-vien',
   ORDERS: '/don-hang',
+  POS: '/ban-hang',
+  WAREHOUSE: '/kho',
   PRODUCTS: '/san-pham',
   STAFF: '/nhan-vien',
   LOYALTY: '/loyalty',
@@ -61,12 +63,13 @@ export const API_ROUTES = Object.freeze({
   PRODUCT_PERIOD_REPORT: '/products/period-report',
   PRODUCT_MONTHLY_QUANTITIES: '/products/monthly-quantities',
   ORDERS: '/orders',
+  WAREHOUSE_ORDERS: '/warehouse/orders',
   ORDER_SALES_CHART: '/orders/sales-chart-data',
   ORDER_SOURCES: '/order-sources',
   ORDER_PAGES: '/order-pages',
   PROVINCES: '/provinces',
   PROVINCES_REPORT: '/provinces/report',
-  PROVINCES_CHARTS: '/provinces/charts',  
+  PROVINCES_CHARTS: '/provinces/charts',
   LOYALTY_TIERS: '/loyalty-tiers',
   ROLE_OPTIONS: '/roles/options',
   PERMISSION_GROUPS: '/permission-groups',
@@ -90,5 +93,3 @@ export const API_ROUTES = Object.freeze({
   LOYALTY_UPGRADE_SUMMARY: '/loyalty-tiers/customers/pendding-upgrade',
   SETTINGS: '/settings',
 })
-
-

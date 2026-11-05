@@ -3,10 +3,12 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  ShoppingCartOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import { Avatar, Button, Dropdown, Layout, Tooltip } from 'antd'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { canUsePos } from '../auth/permissions.js'
 import { getRouteMetadata } from '../constants/menu.js'
 import { ROUTES } from '../constants/routes.js'
 
@@ -46,6 +48,17 @@ const AppHeader = ({ collapsed, isMobile, onToggleSidebar, onLogout, user }) => 
       </div>
 
       <div className="app-header__right">
+        {canUsePos(user) && (
+          <Button
+            type={location.pathname === ROUTES.POS ? 'primary' : 'default'}
+            icon={<ShoppingCartOutlined />}
+            onClick={() => navigate(ROUTES.POS)}
+            className="app-header__pos"
+          >
+            Bán hàng POS
+          </Button>
+        )}
+
         <Tooltip title="Thông báo">
           <Button
             type="text"

@@ -4,6 +4,40 @@ import { useEffect, useMemo } from 'react'
 import { shopOptionsQueryOptions } from '../api/shops.api.js'
 import { useShopStore } from '../stores/shop.store.js'
 
+// Presentation only: POS passes its own verified query instead of starting a second one.
+export const ShopSelectInput = ({
+  shopsQuery,
+  className,
+  style,
+  placeholder = 'Chọn cửa hàng',
+  value,
+  onChange,
+  disabled = false,
+  allowClear = true,
+}) => (
+  <div className={className} style={style}>
+    <Select
+      disabled={disabled}
+      allowClear={allowClear}
+      showSearch
+      loading={shopsQuery.isFetching}
+      value={value}
+      options={(shopsQuery.data ?? []).map((shop) => ({ value: String(shop.id), label: shop.name }))}
+      placeholder={placeholder}
+      optionFilterProp="label"
+      status={shopsQuery.isError ? 'error' : undefined}
+      onChange={onChange}
+      aria-label="Chọn cửa hàng"
+      notFoundContent={shopsQuery.isFetching ? 'Đang tải...' : 'Không có cửa hàng'}
+    />
+    {shopsQuery.isError && (
+      <Typography.Text type="danger" className="shop-select__error">
+        Không thể tải danh sách cửa hàng.
+      </Typography.Text>
+    )}
+  </div>
+)
+
 const ShopSelect = ({
   className,
   style,
@@ -11,6 +45,7 @@ const ShopSelect = ({
   value,
   onChange,
   useGlobalSelection = true,
+  disabled = false,
 }) => {
   const selectedShopId = useShopStore((state) => state.selectedShopId)
   const setSelectedShopId = useShopStore((state) => state.setSelectedShopId)
@@ -50,28 +85,8 @@ const ShopSelect = ({
     onChange?.(nextValue)
   }
 
-  return (
-    <div className={className} style={style}>
-      <Select
-        allowClear
-        showSearch
-        loading={shopsQuery.isLoading}
-        value={activeValue}
-        options={options}
-        placeholder={placeholder}
-        optionFilterProp="label"
-        status={shopsQuery.isError ? 'error' : undefined}
-        onChange={handleChange}
-        aria-label="Chọn cửa hàng"
-        notFoundContent={shopsQuery.isLoading ? 'Đang tải...' : 'Không có cửa hàng'}
-      />
-      {shopsQuery.isError && (
-        <Typography.Text type="danger" className="shop-select__error">
-          Không thể tải danh sách cửa hàng.
-        </Typography.Text>
-      )}
-    </div>
-  )
+  return <ShopSelectInput shopsQuery={shopsQuery} className={className} style={style}
+    placeholder={placeholder} value={activeValue} onChange={handleChange} disabled={disabled} />
 }
 
 export default ShopSelect

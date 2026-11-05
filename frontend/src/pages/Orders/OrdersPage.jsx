@@ -22,6 +22,8 @@ import {
   getOrderPageOptions,
   normalizeOrderFilters,
 } from './orderFilters.js'
+import { useAuthStore } from '../../auth/auth.store.js'
+import { canUsePos } from '../../auth/permissions.js'
 import './orders.css'
 
 const { RangePicker } = DatePicker
@@ -45,6 +47,7 @@ const getInitial = (name) => name?.trim()?.charAt(0)?.toLocaleUpperCase('vi') ||
 
 const OrdersPage = () => {
   const navigate = useNavigate()
+  const user = useAuthStore((state) => state.user)
   const [draftFilters, setDraftFilters] = useState(createEmptyOrderFilters)
   const [appliedFilters, setAppliedFilters] = useState(() => normalizeOrderFilters(createEmptyOrderFilters()))
   const [page, setPage] = useState(1)
@@ -150,7 +153,7 @@ const OrdersPage = () => {
               <span className="orders-id">{orderId}</span>
             </Tooltip>
           ) : (
-            '—'
+            record.order_origin === 'local_pos' ? <Tag color="blue">POS-{record.id}</Tag> : '—'
           ),
       },
       {
@@ -202,6 +205,7 @@ const OrdersPage = () => {
         key: 'order_page_name',
         width: 180,
         render: (pageName, record) => {
+          if (record.order_origin === 'local_pos') return <Tag color="blue">POS Local</Tag>
           const displayName = getOrderSourceDisplayName(pageName, record.order_source_name)
           if (displayName === '—') return displayName
 
@@ -230,7 +234,7 @@ const OrdersPage = () => {
         align: 'right',
         render: (_, order) => (
           <span className="orders-money">
-            {formatVnd(Number(order.cod ?? 0) + Number(order.prepaid_amount ?? 0))}
+            {formatVnd(order.pos_total_amount ?? (Number(order.cod ?? 0) + Number(order.prepaid_amount ?? 0)))}
           </span>
         ),
       },
@@ -344,7 +348,7 @@ const OrdersPage = () => {
 
   return (
     <main className="orders-page">
-      <Card title="Danh sách đơn hàng" className="orders-card">
+      <Card title="Danh sách đơn hàng" className="orders-card" extra={canUsePos(user) && <Button type="primary" onClick={() => navigate(ROUTES.POS)}>Bán hàng POS</Button>}>
         <form className="orders-filters" onSubmit={applyFilters}>
           <div className="orders-filters__grid">
             <div className="orders-field">
@@ -511,10 +515,11 @@ const OrdersPage = () => {
           width={720}
           destroyOnHidden
         >
+          {selectedOrder?.order_origin === 'local_pos' && <Button type="primary" style={{ marginBottom: 16 }} onClick={() => navigate(`${ROUTES.POS}?order_id=${selectedOrder.id}`)}>Xem sản phẩm và thanh toán POS</Button>}
           {selectedOrder && (
             <Descriptions bordered column={1} size="small" className="orders-details">
               <Descriptions.Item label="Mã đơn">
-                {selectedOrder.pancake_order_id || '—'}
+                {selectedOrder.pancake_order_id || (selectedOrder.order_origin === 'local_pos' ? `POS-${selectedOrder.id}` : '—')}
               </Descriptions.Item>
               <Descriptions.Item label="Tạo lúc">
                 {formatDateTime(selectedOrder.created_at)}
@@ -538,7 +543,7 @@ const OrdersPage = () => {
                 {selectedOrder.total_quantity ?? '—'}
               </Descriptions.Item>
               <Descriptions.Item label="Tổng giá trị (VND)">
-                {formatVnd(Number(selectedOrder.cod ?? 0) + Number(selectedOrder.prepaid_amount ?? 0))}
+                {formatVnd(selectedOrder.pos_total_amount ?? (Number(selectedOrder.cod ?? 0) + Number(selectedOrder.prepaid_amount ?? 0)))}
               </Descriptions.Item>
               <Descriptions.Item label="COD (VND)">
                 {formatVnd(selectedOrder.cod)}
