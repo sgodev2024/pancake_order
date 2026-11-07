@@ -1,3 +1,4 @@
+import { canSelectStaff, runStaffBulkAction } from './staffBulkActions.js'
 import { LockOutlined, UnlockOutlined, DeleteOutlined, EditOutlined, FilterOutlined, MoreOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -38,6 +39,9 @@ const StaffPage = () => {
   const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS)
   const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS)
   const [page, setPage] = useState(1)
+  const [selectedRowKeys, setSelectedRowKeys] = useState([])
+  const [bulkRunning, setBulkRunning] = useState(false)
+  const [bulkFailures, setBulkFailures] = useState([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editingStaff, setEditingStaff] = useState(null)
   const [loadingStaffId, setLoadingStaffId] = useState(null)
@@ -84,6 +88,36 @@ const StaffPage = () => {
   const roleOptions = (rolesQuery.data ?? []).map((role) => ({ value: role.id, label: role.name }))
   const queryError = staffQuery.error || shopsQuery.error || rolesQuery.error
 
+  const selectedStaff = staff.filter(record => selectedRowKeys.includes(record.id) && canSelectStaff(record, user))
+  const confirmBulk = (action) => {
+    const records = selectedStaff.filter(record => action === 'delete' || Boolean(Number(record.account_disabled)) !== (action === 'lock'))
+    const label = action === 'delete' ? 'Xóa nhân viên' : action === 'lock' ? 'Ngừng hoạt động / Khóa đăng nhập' : 'Mở khóa đăng nhập'
+    if (!records.length) { message.info('Không có nhân viên cần đổi trạng thái.'); return }
+    Modal.confirm({
+      title: `${label}: ${records.length} nhân viên?`,
+      content: action === 'delete' ? 'Chỉ xóa tài khoản chưa có lịch sử nghiệp vụ. Tài khoản có dữ liệu liên quan sẽ được giữ lại và báo lý do.' : action === 'lock' ? 'Thu hồi phiên đăng nhập. Lịch sử và phân công được giữ nguyên; cần chuyển giao công việc riêng.' : 'Nhân viên có thể đăng nhập lại. Các phiên cũ không được khôi phục.',
+      okText: action === 'delete' ? 'Xóa' : 'Xác nhận', cancelText: 'Hủy', okButtonProps: { danger: action !== 'unlock' },
+      onOk: async () => {
+        setBulkRunning(true)
+        setBulkFailures([])
+        try {
+          const result = await runStaffBulkAction(records, record => action === 'delete' ? deleteStaff(record.id) : setStaffAccountState({ id: record.id, disabled: action === 'lock' }))
+          setSelectedRowKeys(result.failed.map(record => record.id))
+          setBulkFailures(result.failed.map(record => ({ ...record, reason: getApiErrorMessage(record.error, record.error.message || 'Thao tác thất bại.') })))
+          message[result.failed.length ? 'warning' : 'success'](`Thành công: ${result.succeeded.length}; không thành công: ${result.failed.length}.`)
+          await queryClient.invalidateQueries({ queryKey: ['staff'] })
+        } finally { setBulkRunning(false) }
+      },
+    })
+  }
+  const bulkItems = [
+    ...(user?.role?.slug === 'admin' ? [
+      { key: 'lock', icon: <LockOutlined />, label: 'Ngừng hoạt động / Khóa đăng nhập', onClick: () => confirmBulk('lock') },
+      { key: 'unlock', icon: <UnlockOutlined />, label: 'Mở khóa đăng nhập', onClick: () => confirmBulk('unlock') },
+    ] : []),
+    ...(canDeleteStaff ? [{ key: 'delete', icon: <DeleteOutlined />, danger: true, label: 'Xóa nhân viên', onClick: () => confirmBulk('delete') }] : []),
+  ]
+
   const openCreate = () => {
     setEditingStaff(null)
     form.resetFields()
@@ -127,6 +161,8 @@ const StaffPage = () => {
   }
 
   const applyFilters = () => {
+    setSelectedRowKeys([])
+    setBulkFailures([])
     setAppliedFilters({
       ...draftFilters,
       search: draftFilters.search.trim(),
@@ -135,6 +171,8 @@ const StaffPage = () => {
   }
 
   const resetFilters = () => {
+    setSelectedRowKeys([])
+    setBulkFailures([])
     setDraftFilters(EMPTY_FILTERS)
     setAppliedFilters(EMPTY_FILTERS)
     setPage(1)
@@ -182,13 +220,13 @@ const StaffPage = () => {
               key: 'edit',
               icon: <EditOutlined />,
               label: 'Sửa nhân viên',
-              disabled: loadingStaffId !== null,
+              disabled: bulkRunning || loadingStaffId !== null,
               onClick: () => openEdit(record),
             })
           }
           if (user?.role?.slug === 'admin' && String(record.id) !== String(user.id)) {
             const disabled = !Number(record.account_disabled)
-            items.push({ key: 'account-state', icon: disabled ? <LockOutlined /> : <UnlockOutlined />, label: disabled ? 'Ngừng hoạt động / Khóa đăng nhập' : 'Mở khóa đăng nhập', disabled: accountMutation.isPending,
+            items.push({ key: 'account-state', icon: disabled ? <LockOutlined /> : <UnlockOutlined />, label: disabled ? 'Ngừng hoạt động / Khóa đăng nhập' : 'Mở khóa đăng nhập', disabled: bulkRunning || accountMutation.isPending,
               onClick: () => Modal.confirm({ title: disabled ? 'Ngừng hoạt động nhân viên?' : 'Mở khóa tài khoản?', content: disabled ? 'Khóa đăng nhập và thu hồi phiên API. Giữ nguyên lịch sử và phân công; vui lòng thu hồi hoặc chuyển giao công việc riêng.' : 'Người dùng có thể đăng nhập lại. Các phiên cũ không được khôi phục.', okText: 'Xác nhận', cancelText: 'Hủy', onOk: () => accountMutation.mutateAsync({ id: record.id, disabled }) }) })
           }
           if (canDeleteStaff) {
@@ -197,7 +235,7 @@ const StaffPage = () => {
               icon: <DeleteOutlined />,
               label: 'Xóa nhân viên',
               danger: true,
-              disabled: deleteMutation.isPending,
+              disabled: bulkRunning || deleteMutation.isPending,
               onClick: () => Modal.confirm({
                 title: 'Xóa nhân viên này?',
                 content: 'Chỉ xóa được tài khoản chưa có lịch sử nghiệp vụ. Nếu đã có dữ liệu, hãy chọn Ngừng hoạt động / Khóa đăng nhập.',
@@ -231,7 +269,7 @@ const StaffPage = () => {
     }
 
     return cols
-  }, [accountMutation, user, canDeleteStaff, canUpdateStaff, deleteMutation, loadingStaffId, openEdit, page])
+  }, [bulkRunning, accountMutation, user, canDeleteStaff, canUpdateStaff, deleteMutation, loadingStaffId, openEdit, page])
 
   if (!canView) {
     return <Alert type="warning" showIcon message="Bạn không có quyền xem danh sách nhân viên." />
@@ -242,7 +280,7 @@ const StaffPage = () => {
       <Card
         className="staff-card"
         title="Quản lý nhân viên"
-        extra={canCreateStaff ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} disabled={loadingStaffId !== null}>Thêm nhân viên</Button> : null}
+        extra={canCreateStaff ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} disabled={bulkRunning || loadingStaffId !== null}>Thêm nhân viên</Button> : null}
       >
         {queryError && (
           <QueryErrorAlert
@@ -253,10 +291,10 @@ const StaffPage = () => {
           />
         )}
 
-        <div className="staff-filters">
+        <fieldset disabled={bulkRunning} style={{ border: 0, padding: 0, margin: 0 }}><div className="staff-filters">
           <div className="staff-field">
             <label htmlFor="staff-shop">Cửa hàng</label>
-            <Select id="staff-shop" allowClear placeholder="Chọn cửa hàng" options={shopOptions} value={draftFilters.shop_id} onChange={(shop_id) => updateDraftFilter('shop_id', shop_id)} />
+            <Select disabled={bulkRunning} id="staff-shop" allowClear placeholder="Chọn cửa hàng" options={shopOptions} value={draftFilters.shop_id} onChange={(shop_id) => updateDraftFilter('shop_id', shop_id)} />
           </div>
           <div className="staff-field">
             <label htmlFor="staff-search">Tìm kiếm</label>
@@ -264,7 +302,7 @@ const StaffPage = () => {
           </div>
           <div className="staff-field">
             <label htmlFor="staff-role">Chức vụ</label>
-            <Select id="staff-role" allowClear placeholder="Chọn chức vụ" options={roleOptions} value={draftFilters.role_id} onChange={(role_id) => updateDraftFilter('role_id', role_id)} />
+            <Select disabled={bulkRunning} id="staff-role" allowClear placeholder="Chọn chức vụ" options={roleOptions} value={draftFilters.role_id} onChange={(role_id) => updateDraftFilter('role_id', role_id)} />
           </div>
           <Space className="staff-filter-actions">
             <Button type="primary" icon={<FilterOutlined />} onClick={applyFilters}>Lọc</Button>
@@ -272,8 +310,17 @@ const StaffPage = () => {
           </Space>
         </div>
 
+        </fieldset>
         <p className="staff-summary">Tổng số nhân viên: <strong>{data.total_items ?? 0}</strong></p>
+        {bulkItems.length > 0 && <Space style={{ marginBottom: 16 }}>
+          <Dropdown menu={{ items: bulkItems }} trigger={['click']} disabled={!selectedStaff.length || bulkRunning || accountMutation.isPending || deleteMutation.isPending}>
+            <Button loading={bulkRunning}>Thao tác đã chọn ({selectedStaff.length})</Button>
+          </Dropdown>
+          <Button type="link" disabled={bulkRunning || !selectedRowKeys.length} onClick={() => setSelectedRowKeys([])}>Bỏ chọn</Button>
+        </Space>}
+        {bulkFailures.length > 0 && <Alert type="warning" showIcon message="Nhân viên chưa thực hiện được" description={<ul>{bulkFailures.map(record => <li key={record.id}>{record.name}: {record.reason}</li>)}</ul>} style={{ marginBottom: 16 }} />}
         <Table
+          rowSelection={bulkItems.length ? { selectedRowKeys, onChange: setSelectedRowKeys, getCheckboxProps: record => ({ disabled: bulkRunning || accountMutation.isPending || deleteMutation.isPending || !canSelectStaff(record, user) }) } : undefined}
           className="app-table"
           rowKey="id"
           loading={staffQuery.isLoading || staffQuery.isFetching}
@@ -285,7 +332,8 @@ const StaffPage = () => {
             pageSize: data.per_page ?? 30,
             total: data.total_items ?? 0,
             showSizeChanger: false,
-            onChange: setPage,
+            disabled: bulkRunning,
+            onChange: next => { setSelectedRowKeys([]); setBulkFailures([]); setPage(next) },
           }}
           locale={{ emptyText: 'Chưa có nhân viên' }}
         />
