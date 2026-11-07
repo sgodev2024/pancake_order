@@ -55,6 +55,7 @@ class SettingController extends Controller
 
     public function store(Request $request)
     {
+        abort_if($request->input("code") === "website_maintenance", 403);
         try {
             $validator = Validator::make($request->all(), [
                 'code'  => ['required', 'string'],

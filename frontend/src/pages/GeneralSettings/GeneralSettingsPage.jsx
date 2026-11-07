@@ -1,3 +1,4 @@
+import { MaintenanceSettings } from '../../components/WebsiteMaintenance.jsx'
 import NotificationTemplates from '../../components/Notifications/NotificationTemplates.jsx'
 import { BankOutlined, DeleteOutlined, MailOutlined, PhoneOutlined, PictureOutlined, SaveOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -350,6 +351,7 @@ const GeneralSettingsPage = () => {
           </div>
         )}
       </Card>
+      <MaintenanceSettings />
       <NotificationTemplates />
     </main>
   )

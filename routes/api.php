@@ -51,8 +51,10 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('reset-password', [AuthController::class, 'resetPassword']);
 });
 Route::get('/v1/settings/{code}', [SettingController::class, 'show']);
+Route::get('/v1/website-maintenance', [\App\Http\Controllers\Api\WebsiteMaintenanceController::class, 'show']);
 // --- Nhóm các Route Private (Yêu cầu Passport Token) ---
-Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::class])->prefix('v1')->group(function () {
+Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::class, \App\Http\Middleware\WebsiteMaintenanceMiddleware::class])->prefix('v1')->group(function () {
+    Route::put('website-maintenance', [\App\Http\Controllers\Api\WebsiteMaintenanceController::class, 'update']);
     Route::get('care-notifications', [\App\Http\Controllers\Api\CareNotificationController::class, 'index']);
     Route::post('care-notifications/read-all', [\App\Http\Controllers\Api\CareNotificationController::class, 'readAll']);
     Route::post('care-notifications/{id}/read', [\App\Http\Controllers\Api\CareNotificationController::class, 'read'])->whereNumber('id');
