@@ -371,7 +371,8 @@ SQL;
         $request->merge($adjustments);
         $simplifiedPayment = $request->has('payment_mode');
         $needsConfirmation = in_array($request->input('payment_mode'), ['cash', 'bank_transfer'], true);
-        $money = ['numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'];
+        // Requests use plain whole VND, never localized separators or fractional money.
+        $money = ['numeric', 'min:0', 'max:999999999999', 'regex:/^\d{1,12}$/D'];
         $data = $request->validate([
             'user_id' => ['prohibited'],
             'created_by_user_id' => ['prohibited'],

@@ -14,8 +14,10 @@ class AicrmShippingProviders
             409, 'Danh sách nhà vận chuyển AICRM không đúng cấu trúc mảng đã công bố.');
         $matches = array_values(array_filter($providers, fn ($provider) => is_array($provider)
             && ($provider['code'] ?? null) === 'VIETTEL_POST' && ($provider['isEnable'] ?? null) === true));
-        abort_unless(count($matches) === 1 && is_int($matches[0]['id'] ?? null) && $matches[0]['id'] > 0,
-            409, 'Cần đúng một nhà vận chuyển VIETTEL_POST đang bật với ID số nguyên hợp lệ.');
+        abort_if(count($matches) === 0, 409, 'Không tìm thấy provider VIETTEL_POST đang bật. Kiểm tra provider có tồn tại và isEnable=true; chưa gửi POST.');
+        abort_if(count($matches) > 1, 409, 'Có nhiều provider VIETTEL_POST đang bật hoặc bản ghi trùng. Cần đúng một provider; chưa gửi POST.');
+        abort_unless(is_int($matches[0]['id'] ?? null) && $matches[0]['id'] > 0,
+            409, 'ID provider VIETTEL_POST phải là số nguyên dương; chưa gửi POST.');
 
         // Never return provider credentials or sender contact data to the caller.
         return $matches[0]['id'];

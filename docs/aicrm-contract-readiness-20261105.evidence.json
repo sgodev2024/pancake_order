@@ -1,0 +1,96 @@
+{
+    "checked_at": "2026-11-05T13:01:41+07:00",
+    "transport": "in_process_GET_with_existing_actor_no_token_created",
+    "http_status": 200,
+    "actor_id": 637,
+    "order": {
+        "id": 349323,
+        "shop_id": 38,
+        "warehouse_status": "packed",
+        "shipment_blockers": [
+            {
+                "code": "live_enabled",
+                "message": "Kết nối Live đang tắt.",
+                "remedy": "Cần người phụ trách xác nhận và bật riêng trên Backend; không bật từ trình duyệt."
+            },
+            {
+                "code": "live_creation_enabled",
+                "message": "Tạo vận đơn Live đang tắt.",
+                "remedy": "Cần người phụ trách xác nhận và bật riêng trên Backend; không bật từ trình duyệt."
+            },
+            {
+                "code": "live_contract_confirmed",
+                "message": "Xác nhận hợp đồng API đang tắt.",
+                "remedy": "Cần người phụ trách xác nhận và bật riêng trên Backend; không bật từ trình duyệt."
+            },
+            {
+                "code": "live_reconciliation_confirmed",
+                "message": "Xác nhận quy trình đối soát timeout đang tắt.",
+                "remedy": "Cần người phụ trách xác nhận và bật riêng trên Backend; không bật từ trình duyệt."
+            },
+            {
+                "code": "order_not_approved",
+                "message": "Đơn chưa được phê duyệt cho Live.",
+                "remedy": "Chỉ phê duyệt đúng một ID sau khi kiểm tra người nhận và tiền hàng."
+            },
+            {
+                "code": "invalid_recipient",
+                "message": "Không dùng số điện thoại test như 0000000641 hoặc số lặp.",
+                "remedy": "Dùng đơn có thông tin giao hàng đã được xác nhận; không tự sửa dữ liệu test."
+            },
+            {
+                "code": "configuration",
+                "message": "Shop chưa được ánh xạ UUID tenant AICRM hợp lệ.",
+                "remedy": "Kiểm tra URL, credential và binding riêng cho Shop trên Backend."
+            }
+        ],
+        "can_create_shipment": false,
+        "can_simulate_shipment": true
+    },
+    "effective_config": {
+        "mode": "live",
+        "live_base_url": "https://api-vtp.aicrm.vn",
+        "live_enabled": false,
+        "live_creation_enabled": false,
+        "contract_confirmed": false,
+        "reconciliation_confirmed": false,
+        "loopback_enabled": false,
+        "loopback_key_present": false,
+        "loopback_shop_38_bound": false,
+        "approved_order_id": "",
+        "activated_at": "2026-11-05T09:45:12+07:00",
+        "live_shop_38_bound": false,
+        "live_key_present": true,
+        "configuration_cached": false
+    },
+    "local_counts": {
+        "shipments": 0,
+        "attempts": 0,
+        "order_activity_logs": 2
+    },
+    "simulation_executed_on_actual_order": false,
+    "real_post_sent": false,
+    "backend_process": {
+        "pid": 43393,
+        "explicit_non_secret_environment_overrides": {
+            "APP_ENV": "local",
+            "AICRM_MODE": "live",
+            "AICRM_LIVE_API_URL": "https://api-vtp.aicrm.vn",
+            "AICRM_LIVE_ENABLED": "false",
+            "AICRM_LIVE_CREATION_ENABLED": "false",
+            "AICRM_LIVE_CONTRACT_CONFIRMED": "false",
+            "AICRM_LIVE_RECONCILIATION_CONFIRMED": "false",
+            "AICRM_LIVE_APPROVED_ORDER_ID": "",
+            "AICRM_LIVE_ACTIVATED_AT": "2026-11-05T09:45:12+07:00"
+        }
+    },
+    "verification": {
+        "backend_tests": 249,
+        "backend_assertions": 2416,
+        "warehouse_frontend_tests_passed": 22,
+        "pint": "PASS",
+        "client_php84_lint": "PASS",
+        "git_diff_check": "PASS",
+        "http_fake_only": true
+    }
+}

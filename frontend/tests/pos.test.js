@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { calculatePosPaymentTotals, calculatePosTotals, centsToAmount, optionalMoneyCents, POS_PAYMENT_OPTIONS, toCents } from '../src/pages/Pos/posTotals.js'
-import { formatMoneyInput, isValidMoneyInput, parseMoneyInput } from '../src/pages/Pos/posMoneyInput.js'
+import { calculatePosPaymentTotals, calculatePosTotals, money, optionalMoneyVnd, POS_PAYMENT_OPTIONS, toVnd, productPriceVnd } from '../src/pages/Pos/posTotals.js'
+import { editMoneyInput, formatMoneyInput, isValidMoneyInput, parseMoneyInput } from '../src/pages/Pos/posMoneyInput.js'
 import { canManageProducts, canUsePos, filterMenuByPermissions } from '../src/auth/permissions.js'
 import { MENU_ITEMS } from '../src/constants/menu.js'
 import { ROUTES } from '../src/constants/routes.js'
@@ -10,25 +10,48 @@ import { createOrder, getOrder } from '../src/api/orders.api.js'
 
 const cart = [{ product_id: 1, unit_price: 250000, quantity: 2 }]
 
-test('POS money inputs use Vietnamese thousands and decimal separators', () => {
-  assert.equal(formatMoneyInput(100000), '100.000')
-  assert.equal(formatMoneyInput('1234567.89'), '1.234.567,89')
+test('POS uses integer VND with Vietnamese thousands separators', () => {
+  for (const [amount, display] of [[1000, '1.000'], [10000, '10.000'], [100000, '100.000'], [1000000, '1.000.000']]) {
+    assert.equal(formatMoneyInput(amount), display)
+    assert.equal(parseMoneyInput(`${display} đ`), String(amount))
+    assert.equal(toVnd(parseMoneyInput(`${display} đ`)), amount)
+  }
   assert.equal(formatMoneyInput(''), '')
-  assert.equal(parseMoneyInput('1.234.567,89'), '1234567.89')
-  assert.equal(parseMoneyInput('100.000 đ'), '100000')
+  assert.equal(parseMoneyInput(''), '')
+})
+
+test('continuous typing through thousands and millions preserves digits and caret', () => {
+  let display = ''
+  for (const digit of '1000000') {
+    const text = display + digit
+    const result = editMoneyInput(display, text, text.length, 'insertText')
+    assert.equal(result.caret, result.display.length)
+    assert.equal(isValidMoneyInput(result.display), true)
+    assert.notEqual(toVnd(result.value), null)
+    display = result.display
+  }
+  assert.equal(display, '1.000.000')
+  assert.deepEqual(editMoneyInput('0', '01', 2, 'insertText'), { value: '1', display: '1', caret: 1 })
+  assert.deepEqual(editMoneyInput('1.000', '1.2000', 3, 'insertText'), { value: '12000', display: '12.000', caret: 2 })
+  assert.deepEqual(editMoneyInput('1.234.567', '1.24.567', 3, 'deleteContentBackward'), { value: '124567', display: '124.567', caret: 2 })
+  assert.deepEqual(editMoneyInput('1.000', '1000', 1, 'deleteContentBackward'), { value: '0', display: '0', caret: 0 })
+  assert.deepEqual(editMoneyInput('1.234', '1234', 1, 'deleteContentForward'), { value: '134', display: '134', caret: 1 })
+  assert.deepEqual(editMoneyInput('1.000', '', 0, 'deleteContentBackward'), { value: '', display: '', caret: 0 })
+  assert.equal(editMoneyInput('1.000', '1.2', 3, 'insertFromPaste').value, '1.2')
+  assert.equal(editMoneyInput('', '100.000 đ', 9, 'insertFromPaste').value, '100000')
 })
 
 test('500000 goods + 30000 shipping - 200000 paid yields 330000 remaining and expected COD', () => {
   const result = calculatePosTotals(cart, { shipping_fee: 30000, paid_amount: 200000 })
-  assert.equal(result.total, 53000000)
-  assert.equal(result.remaining, 33000000)
-  assert.equal(result.cod, 33000000)
+  assert.equal(result.total, 530000)
+  assert.equal(result.remaining, 330000)
+  assert.equal(result.cod, 330000)
 })
 test('optional adjustments accept blank/null/undefined as zero and reject malformed money', () => {
   for (const empty of ['', '  ', null, undefined]) {
-    assert.equal(optionalMoneyCents(empty), 0)
+    assert.equal(optionalMoneyVnd(empty), 0)
     const result = calculatePosPaymentTotals(cart, { discount_amount: empty, shipping_fee: empty, surcharge: empty })
-    assert.equal(result.total, 50000000)
+    assert.equal(result.total, 500000)
     assert.equal(result.paid, 0)
     assert.equal(result.cod, result.total)
   }
@@ -41,9 +64,9 @@ test('cash and transfer stay unpaid until receipt confirmation; COD always remai
   const adjustments = { discount_amount: 10000, shipping_fee: 30000, surcharge: 5000 }
   for (const mode of ['cash', 'bank_transfer']) {
     const before = calculatePosPaymentTotals(cart, { ...adjustments, payment_mode: mode })
-    assert.equal(before.total, 52500000)
+    assert.equal(before.total, 525000)
     assert.equal(before.paid, 0)
-    assert.equal(before.remaining, 52500000)
+    assert.equal(before.remaining, 525000)
     assert.equal(before.cod, 0)
     const confirmed = calculatePosPaymentTotals(cart, { ...adjustments, payment_mode: mode }, true)
     assert.equal(confirmed.paid, confirmed.total)
@@ -54,28 +77,31 @@ test('cash and transfer stay unpaid until receipt confirmation; COD always remai
   assert.equal(cod.paid, 0)
   assert.equal(cod.remaining, cod.total)
   assert.equal(cod.cod, cod.total)
-  assert.equal(centsToAmount(70), '0.70')
   assert.ok(calculatePosPaymentTotals(cart, { payment_mode: 'invalid' }).error)
 })
 test('raw localized money does not silently discard invalid characters, signs or precision', () => {
-  for (const invalid of ['abc', '1abc', '-1', '1.2', '1,234', '1,,2']) assert.equal(isValidMoneyInput(invalid), false, invalid)
-  for (const valid of ['', '1.234.567,89', '100.000 đ', '0,50', '1234']) assert.equal(isValidMoneyInput(valid), true, valid)
+  for (const invalid of ['abc', '1abc', '-1', '1.2', '1,234', '1,,2', '0,50', '1.234.567,89', '1000.00', '1e3', '1000000000000']) assert.equal(isValidMoneyInput(invalid), false, invalid)
+  for (const valid of ['', '1.234.567', '100.000 đ', '0', '1234']) assert.equal(isValidMoneyInput(valid), true, valid)
   assert.equal(parseMoneyInput('1abc'), '1abc')
 })
-test('discount, surcharge and full payment use exact decimal cents', () => {
-  const result = calculatePosTotals([{ unit_price: '0.10', quantity: 3 }], {
-    discount_amount: '0.10', shipping_fee: '0.20', surcharge: '0.30', paid_amount: '0.70',
-  })
-  assert.equal(result.total, 70)
-  assert.equal(result.remaining, 0)
-  assert.equal(result.cod, 0)
-  assert.equal(toCents('0.10'), 10)
+test('all new amounts and catalog prices must be whole VND, without rounding', () => {
+  for (const invalid of ['0.10', '0.001', '1000.00', '1.000', 1.5]) {
+    assert.equal(toVnd(invalid), null)
+    assert.ok(calculatePosTotals(cart, { surcharge: invalid }).error)
+  }
+  assert.equal(productPriceVnd('250000.00'), 250000)
+  for (const invalid of ['0.10', 0.001, null, undefined]) {
+    assert.ok(calculatePosTotals([{ unit_price: invalid, quantity: 1 }]).error)
+  }
+  assert.equal(calculatePosTotals([{ unit_price: '250000.00', quantity: 2 }]).total, 500000)
+  // Receipt rendering still understands old fractional snapshots.
+  assert.equal(money('0.70'), '0,7 đ')
 })
 test('no-COD does not mark remaining money as received', () => {
   const result = calculatePosTotals(cart, { paid_amount: 200000, cod_mode: 'none' })
-  assert.equal(result.remaining, 30000000)
+  assert.equal(result.remaining, 300000)
   assert.equal(result.cod, 0)
-  assert.equal(result.paid, 20000000)
+  assert.equal(result.paid, 200000)
 })
 test('negative money, overpayment, excessive discount and unsafe total are invalid', () => {
   for (const adjustment of [{ paid_amount: -1 }, { paid_amount: 500001 }, { discount_amount: 500001 }, { shipping_fee: '0.001' }]) {
@@ -86,7 +112,7 @@ test('negative money, overpayment, excessive discount and unsafe total are inval
 test('quantity 100 at displayed virtual stock 5 is valid without reducing source stock', () => {
   const line = { product_id: 1, unit_price: 10, quantity: 100, virtual_inventory_quantity: 5, inventory_quantity: 0 }
   const before = structuredClone(line)
-  assert.equal(calculatePosTotals([line]).total, 100000)
+  assert.equal(calculatePosTotals([line]).total, 1000)
   assert.deepEqual(line, before)
 })
 test('POS access uses existing sales roles and both existing permissions', () => {

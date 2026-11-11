@@ -375,10 +375,10 @@ for (const role of ['staff-sale', 'staff-cskh', 'admin']) {
       const [url, payload] = posts[0]
       assert.equal(url, '/orders')
       assert.equal(payload.payment_mode, mode)
-      for (const name of ['discount_amount', 'shipping_fee', 'surcharge']) assert.equal(payload[name], '0.00')
+      for (const name of ['discount_amount', 'shipping_fee', 'surcharge']) assert.equal(payload[name], 0)
       for (const name of ['paid_amount', 'cod_mode', 'payment_method']) assert.equal(name in payload, false)
       assert.equal(payload.payment_confirmed, mode === 'cod' ? undefined : true)
-      assert.equal(payload.confirmed_total, mode === 'cod' ? undefined : '1000.00')
+      assert.equal(payload.confirmed_total, mode === 'cod' ? undefined : 1000)
     })
   }
 }
@@ -403,19 +403,36 @@ test('cash/transfer cancellation and stale payment confirmation never submit a r
   assert.match(messages.at(-1)[1], /Đơn hàng đã thay đổi/)
 })
 
-test('invalid raw adjustment input blocks submission even if InputNumber retains its previous valid value', async () => {
+test('invalid adjustment values cannot submit a previous valid amount', async () => {
   await mount(actor(122))
   await addProduct()
   for (const name of ['discount_amount', 'shipping_fee', 'surcharge']) {
-    for (const raw of ['abc', '1abc', '-1', '1,234', '1.2']) {
-      await act(async () => adjustment(name).findByType('number-control').props.onInput(raw))
+    for (const raw of ['abc', '1abc', '-1', '1,234', '1.2', '0.50', '1000.00']) {
+      const values = { ...allRequiredValues, [name]: raw }
+      await setCheckout(values)
+      await assert.rejects(adjustment(name).props.rules[0].validator(null, raw))
       assert.equal(submitButton().props.disabled, true)
-      await act(async () => form().props.onFinish(allRequiredValues))
+      await act(async () => form().props.onFinish(values))
       assert.equal(posts.length, 0)
     }
-    await act(async () => adjustment(name).findByType('number-control').props.onInput(''))
+    await setCheckout({ [name]: '' })
     assert.equal(submitButton().props.disabled, false)
   }
+})
+
+test('valid adjustments and catalog decimal suffixes become integer JSON amounts', async () => {
+  await mount(actor(126), { getProducts: async () => ({ products: [{ id: 90, name: 'VND', price: '250000.00' }], total_items: 1 }) })
+  await addProduct()
+  successfulOrderApi()
+  const values = { ...allRequiredValues, discount_amount: '1000', shipping_fee: '100000', surcharge: '1000000' }
+  await setCheckout(values)
+  await act(async () => form().props.onFinish(values))
+  await settle()
+  const payload = posts[0][1]
+  assert.equal(payload.discount_amount, 1000)
+  assert.equal(payload.shipping_fee, 100000)
+  assert.equal(payload.surcharge, 1000000)
+  assert.equal(payload.items[0].unit_price, 250000)
 })
 
 test('an old payment confirmation cannot submit after the actor changes', async () => {

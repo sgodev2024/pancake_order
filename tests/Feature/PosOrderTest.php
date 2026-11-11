@@ -156,18 +156,18 @@ class PosOrderTest extends TestCase
         }
     }
 
-    public function test_full_payment_discount_shipping_surcharge_and_no_cod_are_exact(): void
+    public function test_full_payment_discount_shipping_surcharge_and_no_cod_use_integer_vnd(): void
     {
-        $this->local->update(['pancake_full_data' => ['retail_price' => 0.10, 'remain_quantity' => 20]]);
+        $this->local->update(['pancake_full_data' => ['retail_price' => 1000, 'remain_quantity' => 20]]);
         $this->postJson('/api/v1/orders', $this->payload([
-            'items' => [['product_id' => $this->local->id, 'quantity' => 3, 'unit_price' => '0.10']],
-            'discount_amount' => '0.10', 'shipping_fee' => '0.20', 'surcharge' => '0.30',
-            'paid_amount' => '0.70', 'payment_method' => 'bank_transfer',
-        ]))->assertCreated()->assertJsonPath('data.totals.total_amount', '0.70')
+            'items' => [['product_id' => $this->local->id, 'quantity' => 3, 'unit_price' => 1000]],
+            'discount_amount' => 1000, 'shipping_fee' => 2000, 'surcharge' => 3000,
+            'paid_amount' => 7000, 'payment_method' => 'bank_transfer',
+        ]))->assertCreated()->assertJsonPath('data.totals.total_amount', '7000.00')
             ->assertJsonPath('data.totals.remaining_amount', '0.00')->assertJsonPath('data.totals.expected_cod', '0.00');
         $this->postJson('/api/v1/orders', $this->payload(['cod_mode' => 'none']))
             ->assertCreated()->assertJsonPath('data.totals.expected_cod', '0.00')
-            ->assertJsonPath('data.totals.remaining_amount', '0.20');
+            ->assertJsonPath('data.totals.remaining_amount', '2000.00');
     }
 
     public function test_idempotent_replay_does_not_duplicate_order_customer_receipt_event_or_decrement(): void
@@ -450,7 +450,7 @@ class PosOrderTest extends TestCase
                     'discount_amount' => 10000, 'shipping_fee' => 30000, 'surcharge' => 5000,
                 ]);
                 if ($mode !== 'cod') {
-                    $input += ['payment_confirmed' => true, 'confirmed_total' => '525000.00'];
+                    $input += ['payment_confirmed' => true, 'confirmed_total' => 525000];
                 }
                 $paid = $mode === 'cod' ? '0.00' : '525000.00';
                 $cod = $mode === 'cod' ? '525000.00' : '0.00';
@@ -551,7 +551,7 @@ class PosOrderTest extends TestCase
     public function test_optional_adjustments_still_reject_negative_malformed_or_excessive_money(): void
     {
         foreach (['discount_amount', 'shipping_fee', 'surcharge'] as $field) {
-            foreach ([-1, 'abc', '1,50', '1.234', false, [], 1000000000000] as $value) {
+            foreach ([-1, 'abc', '1,50', '1.234', '1.000', '1.000 đ', '0.10', '0.001', '1000.00', '1e3', false, [], 1000000000000] as $value) {
                 $this->postJson('/api/v1/orders', $this->simplePaymentPayload('cod', [$field => $value]))
                     ->assertUnprocessable()->assertJsonValidationErrors($field);
             }
@@ -561,25 +561,76 @@ class PosOrderTest extends TestCase
         $this->assertNull($this->local->fresh()->virtual_stock);
     }
 
-    public function test_new_payment_modes_preserve_exact_cents_and_never_modify_an_old_order(): void
+    public function test_new_integer_payment_modes_never_modify_or_round_an_old_fractional_order(): void
     {
         $legacyId = $this->postJson('/api/v1/orders', $this->payload(['paid_amount' => 100000]))->assertCreated()->json('data.id');
-        $legacyBefore = Order::findOrFail($legacyId)->getRawOriginal();
-        $this->local->update(['pancake_full_data' => ['retail_price' => 0.10, 'remain_quantity' => 20]]);
+        // Historical decimal snapshots remain readable; new-order validation must not rewrite them.
+        $legacy = Order::findOrFail($legacyId);
+        $snapshot = $legacy->pancake_full_data;
+        $snapshot['pos_totals']['total_amount'] = '0.70';
+        $snapshot['pos_totals']['paid_amount'] = '0.10';
+        $snapshot['pos_totals']['expected_cod'] = '0.60';
+        $snapshot['items'][0]['unit_price'] = '0.35';
+        $legacy->update(['pancake_full_data' => $snapshot, 'cash' => 0.10, 'cod' => 0.60]);
+        $legacyBefore = $legacy->fresh()->getRawOriginal();
+        $this->local->update(['pancake_full_data' => ['retail_price' => 1000, 'remain_quantity' => 20]]);
         foreach (['cash', 'bank_transfer', 'cod'] as $mode) {
             $input = $this->simplePaymentPayload($mode, [
-                'items' => [['product_id' => $this->local->id, 'quantity' => 3, 'unit_price' => '0.10']],
-                'discount_amount' => '0.10', 'shipping_fee' => '0.20', 'surcharge' => '0.30',
+                'items' => [['product_id' => $this->local->id, 'quantity' => 3, 'unit_price' => 1000]],
+                'discount_amount' => 1000, 'shipping_fee' => 2000, 'surcharge' => 3000,
             ]);
             if ($mode !== 'cod') {
-                $input += ['payment_confirmed' => true, 'confirmed_total' => '0.70'];
+                $input += ['payment_confirmed' => true, 'confirmed_total' => 7000];
             }
-            $this->postJson('/api/v1/orders', $input)->assertCreated()->assertJsonPath('data.totals.total_amount', '0.70')
-                ->assertJsonPath('data.totals.paid_amount', $mode === 'cod' ? '0.00' : '0.70')
-                ->assertJsonPath('data.totals.expected_cod', $mode === 'cod' ? '0.70' : '0.00');
+            $this->postJson('/api/v1/orders', $input)->assertCreated()->assertJsonPath('data.totals.total_amount', '7000.00')
+                ->assertJsonPath('data.totals.paid_amount', $mode === 'cod' ? '0.00' : '7000.00')
+                ->assertJsonPath('data.totals.expected_cod', $mode === 'cod' ? '7000.00' : '0.00');
         }
+        $this->getJson('/api/v1/orders/'.$legacyId)->assertOk()
+            ->assertJsonPath('data.totals.total_amount', '0.70')
+            ->assertJsonPath('data.items.0.unit_price', '0.35')
+            ->assertJsonPath('data.totals.paid_amount', '0.10')
+            ->assertJsonPath('data.totals.expected_cod', '0.60');
         $this->assertSame($legacyBefore, Order::findOrFail($legacyId)->getRawOriginal());
         Http::assertNothingSent();
+    }
+
+    public function test_integer_adjustments_from_thousands_to_millions_keep_partial_transfer_and_cod_exact(): void
+    {
+        foreach ([1000, 10000, 100000, 1000000] as $amount) {
+            $this->postJson('/api/v1/orders', $this->payload([
+                'items' => [['product_id' => $this->local->id, 'quantity' => 10, 'unit_price' => 250000]],
+                'discount_amount' => $amount, 'shipping_fee' => $amount, 'surcharge' => $amount,
+                'paid_amount' => 200000, 'payment_method' => 'bank_transfer', 'cod_mode' => 'remaining',
+            ]))->assertCreated()->assertJsonPath('data.totals.total_amount', (2500000 + $amount).'.00')
+                ->assertJsonPath('data.totals.paid_amount', '200000.00')
+                ->assertJsonPath('data.totals.expected_cod', (2300000 + $amount).'.00')
+                ->assertJsonPath('data.payments.0.amount', '200000.00');
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_api_and_catalog_cannot_introduce_fractional_vnd_or_localized_money(): void
+    {
+        foreach (['0.10', '1.000', '1000.00', '1,5', '100.000 đ', -1, 1.5] as $value) {
+            foreach (['paid_amount', 'confirmed_total', 'unit_price'] as $field) {
+                $input = match ($field) {
+                    'paid_amount' => $this->payload(['paid_amount' => $value]),
+                    'confirmed_total' => $this->simplePaymentPayload('cash', ['payment_confirmed' => true, 'confirmed_total' => $value]),
+                    'unit_price' => $this->payload(['items' => [['product_id' => $this->local->id, 'quantity' => 1, 'unit_price' => $value]]]),
+                };
+                $this->postJson('/api/v1/orders', $input)->assertUnprocessable()
+                    ->assertJsonValidationErrors($field === 'unit_price' ? 'items.0.unit_price' : $field);
+            }
+        }
+        foreach ([0.1, 0.001, 1000.001] as $fractionalPrice) {
+            $this->local->update(['pancake_full_data' => ['retail_price' => $fractionalPrice]]);
+            $this->postJson('/api/v1/orders', $this->simplePaymentPayload('cod', [
+                'items' => [['product_id' => $this->local->id, 'quantity' => 1]],
+            ]))->assertUnprocessable();
+        }
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('customers', 0);
     }
 
     private function simplePaymentPayload(string $mode, array $override = []): array

@@ -2,8 +2,8 @@ import { EyeOutlined, FilterOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, App, Button, Card, Descriptions, Empty, Input, Modal, Result, Space, Spin, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
 import dayjs from 'dayjs'
-import { useState } from 'react'
-import { completePacking, createViettelPostShipment, getWarehouseOrder, getWarehouseOrders } from '../../api/warehouse.api.js'
+import { useRef, useState } from 'react'
+import { completePacking, createViettelPostShipment, simulateViettelPostShipment, getWarehouseOrder, getWarehouseOrders } from '../../api/warehouse.api.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import { canPackOrders, canViewWarehouse } from '../../auth/permissions.js'
 import ShopSelect from '../../components/ShopSelect.jsx'
@@ -12,7 +12,7 @@ import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
 import { getOrderStatus } from '../../constants/order.js'
 import { getApiErrorMessage, isPermissionError } from '../../utils/response.js'
 import './warehouse.css'
-import { ShipmentButton, ShipmentStatus } from './ViettelPostShipment.jsx'
+import { ShipmentButton, ShipmentSimulationButton, ShipmentStatus } from './ViettelPostShipment.jsx'
 import { shipmentConfirmation } from './shipmentConfirmation.js'
 
 const dateTime = (value) => value ? dayjs(value).format('DD/MM/YYYY HH:mm:ss') : '—'
@@ -32,6 +32,8 @@ const WarehousePage = () => {
   const [filters, setFilters] = useState({})
   const [page, setPage] = useState(1)
   const [selectedId, setSelectedId] = useState(null)
+  const [simulationResult, setSimulationResult] = useState(null)
+  const shipmentDialogOpen = useRef(false)
   const pageSize = 20
   const list = useQuery({
     queryKey: ['warehouse-orders', status, filters, page],
@@ -67,10 +69,24 @@ const WarehousePage = () => {
   }
   const shipment = useMutation({
     mutationFn: createViettelPostShipment, retry: false,
-    onSuccess: (response) => { message.success(response.message); refreshShipping() },
+    onSuccess: (response) => { message.success(`${response.message}${response.data.tracking_number ? ` Mã vận đơn: ${response.data.tracking_number}` : ''}`); refreshShipping() },
     onError: (error) => { message.error(getApiErrorMessage(error, 'Không thể tạo vận đơn.')); refreshShipping() },
   })
-  const confirmShipment = (order) => modal.confirm(shipmentConfirmation(order, shippingMode, () => shipment.mutateAsync(order.id)))
+  const simulation = useMutation({
+    mutationFn: simulateViettelPostShipment, retry: false,
+    onSuccess: (response) => { setSimulationResult(response); message.success(response.message); refreshShipping() },
+    onError: (error) => { message.error(getApiErrorMessage(error, 'Không thể mô phỏng TEST/Mock.')); refreshShipping() },
+  })
+  const shippingPending = shipment.isPending || simulation.isPending
+  const confirmShipment = (order, simulate = false) => {
+    if (shipmentDialogOpen.current || shippingPending) return
+    shipmentDialogOpen.current = true
+    modal.confirm({
+      ...shipmentConfirmation(order, simulate ? 'simulation' : shippingMode,
+        () => (simulate ? simulation : shipment).mutateAsync(order.id).catch(() => undefined)),
+      afterClose: () => { shipmentDialogOpen.current = false },
+    })
+  }
   const confirmPacking = (order) => modal.confirm({
     title: `Hoàn tất đóng hàng đơn ${order.reference}?`,
     content: 'Xác nhận đã kiểm tra đủ sản phẩm, số lượng và đóng gói thực tế. Thao tác này không xác nhận giao hàng hay thanh toán.',
@@ -106,14 +122,17 @@ const WarehousePage = () => {
       { title: 'Hoàn tất lúc', dataIndex: 'packed_at', width: 180, render: dateTime },
       { title: 'Vận đơn Viettel Post', key: 'shipment', width: 250, render: (_, order) => <ShipmentStatus order={order} /> },
     ] : [{ title: 'Ngày tạo gốc', key: 'created', width: 180, render: (_, order) => dateTime(order.origin === 'local_pos' ? order.created_at : order.source_created_at) }]),
-    { title: 'Thao tác', key: 'actions', width: status === 'packed' ? 420 : 220, fixed: 'right', render: (_, order) => <Space size={8}>
+    { title: 'Thao tác', key: 'actions', width: status === 'packed' ? 420 : 220, fixed: 'right', render: (_, order) => <Space size={8} align="start" wrap>
       <Button icon={<EyeOutlined />} onClick={() => { pack.reset(); setSelectedId(order.id) }}>Chi tiết</Button>
       {status === 'waiting_packing' && canPack && <Button type="primary" disabled={!configuration?.enabled || pack.isPending} onClick={() => confirmPacking(order)}>Hoàn tất</Button>}
-      <ShipmentButton order={order} allowed={canPack} pending={shipment.isPending} mode={shippingMode} onCreate={confirmShipment} />
+      <ShipmentButton order={order} allowed={canPack} pending={shippingPending} mode={shippingMode} onCreate={confirmShipment} />
+      <ShipmentSimulationButton order={order} allowed={canPack} pending={shippingPending} onSimulate={(value) => confirmShipment(value, true)} />
     </Space> },
   ]
   const order = detail.data
   return <main className="warehouse-page"><Card title="Quản lý Kho" extra={<Button icon={<ReloadOutlined />} onClick={() => list.refetch()} loading={list.isFetching}>Tải lại</Button>}>
+    {simulationResult && <Alert className="warehouse-alert" type="info" showIcon closable onClose={() => setSimulationResult(null)}
+      title={`TEST/Mock · POS-${simulationResult.data.order_id}`} description={simulationResult.message} />}
     {status === 'packed' && <Alert className="warehouse-alert" showIcon type={shippingMode === 'live' ? 'warning' : 'info'} title={shippingMode === 'live'
       ? (list.data?.shipping?.live_enabled && list.data?.shipping?.live_creation_enabled ? 'AICRM Live · Tạo vận đơn thật cho đơn được phê duyệt' : 'AICRM Live · Tạo vận đơn thật đang tắt')
       : shippingMode !== 'sandbox' ? 'Vận đơn đang ở chế độ Mock trên Local' : 'Vận đơn đang ở chế độ AICRM Sandbox'}
@@ -131,8 +150,9 @@ const WarehousePage = () => {
       pagination={{ current: page, pageSize, total: list.data?.total_items ?? 0, showSizeChanger: false, onChange: setPage, showTotal: (total) => `${total} đơn hàng` }}
       locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={configuration?.enabled ? 'Không có đơn phù hợp' : 'Kho chưa được kích hoạt'} /> }} />
     <Modal open={!!selectedId} title={order ? `Đơn ${order.reference}` : 'Chi tiết đơn Kho'} width={820} onCancel={() => setSelectedId(null)} footer={
-      <Space><Button onClick={() => setSelectedId(null)}>Đóng</Button>{canPack && order?.warehouse_status === 'waiting_packing' && <Button type="primary" disabled={detail.isError || !configuration?.enabled} loading={pack.isPending} onClick={() => confirmPacking(order)}>Hoàn tất đóng hàng</Button>}
-        {!detail.isError && order && <ShipmentButton order={order} allowed={canPack} pending={shipment.isPending} mode={shippingMode} onCreate={confirmShipment} />}</Space>
+      <Space align="start" wrap><Button onClick={() => setSelectedId(null)}>Đóng</Button>{canPack && order?.warehouse_status === 'waiting_packing' && <Button type="primary" disabled={detail.isError || !configuration?.enabled} loading={pack.isPending} onClick={() => confirmPacking(order)}>Hoàn tất đóng hàng</Button>}
+        {!detail.isError && order && <><ShipmentButton order={order} allowed={canPack} pending={shippingPending} mode={shippingMode} onCreate={confirmShipment} />
+          <ShipmentSimulationButton order={order} allowed={canPack} pending={shippingPending} onSimulate={(value) => confirmShipment(value, true)} /></>}</Space>
     }>
       {detail.isFetching ? <Spin /> : detail.isError ? <QueryErrorAlert error={detail.error} onRetry={detail.refetch} /> : order && <>
         <Space style={{ marginBottom: 16 }}>{sourceTag(order)}<Tag color={order.warehouse_status === 'packed' ? 'green' : 'gold'}>{order.warehouse_status === 'packed' ? 'Đã đóng hàng' : 'Chờ đóng hàng'}</Tag></Space>
@@ -150,7 +170,7 @@ const WarehousePage = () => {
         <div className="warehouse-detail-products"><ProductCell products={order.items} /></div>
         {order.warehouse_status === 'packed' && <><Typography.Title level={5}>Vận đơn Viettel Post</Typography.Title><ShipmentStatus order={order} history /></>}
         {!!order.history?.length && <><Typography.Title level={5}>Lịch sử thao tác</Typography.Title><Timeline items={order.history.map((event) => ({ key: event.id,
-          content: `${event.action === 'warehouse.packed' ? 'Hoàn tất đóng hàng' : 'Loại khỏi hàng đợi'} · ${event.actor_name || 'Hệ thống'} · ${dateTime(event.created_at)}` }))} /></>}
+          content: `${({ 'warehouse.packed': 'Hoàn tất đóng hàng', 'warehouse.order_removed': 'Loại khỏi hàng đợi', 'shipment.simulated': 'Mô phỏng TEST/Mock · không tạo vận đơn' })[event.action] ?? event.action} · ${event.actor_name || 'Hệ thống'} · ${dateTime(event.created_at)}` }))} /></>}
       </>}
     </Modal>
   </Card></main>

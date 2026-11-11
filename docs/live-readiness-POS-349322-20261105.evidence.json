@@ -1,0 +1,120 @@
+{
+    "checked_at_vietnam": "2026-11-05T10:55:32+07:00",
+    "local_guard_passed": true,
+    "configuration_cached": false,
+    "configuration": {
+        "mode": "live",
+        "live_enabled": false,
+        "creation_enabled": false,
+        "contract_confirmed": false,
+        "reconciliation_confirmed": false,
+        "base_url_is_expected_https_origin": true,
+        "host": "api-vtp.aicrm.vn",
+        "https": true,
+        "allowed_hosts": [
+            "api-vtp.aicrm.vn"
+        ],
+        "approved_order_id": "",
+        "live_activated_at": "2026-11-05T09:45:12+07:00",
+        "api_key_configured": true,
+        "api_key_format_valid": true,
+        "tenant_mode": "api_key",
+        "tenant_header_empty": true,
+        "credential_tenant": "",
+        "shop_38_tenant": null,
+        "mapped_local_shop_ids": [],
+        "tenant_credentials_count": 0,
+        "shipping_provider_id": "1",
+        "providers_path": "/api/v1/shipping-providers",
+        "orders_path": "/api/v1/orders",
+        "sandbox_enabled": false,
+        "local_integration_enabled": false,
+        "warehouse": {
+            "enabled": true,
+            "activated_at": "2026-10-22T06:54:15+00:00",
+            "configuration_valid": true
+        }
+    },
+    "order": {
+        "id": 349322,
+        "shop_id": 38,
+        "origin": "local_pos",
+        "created_at": "2026-11-05 10:38:16+07:00",
+        "queued_at": "2026-11-05 10:38:16+07:00",
+        "warehouse_status": "packed",
+        "status": 0,
+        "packed_at": "2026-11-05 10:48:12+07:00",
+        "packed_by_user_id": 637,
+        "created_by_user_id": 641,
+        "active_queue": true,
+        "packable_status": true,
+        "created_after_live_activation": true,
+        "existing_tracking_number": null,
+        "shipment_count": 0,
+        "shipment_attempt_count": 0,
+        "can_create_shipment": false,
+        "recipient": {
+            "name_present": true,
+            "phone_is_forbidden_sample": true,
+            "address_is_do_not_deliver": true,
+            "phone_structurally_valid": true
+        },
+        "totals": {
+            "subtotal": "200000.00",
+            "discount_amount": "11110.00",
+            "shipping_fee": "40000.00",
+            "surcharge": "10000.00",
+            "total_amount": "238890.00",
+            "paid_amount": "0.00",
+            "remaining_amount": "238890.00",
+            "expected_cod": "238890.00"
+        },
+        "payload_preflight": {
+            "all_items_valid": true,
+            "joined_product_name_length": 84,
+            "total_quantity": 2,
+            "cod_nonnegative_whole_and_lte_total": true
+        },
+        "packing_logs": [
+            {
+                "id": 70,
+                "action": "warehouse.packed",
+                "actor_user_id": 637,
+                "created_at": "2026-11-05 10:48:12",
+                "occurred_at": "2026-11-05 10:48:12",
+                "old_values": "{\"warehouse_status\": \"waiting_packing\"}",
+                "new_values": "{\"warehouse_status\": \"packed\"}",
+                "metadata": "{\"order_id\": 349322, \"packed_at\": \"2026-11-05T10:48:12+07:00\", \"packed_by_user_id\": 637}"
+            }
+        ]
+    },
+    "warehouse_actor": {
+        "id": 637,
+        "shop_38_access": true,
+        "warehouse_view": true,
+        "warehouse_pack": true
+    },
+    "database_counts": {
+        "orders": 90594,
+        "max_order_id": 349322,
+        "shipments": 0,
+        "attempts": 0
+    },
+    "validation": {
+        "tenant": {
+            "passed": false,
+            "status": 409,
+            "reason": "Shop chưa được ánh xạ UUID tenant AICRM hợp lệ."
+        },
+        "live_configuration": {
+            "passed": false,
+            "status": 409,
+            "reason": "Kết nối Live AICRM đang tắt."
+        },
+        "live_creation": {
+            "passed": false,
+            "status": 409,
+            "reason": "Kết nối Live AICRM đang tắt."
+        }
+    }
+}

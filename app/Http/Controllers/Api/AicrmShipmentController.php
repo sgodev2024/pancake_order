@@ -22,6 +22,12 @@ class AicrmShipmentController extends Controller implements HasMiddleware
 
     public function store(Request $request, Order $order, AicrmShipmentService $service)
     {
+        $request->validate(['simulate' => ['sometimes', 'boolean']]);
+        if ($request->boolean('simulate')) {
+            return response()->json(['success' => true,
+                'message' => 'TEST/Mock: mô phỏng thành công. Không gọi AICRM, không tạo shipment hoặc mã vận đơn.',
+                'data' => $service->simulate($request->user(), $order->id)]);
+        }
         // Payload is always constructed server-side from the authorized order.
         $result = $service->create($request->user(), $order->id);
         $shipment = $result['shipment'];

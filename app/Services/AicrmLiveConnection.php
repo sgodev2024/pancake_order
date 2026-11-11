@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Order;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -16,11 +17,13 @@ class AicrmLiveConnection
         abort_unless(config('aicrm.live.contract_confirmed') === true, 409, 'Chưa xác minh hợp đồng API Live AICRM.');
         $url = parse_url((string) config('aicrm.live.base_url'));
         $host = strtolower($url['host'] ?? '');
-        abort_unless($host !== '' && ($url['scheme'] ?? '') === 'https'
+        $loopback = app()->environment('local') && config('aicrm.live.loopback.enabled') === true
+            && config('aicrm.live.base_url') === 'http://127.0.0.1:8185';
+        abort_unless($loopback || ($host !== '' && ($url['scheme'] ?? '') === 'https'
             && in_array($host, config('aicrm.live.hosts', []), true)
             && ($url['port'] ?? 443) === 443
             && ! isset($url['user']) && ! isset($url['pass'])
-            && ! isset($url['query']) && ! isset($url['fragment']),
+            && ! isset($url['query']) && ! isset($url['fragment'])),
             409, 'Live AICRM cần HTTPS và hostname đã được xác nhận.');
         $this->validPath($url['path'] ?? '/');
         app(AicrmTenantCredentials::class)->forShop($shopId, true);
@@ -50,8 +53,21 @@ class AicrmLiveConnection
         abort_unless((int) $order->shop_id === $shopId, 403, 'Shop Live không khớp đơn.');
         // Repeat order-level gates immediately before sending; never bypass via client.
         $this->validateCreation($order);
+        app(AicrmOrderPayload::class)->validateRecipient($order);
 
         return $this->request($shopId)->post($this->endpoint('orders'), $payload);
+    }
+
+    /** AICRM owns carrier tokens and sender configuration; Pancake only selects its provider ID. */
+    public function validateProvider(int $shopId): int
+    {
+        try {
+            $response = $this->read('providers', $shopId);
+        } catch (ConnectionException) {
+            abort(409, 'Không kiểm tra được provider AICRM. Kiểm tra kết nối Local rồi tải lại; chưa gửi POST.');
+        }
+
+        return app(AicrmShippingProviders::class)->viettelPostId($response);
     }
 
     public function read(string $resource, int $shopId, ?string $orderId = null, int $page = 1, int $size = 1): Response
@@ -150,6 +166,7 @@ class AicrmLiveConnection
 
         return Http::asJson()->acceptJson()->withHeaders($headers)->withoutRedirecting()
             ->connectTimeout(max(1, config('aicrm.connect_timeout')))->timeout(max(1, config('aicrm.timeout')))
-            ->withOptions(['verify' => true, 'cookies' => false]);
+            ->withOptions(['verify' => true, 'cookies' => false]
+                + (config('aicrm.live.base_url') === 'http://127.0.0.1:8185' ? ['proxy' => ''] : []));
     }
 }

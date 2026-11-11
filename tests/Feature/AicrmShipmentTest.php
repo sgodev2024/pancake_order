@@ -19,6 +19,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -232,7 +233,7 @@ class AicrmShipmentTest extends TestCase
     {
         $this->sandbox();
 
-        Http::fake(function ($request) {
+        $this->fakeHttp(function ($request) {
             $this->assertSame('http://127.0.0.1:8011/api/v1/orders', $request->url());
             $this->assertSame('POST', $request->method());
             $this->assertTrue($request->hasHeader('X-API-Key', 'test-secret'));
@@ -250,18 +251,20 @@ class AicrmShipmentTest extends TestCase
         });
         $this->postJson($this->url('/viettel-post'))->assertOk()->assertJsonPath('data.tracking_number', 'SANDBOX-123');
         $this->assertSame('SANDBOX-123', $this->order->fresh()->order_number_vtp);
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // AICRM provider GET, then exactly one order POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
         $this->assertDatabaseCount('aicrm_shipment_attempts', 1);
     }
 
     public function test_upstream_secrets_and_raw_error_body_are_not_exposed_or_persisted(): void
     {
         $this->sandbox();
-        Http::fake(['*' => Http::response(['error' => 'test-secret', 'details' => 'Private recipient / access_token=test-secret'], 401)]);
+        $this->fakeHttp(['*' => Http::response(['error' => 'test-secret', 'details' => 'Private recipient / access_token=test-secret'], 401)]);
         $response = $this->postJson($this->url('/viettel-post'))->assertStatus(502)->assertJsonPath('data.status', 'failed');
         $this->assertStringNotContainsString('test-secret', $response->getContent());
         $this->assertStringNotContainsString('test-secret', AicrmShipmentAttempt::first()->toJson());
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // AICRM provider GET, then exactly one order POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
     }
 
     public function test_production_unapproved_host_disabled_sandbox_missing_auth_and_tenant_fail_closed(): void
@@ -285,10 +288,11 @@ class AicrmShipmentTest extends TestCase
     public function test_redirects_and_200_error_envelopes_never_count_as_success_or_retry(): void
     {
         $this->sandbox();
-        Http::fake(['*' => Http::response(['status' => 200, 'error' => true, 'data' => ['ORDER_NUMBER' => 'INVALID']], 200)]);
+        $this->fakeHttp(['*' => Http::response(['status' => 200, 'error' => true, 'data' => ['ORDER_NUMBER' => 'INVALID']], 200)]);
         $this->postJson($this->url('/viettel-post'))->assertStatus(502)->assertJsonPath('data.status', 'unknown');
         $this->postJson($this->url('/viettel-post'))->assertStatus(409);
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // AICRM provider GET, then exactly one order POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
     }
 
     public function test_switching_environment_cannot_resend_an_existing_mock_failure(): void
@@ -313,7 +317,7 @@ class AicrmShipmentTest extends TestCase
             config(['aicrm.base_url' => $url]);
             Http::allowStrayRequests([$url.'/api/v1/orders']);
         } else {
-            Http::fake(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'MOCK-VTP-HTTP']])]);
+            $this->fakeHttp(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'MOCK-VTP-HTTP']])]);
         }
         $result = $this->postJson($this->url('/viettel-post'))->assertOk()->assertJsonPath('data.mode', 'mock_http');
         $this->assertStringStartsWith('MOCK-VTP-', $result->json('data.tracking_number'));
@@ -325,9 +329,10 @@ class AicrmShipmentTest extends TestCase
     public function test_redirect_is_ambiguous_and_not_followed(): void
     {
         $this->sandbox();
-        Http::fake(['*' => Http::response('', 302, ['Location' => 'https://production.example.test'])]);
+        $this->fakeHttp(['*' => Http::response('', 302, ['Location' => 'https://production.example.test'])]);
         $this->postJson($this->url('/viettel-post'))->assertStatus(502)->assertJsonPath('data.status', 'unknown');
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // AICRM provider GET, then exactly one order POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
         $this->assertNull($this->order->fresh()->order_number_vtp);
     }
 
@@ -365,7 +370,7 @@ class AicrmShipmentTest extends TestCase
     {
         $this->live();
         $this->app->detectEnvironment(fn () => 'production');
-        Http::fake(['*' => Http::response(['content' => [], 'totalElements' => 0])]);
+        $this->fakeHttp(['*' => Http::response(['content' => [], 'totalElements' => 0])]);
         $result = app(AicrmLiveConnection::class)->read('orders', $this->shop->id);
         $this->assertSame(200, $result->status());
         $this->assertSame('production', $this->app->environment());
@@ -381,7 +386,7 @@ class AicrmShipmentTest extends TestCase
         $this->assertDatabaseCount('aicrm_shipments', 0);
     }
 
-    public function test_live_creation_checks_exact_approval_reconciliation_date_and_provider_before_reserving(): void
+    public function test_live_creation_checks_exact_approval_reconciliation_date_before_reserving(): void
     {
         foreach ([
             ['aicrm.live.creation_enabled' => false],
@@ -395,9 +400,6 @@ class AicrmShipmentTest extends TestCase
             config($override);
             $this->postJson($this->url('/viettel-post'))->assertStatus(409);
         }
-        $this->live(true);
-        config(['aicrm.live.shipping_provider_id' => null]);
-        $this->postJson($this->url('/viettel-post'))->assertUnprocessable();
         $this->assertDatabaseCount('aicrm_shipments', 0);
         Http::assertNothingSent();
     }
@@ -443,7 +445,7 @@ class AicrmShipmentTest extends TestCase
             'aicrm.live.credential_tenant' => 'different-tenant']);
         $this->postJson($this->url('/viettel-post'))->assertStatus(409);
         config(['aicrm.live.credential_tenant' => '11111111-1111-4111-8111-111111111111']);
-        Http::fake(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'FAKE-TEST-LIVE']])]);
+        $this->fakeHttp(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'FAKE-TEST-LIVE']])]);
         $this->postJson($this->url('/viettel-post'))->assertOk();
         Http::assertSent(fn ($request) => ! $request->hasHeader('X-Test-Tenant'));
     }
@@ -453,7 +455,7 @@ class AicrmShipmentTest extends TestCase
         $this->live(true);
         $this->app->detectEnvironment(fn () => 'production');
         $before = $this->order->fresh()->only(['cod', 'cash', 'status', 'total_quantity', 'warehouse_status']);
-        Http::fake(function ($request) {
+        $this->fakeHttp(function ($request) {
             $this->assertSame('https://aicrm-live.example.test/confirmed/orders', $request->url());
             $this->assertSame('POST', $request->method());
             $this->assertSame(73, $request['shippingProviderId']);
@@ -476,18 +478,20 @@ class AicrmShipmentTest extends TestCase
         $this->assertNull(AicrmShipmentAttempt::first()->remote_order_id);
         $this->assertNull(AicrmShipmentAttempt::first()->remote_status);
         $this->postJson($this->url('/viettel-post'))->assertOk()->assertJsonPath('replayed', true);
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // Provider GET + exactly one POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
         $this->assertDatabaseCount('aicrm_shipment_attempts', 1);
     }
 
     public function test_unexpected_post_data_never_assigns_uuid_or_allows_retry(): void
     {
         $this->live(true);
-        Http::fake(['*' => Http::response(['status' => 400, 'error' => true, 'data' => ['confirmedId' => 'remote-test-created']], 400)]);
+        $this->fakeHttp(['*' => Http::response(['status' => 400, 'error' => true, 'data' => ['confirmedId' => 'remote-test-created']], 400)]);
         $this->postJson($this->url('/viettel-post'))->assertStatus(502)->assertJsonPath('data.status', 'unknown')
             ->assertJsonPath('data.remote_order_id', null);
         $this->postJson($this->url('/viettel-post'))->assertStatus(409);
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // Provider GET + exactly one POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
     }
 
     public function test_live_does_not_accept_a_cached_mock_result_as_live_success(): void
@@ -502,7 +506,7 @@ class AicrmShipmentTest extends TestCase
     public function test_live_read_only_command_reports_status_without_exposing_response_body_or_secrets(): void
     {
         $this->live();
-        Http::fake(['*' => Http::response(['error' => 'live-test-secret', 'private' => 'recipient-private-data'], 403)]);
+        $this->fakeHttp(['*' => Http::response(['error' => 'live-test-secret', 'private' => 'recipient-private-data'], 403)]);
         $this->artisan('aicrm:live-check', ['--shop-id' => $this->shop->id, '--actor-id' => $this->actor->id, '--resource' => 'providers'])
             ->expectsOutputToContain('"http_status":403')->doesntExpectOutputToContain('live-test-secret')
             ->doesntExpectOutputToContain('recipient-private-data')->assertFailed();
@@ -527,7 +531,7 @@ class AicrmShipmentTest extends TestCase
     public function test_live_read_detail_uses_only_confirmed_path_and_does_not_follow_redirects(): void
     {
         $this->live();
-        Http::fake(['*' => Http::response('', 302, ['Location' => 'https://unconfirmed.example.test'])]);
+        $this->fakeHttp(['*' => Http::response('', 302, ['Location' => 'https://unconfirmed.example.test'])]);
         $response = app(AicrmLiveConnection::class)->read('detail', $this->shop->id, '22222222-2222-4222-8222-222222222222');
         $this->assertSame(302, $response->status());
         Http::assertSent(fn ($request) => $request->url() === 'https://aicrm-live.example.test/confirmed/orders/22222222-2222-4222-8222-222222222222');
@@ -537,7 +541,7 @@ class AicrmShipmentTest extends TestCase
     public function test_live_connection_timeout_is_recorded_once_and_never_retried(): void
     {
         $this->live(true);
-        Http::fake(['*' => Http::failedConnection('fake timeout')]);
+        $this->fakeHttp(['*' => Http::failedConnection('fake timeout')]);
         $this->postJson($this->url('/viettel-post'))->assertStatus(502)->assertJsonPath('data.status', 'unknown');
         $this->postJson($this->url('/viettel-post'))->assertStatus(409);
         $this->assertDatabaseCount('aicrm_shipment_attempts', 1);
@@ -547,7 +551,7 @@ class AicrmShipmentTest extends TestCase
     public function test_live_check_does_not_mistake_html_200_for_a_successful_api_connection(): void
     {
         $this->live();
-        Http::fake(['*' => Http::response('<html>Login page</html>', 200, ['Content-Type' => 'text/html'])]);
+        $this->fakeHttp(['*' => Http::response('<html>Login page</html>', 200, ['Content-Type' => 'text/html'])]);
         $this->artisan('aicrm:live-check', ['--shop-id' => $this->shop->id, '--actor-id' => $this->actor->id])
             ->expectsOutputToContain('"json_response":false')->assertFailed();
         Http::assertSentCount(1);
@@ -559,7 +563,7 @@ class AicrmShipmentTest extends TestCase
         $data = $this->order->pancake_full_data;
         $data['prepaid'] = 250000;
         $this->order->update(['cod' => 0, 'pancake_full_data' => $data]);
-        Http::fake(function ($request) {
+        $this->fakeHttp(function ($request) {
             $this->assertTrue($request->hasHeader('X-API-Key', 'live-test-secret'));
             $this->assertFalse($request->hasHeader('Authorization'));
             $this->assertTrue($request->hasHeader('Content-Type', 'application/json'));
@@ -586,14 +590,15 @@ class AicrmShipmentTest extends TestCase
         ])->assertOk();
         $this->assertStringNotContainsString('live-test-secret', $response->getContent());
         $this->assertStringNotContainsString('live-test-secret', AicrmShipmentAttempt::first()->toJson());
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // Provider GET + exactly one POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
     }
 
     public function test_provider_discovery_reports_only_enabled_viettel_id_without_sender_or_credentials(): void
     {
         $this->live();
         config(['aicrm.live.providers_path' => '/api/v1/shipping-providers']);
-        Http::fake(['*' => Http::response([
+        $this->fakeHttp(['*' => Http::response([
             ['id' => 12, 'code' => 'GHN', 'isEnable' => true],
             ['id' => 13, 'code' => 'VIETTEL_POST', 'isEnable' => false],
             ['id' => 87, 'code' => 'VIETTEL_POST', 'isEnable' => true,
@@ -615,7 +620,7 @@ class AicrmShipmentTest extends TestCase
     public function test_provider_discovery_rejects_invalid_missing_disabled_or_ambiguous_providers(mixed $body, int $status): void
     {
         $this->live();
-        Http::fake(['*' => Http::response($body, $status)]);
+        $this->fakeHttp(['*' => Http::response($body, $status)]);
         $this->artisan('aicrm:live-check', ['--shop-id' => $this->shop->id, '--actor-id' => $this->actor->id])
             ->expectsOutputToContain('"http_json_check_passed":false,"viettel_post_provider_id":null')->assertFailed();
         Http::assertSentCount(1);
@@ -640,7 +645,7 @@ class AicrmShipmentTest extends TestCase
     public function test_cloudflare_1010_is_reported_as_network_denial_without_retrying(): void
     {
         $this->live();
-        Http::fake(['*' => Http::response(['error_code' => 1010, 'error_name' => 'browser_signature_banned'], 403)]);
+        $this->fakeHttp(['*' => Http::response(['error_code' => 1010, 'error_name' => 'browser_signature_banned'], 403)]);
         $this->artisan('aicrm:live-check', ['--shop-id' => $this->shop->id, '--actor-id' => $this->actor->id])
             ->expectsOutputToContain('Cloudflare HTTP 403 / 1010 chặn truy cập mạng')
             ->expectsOutputToContain('"http_status":403')->assertFailed();
@@ -671,12 +676,13 @@ class AicrmShipmentTest extends TestCase
     public function test_cloudflare_rejection_during_fake_creation_is_not_misreported_as_bad_api_key(): void
     {
         $this->live(true);
-        Http::fake(['*' => Http::response(['error_code' => 1010], 403)]);
+        $this->fakeHttp(['*' => Http::response(['error_code' => 1010], 403)]);
         $this->postJson($this->url('/viettel-post'))->assertStatus(502)
             ->assertJsonPath('data.status', 'failed')
             ->assertJsonPath('data.attempts.0.error_code', 'aicrm_network_denied')
             ->assertJsonPath('data.last_error', 'Cloudflare HTTP 403 / 1010 chặn truy cập mạng. Cần AICRM xử lý quyền truy cập B2B.');
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // Provider GET + exactly one POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
         $this->assertNull($this->order->fresh()->order_number_vtp);
     }
 
@@ -684,12 +690,13 @@ class AicrmShipmentTest extends TestCase
     public function test_unconfirmed_success_envelopes_never_persist_a_tracking_number(array $body): void
     {
         $this->live(true);
-        Http::fake(['*' => Http::response($body)]);
+        $this->fakeHttp(['*' => Http::response($body)]);
         $this->postJson($this->url('/viettel-post'))->assertStatus(502)->assertJsonPath('data.status', 'unknown');
         $this->assertNull(AicrmShipment::first()->tracking_number);
         $this->assertNull($this->order->fresh()->order_number_vtp);
         $this->postJson($this->url('/viettel-post'))->assertStatus(409);
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // Provider GET + exactly one POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
     }
 
     public static function invalidSuccessEnvelopes(): array
@@ -786,7 +793,8 @@ class AicrmShipmentTest extends TestCase
             $this->assertFalse($request->hasHeader('Authorization'));
             $this->assertFalse($request->hasHeader('X-Tenant-ID'));
             if ($request->method() === 'GET') {
-                return Http::response([['id' => $key === 'tenant-a-secret' ? 73 : 91, 'code' => 'VIETTEL_POST', 'isEnable' => true, 'token' => 'carrier-secret']]);
+                return Http::response([['id' => $key === 'tenant-a-secret' ? 73 : 91, 'code' => 'VIETTEL_POST', 'isEnable' => true, 'token' => 'carrier-secret', 'token_expires_at' => now()->addDay()->toIso8601String(),
+                    'senderName' => 'Sender', 'senderPhone' => '0901234567', 'senderAddress' => '123 Sender address']]);
             }
             $this->assertSame($key === 'tenant-a-secret' ? 73 : 91, $request['shippingProviderId']);
 
@@ -798,13 +806,14 @@ class AicrmShipmentTest extends TestCase
                 ->doesntExpectOutputToContain('carrier-secret')->assertSuccessful();
             $this->postJson('/api/v1/warehouse/orders/'.$order->id.'/viettel-post')->assertOk();
         }
-        $this->assertSame([['GET', 'tenant-a-secret'], ['POST', 'tenant-a-secret'], ['GET', 'tenant-b-secret'], ['POST', 'tenant-b-secret']], $calls);
+        $this->assertSame([['GET', 'tenant-a-secret'], ['GET', 'tenant-a-secret'], ['POST', 'tenant-a-secret'],
+            ['GET', 'tenant-b-secret'], ['GET', 'tenant-b-secret'], ['POST', 'tenant-b-secret']], $calls);
         $this->assertSame([$tenantA, $tenantB], AicrmShipment::orderBy('id')->pluck('tenant_id')->all());
         $stored = json_encode(DB::table('aicrm_shipments')->get()).json_encode(DB::table('aicrm_shipment_attempts')->get());
         foreach (['tenant-a-secret', 'tenant-b-secret', 'carrier-secret'] as $secret) {
             $this->assertStringNotContainsString($secret, $stored);
         }
-        Http::assertSentCount(4);
+        Http::assertSentCount(6);
     }
 
     public function test_missing_tenant_credential_and_key_reuse_fail_closed_without_global_fallback(): void
@@ -832,7 +841,7 @@ class AicrmShipmentTest extends TestCase
         $this->live(true);
         $tenantA = config('aicrm.live.credential_tenant');
         config(['aicrm.live.shop_tenants.999' => $tenantA]);
-        Http::fake(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'VTP-BINDING']])]);
+        $this->fakeHttp(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'VTP-BINDING']])]);
         $this->postJson($this->url('/viettel-post'))->assertOk();
         $tenantB = '33333333-3333-4333-8333-333333333333';
         config(['aicrm.live.shop_tenants.'.$this->shop->id => $tenantB,
@@ -840,7 +849,8 @@ class AicrmShipmentTest extends TestCase
         $this->postJson($this->url('/viettel-post'))->assertStatus(409);
         $this->artisan('aicrm:reconcile', ['order-id' => $this->order->id, '--actor-id' => $this->actor->id])->assertFailed();
         $this->assertNull(AicrmShipment::first()->remote_order_id);
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // Provider GET + exactly one POST.
+        $this->assertCount(1, Http::recorded(fn ($request) => $request->method() === 'POST'));
     }
 
     #[DataProvider('getOrderStatuses')]
@@ -934,7 +944,7 @@ class AicrmShipmentTest extends TestCase
     private function successfulLiveShipment(): AicrmShipment
     {
         $this->live(true);
-        Http::fake(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'VTP-RECONCILE']])]);
+        $this->fakeHttp(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'VTP-RECONCILE']])]);
         $this->postJson($this->url('/viettel-post'))->assertOk()->assertJsonPath('data.remote_order_id', null)->assertJsonPath('data.remote_status', null);
         config(['aicrm.live.creation_enabled' => false]);
         // A new factory resets recorded HTTP; reconciliation below must be GET only.
@@ -951,7 +961,7 @@ class AicrmShipmentTest extends TestCase
         if ($scenario === 'too_many_pages') {
             config(['aicrm.live.reconciliation_max_pages' => 1]);
         }
-        Http::fake(function ($request) use ($status, $scenario, $uuid, $tenant) {
+        $this->fakeHttp(function ($request) use ($status, $scenario, $uuid, $tenant) {
             $this->assertSame('GET', $request->method());
             $this->assertTrue($request->hasHeader('X-API-Key', 'live-test-secret'));
             $this->assertFalse($request->hasHeader('X-Tenant-ID'));
@@ -992,6 +1002,442 @@ class AicrmShipmentTest extends TestCase
                 'vtpOrderNumber' => $scenario === 'wrong_tracking' ? 'OTHER' : 'VTP-RECONCILE',
                 'status' => $scenario === 'numeric_status' ? 200 : ($scenario === 'unknown_status' ? 'CANCELLED' : $status),
                 'responsePayload' => 'upstream-private-token']);
+        });
+    }
+
+    public function test_local_simulation_uses_existing_route_and_audits_without_http_or_order_changes(): void
+    {
+        $this->app->detectEnvironment(fn () => 'local');
+        config(['aicrm.mode' => 'live', 'aicrm.simulation_shop_ids' => [$this->shop->id]]);
+        $this->order->update(['customer_phone' => '0000000641', 'customer_address' => 'KHONG GIAO HANG']);
+        $before = $this->order->fresh()->getRawOriginal();
+        $this->getJson($this->url())->assertOk()->assertJsonPath('data.can_simulate_shipment', true)
+            ->assertJsonPath('data.can_create_shipment', false);
+        $this->postJson($this->url('/viettel-post?simulate=1'), ['shippingProviderId' => 999, 'moneyCollection' => 1])
+            ->assertOk()->assertJsonPath('data.mode', 'simulation')->assertJsonPath('data.status', 'simulated')
+            ->assertJsonPath('data.tracking_number', null)->assertJsonPath('data.network_sent', false)
+            ->assertJsonPath('data.moneyCollection', 200000)->assertJsonCount(8, 'data.payload_fields');
+        $this->assertSame($before, $this->order->fresh()->getRawOriginal());
+        $this->assertDatabaseCount('aicrm_shipments', 0);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 0);
+        $this->assertDatabaseHas('activity_logs', ['action' => 'shipment.simulated', 'actor_user_id' => $this->actor->id,
+            'subject_id' => (string) $this->order->id, 'shop_id' => $this->shop->id]);
+        $this->getJson($this->url())->assertOk()->assertJsonPath('data.history.0.action', 'shipment.simulated');
+        Http::assertNothingSent();
+    }
+
+    public function test_simulation_cannot_bypass_environment_permissions_shop_or_existing_shipment(): void
+    {
+        config(['aicrm.simulation_shop_ids' => [$this->shop->id]]);
+        $this->postJson($this->url('/viettel-post?simulate=1'))->assertForbidden();
+        $this->app->detectEnvironment(fn () => 'local');
+        config(['aicrm.simulation_shop_ids' => [999]]);
+        $this->postJson($this->url('/viettel-post?simulate=1'))->assertStatus(409);
+        config(['aicrm.simulation_shop_ids' => [$this->shop->id]]);
+        $this->order->update(['warehouse_status' => 'waiting_packing']);
+        $this->postJson($this->url('/viettel-post?simulate=1'))->assertStatus(409);
+        $this->order->update(['warehouse_status' => 'packed']);
+        AicrmShipment::create(['order_id' => $this->order->id, 'shop_id' => $this->shop->id,
+            'mode' => 'live', 'status' => 'unknown', 'reference' => (string) Str::uuid()]);
+        $this->postJson($this->url('/viettel-post?simulate=1'))->assertStatus(409);
+        $this->actor->shops()->detach();
+        $this->app->forgetInstance(ShopAccessService::class);
+        $this->postJson($this->url('/viettel-post?simulate=1'))->assertForbidden();
+        $this->actor->shops()->attach($this->shop->id);
+        RolePermission::where('role_id', $this->actor->role_id)->where('permission_id', Permission::where('slug', 'warehouse-pack')->value('id'))->delete();
+        $this->postJson($this->url('/viettel-post?simulate=1'))->assertForbidden();
+        Http::assertNothingSent();
+        $this->assertDatabaseCount('activity_logs', 0);
+    }
+
+    public function test_readiness_exposes_gate_recipient_and_binding_remedies_without_sending(): void
+    {
+        $this->live(false);
+        config(['aicrm.live.enabled' => false, 'aicrm.live.reconciliation_confirmed' => false,
+            'aicrm.live.shop_tenants' => [], 'aicrm.live.approved_order_id' => null]);
+        $this->order->update(['customer_phone' => '0000000641']);
+        $response = $this->getJson($this->url())->assertOk()->assertJsonPath('data.can_create_shipment', false);
+        $codes = array_column($response->json('data.shipment_blockers'), 'code');
+        foreach (['live_enabled', 'live_creation_enabled', 'live_reconciliation_confirmed', 'order_not_approved', 'invalid_recipient', 'configuration'] as $code) {
+            $this->assertContains($code, $codes);
+        }
+        foreach ($response->json('data.shipment_blockers') as $reason) {
+            $this->assertNotEmpty($reason['message']);
+            $this->assertNotEmpty($reason['remedy']);
+        }
+        Http::assertNothingSent();
+    }
+
+    #[DataProvider('unreadyProviders')]
+    public function test_provider_preflight_blocks_before_reserving_or_posting(array $override): void
+    {
+        $this->live(true);
+        $this->preflightProviderOverride = $override;
+        $this->fakeHttp(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'NEVER-SENT']])]);
+        $this->postJson($this->url('/viettel-post'))->assertStatus(409);
+        Http::assertSentCount(1);
+        Http::assertNotSent(fn ($request) => $request->method() !== 'GET');
+        $this->assertDatabaseCount('aicrm_shipments', 0);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 0);
+        $response = $this->getJson($this->url())->assertOk()->assertJsonPath('data.can_create_shipment', false);
+        $this->assertContains('provider_not_ready', array_column($response->json('data.shipment_blockers'), 'code'));
+        $this->assertStringNotContainsString('fake-carrier-token', $response->getContent());
+    }
+
+    public static function unreadyProviders(): array
+    {
+        return [[['isEnable' => false]], [['id' => 0]], [['code' => 'OTHER']]];
+    }
+
+    #[DataProvider('aicrmInternalProviderFields')]
+    public function test_carrier_internals_are_owned_by_aicrm_and_do_not_block_pancake(array $internalFields): void
+    {
+        $this->loopback();
+        $this->preflightProviderOverride = $internalFields;
+        $this->fakeHttp(['*' => Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'FAKE-AICRM-OWNS-CARRIER']])]);
+        $this->postJson($this->url('/viettel-post'))->assertOk()->assertJsonPath('data.tracking_number', 'FAKE-AICRM-OWNS-CARRIER');
+        $this->assertSame('FAKE-AICRM-OWNS-CARRIER', $this->order->fresh()->order_number_vtp);
+        Http::assertSentCount(2);
+    }
+
+    public static function aicrmInternalProviderFields(): array
+    {
+        return [[['token' => null]], [['token_expires_at' => null]],
+            [['token_expires_at' => '2020-01-01T00:00:00Z']], [['token_expires_at' => 'bad-date']],
+            [['token_expires_at' => 'tomorrow+07:00']], [['senderAddress' => '']]];
+    }
+
+    #[DataProvider('invalidRecipients')]
+    public function test_real_creation_rejects_test_recipient_before_any_http(array $override): void
+    {
+        $this->live(true);
+        $this->order->update($override);
+        $this->postJson($this->url('/viettel-post'))->assertUnprocessable();
+        Http::assertNothingSent();
+        $this->assertDatabaseCount('aicrm_shipments', 0);
+    }
+
+    public static function invalidRecipients(): array
+    {
+        return [[['customer_phone' => '0000000641']], [['customer_phone' => '1111111111']],
+            [['customer_name' => '']], [['customer_address' => 'abc']],
+            [['customer_address' => '123 KHÔNG GIAO HÀNG']], [['customer_name' => 'TEST-KHONG_THU_TIEN']]];
+    }
+
+    public function test_loopback_live_uses_dedicated_key_eight_fields_tracking_and_duplicate_lock(): void
+    {
+        $this->loopback();
+        $this->fakeHttp(function ($request) {
+            $this->assertSame('http://127.0.0.1:8185/api/v1/orders', $request->url());
+            $this->assertTrue($request->hasHeader('X-API-Key', 'local-only-test-secret'));
+            $this->assertFalse($request->hasHeader('Authorization'));
+            $this->assertFalse($request->hasHeader('X-Tenant-ID'));
+            $this->assertEqualsCanonicalizing(['shippingProviderId', 'productName', 'quantity', 'totalPrice',
+                'moneyCollection', 'receiveFullName', 'receiverPhone', 'receiverAddress'], array_keys($request->data()));
+            $this->assertSame(1, $request['shippingProviderId']);
+            try {
+                app(AicrmShipmentService::class)->create($this->actor, $this->order->id);
+                $this->fail('Concurrent click must be locked');
+            } catch (HttpException $error) {
+                $this->assertSame(409, $error->getStatusCode());
+            }
+
+            return Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'FAKE-LOOPBACK-ONLY']]);
+        });
+        $this->postJson($this->url('/viettel-post'))->assertOk()->assertJsonPath('data.tracking_number', 'FAKE-LOOPBACK-ONLY');
+        $this->assertSame('FAKE-LOOPBACK-ONLY', $this->order->fresh()->order_number_vtp);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 1);
+        $this->postJson($this->url('/viettel-post'))->assertOk()->assertJsonPath('replayed', true);
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($request) => $request->method() === 'GET' && $request->hasHeader('X-API-Key', 'local-only-test-secret'));
+    }
+
+    #[DataProvider('unsafeLoopbackConfigurations')]
+    public function test_loopback_exception_never_bypasses_environment_origin_key_binding_or_approval(array $overrides, string $environment = 'local'): void
+    {
+        $this->loopback();
+        config($overrides);
+        $this->app->detectEnvironment(fn () => $environment);
+        $this->postJson($this->url('/viettel-post'))->assertStatus(409);
+        Http::assertNothingSent();
+        $this->assertDatabaseCount('aicrm_shipments', 0);
+    }
+
+    public static function unsafeLoopbackConfigurations(): array
+    {
+        return [[[], 'production'], [[], 'staging'], [[], 'testing'],
+            [['aicrm.live.base_url' => 'http://localhost:8185']],
+            [['aicrm.live.base_url' => 'http://127.0.0.1:8186']],
+            [['aicrm.live.base_url' => 'http://127.0.0.1:8185/']],
+            [['aicrm.live.base_url' => 'http://127.0.0.1:8185?x=1']],
+            [['aicrm.live.base_url' => 'http://user@127.0.0.1:8185']],
+            [['aicrm.live.loopback.enabled' => false]],
+            [['aicrm.live.loopback.api_key' => null]],
+            [['aicrm.live.loopback.api_key' => 'live-test-secret']],
+            [['aicrm.live.loopback.shop_tenants' => []]],
+            [['aicrm.live.loopback.credential_tenant' => '33333333-3333-4333-8333-333333333333']],
+            [['aicrm.live.creation_enabled' => false]],
+            [['aicrm.live.approved_order_id' => 999]]];
+    }
+
+    public function test_loopback_post_timeout_stays_unknown_without_retry(): void
+    {
+        $this->loopback();
+        $posts = 0;
+        $this->fakeHttp(function () use (&$posts) {
+            $posts++;
+            throw new ConnectionException('Fake timeout');
+        });
+        $this->postJson($this->url('/viettel-post'))->assertStatus(502)->assertJsonPath('data.status', 'unknown');
+        $this->postJson($this->url('/viettel-post'))->assertStatus(409);
+        $this->assertSame(1, $posts);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 1);
+        $this->assertNull($this->order->fresh()->order_number_vtp);
+    }
+
+    public function test_loopback_does_not_allow_another_shop_even_with_its_own_mapping(): void
+    {
+        $this->loopback();
+        $this->order->update(['shop_id' => 1]);
+        config(['aicrm.live.loopback.shop_tenants.1' => config('aicrm.live.loopback.credential_tenant')]);
+        $this->postJson($this->url('/viettel-post'))->assertStatus(409);
+        Http::assertNothingSent();
+    }
+
+    public function test_provider_get_timeout_does_not_reserve_a_shipment_or_send_post(): void
+    {
+        $this->loopback();
+        Http::fake(['*' => Http::failedConnection('fake provider GET timeout')]);
+        $this->postJson($this->url('/viettel-post'))->assertStatus(409)->assertJsonPath('message',
+            'Không kiểm tra được provider AICRM. Kiểm tra kết nối Local rồi tải lại; chưa gửi POST.');
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+        $this->assertDatabaseCount('aicrm_shipments', 0);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 0);
+    }
+
+    #[DataProvider('outdatedProviderConfiguration')]
+    public function test_creation_discovers_provider_id_then_posts_eight_fields_with_the_same_key(?int $configuredId): void
+    {
+        $this->loopback();
+        Log::spy();
+        config(['aicrm.live.loopback.shipping_provider_id' => $configuredId]);
+        $calls = [];
+        Http::fake(function ($request) use (&$calls) {
+            $this->assertTrue($request->hasHeader('X-API-Key', 'local-only-test-secret'));
+            $this->assertFalse($request->hasHeader('Authorization'));
+            $this->assertFalse($request->hasHeader('X-Tenant-ID'));
+            if ($request->method() === 'GET') {
+                $this->assertSame([], $calls);
+                $this->assertSame('http://127.0.0.1:8185/api/v1/shipping-providers', $request->url());
+                $calls[] = ['GET', $request->header('X-API-Key')];
+
+                return Http::response([
+                    ['id' => 12, 'code' => 'GHN', 'isEnable' => true, 'token' => 'private-discovery-token'],
+                    ['id' => 13, 'code' => 'VIETTEL_POST', 'isEnable' => false],
+                    ['id' => 87, 'code' => 'VIETTEL_POST', 'isEnable' => true],
+                ]);
+            }
+            $this->assertSame('POST', $request->method());
+            $this->assertSame('http://127.0.0.1:8185/api/v1/orders', $request->url());
+            $this->assertSame([['GET', $request->header('X-API-Key')]], $calls);
+            $calls[] = ['POST', $request->header('X-API-Key')];
+            $this->assertSame([
+                'receiveFullName' => 'Nguyễn Văn Test', 'receiverPhone' => '0901234567',
+                'receiverAddress' => '123 Đường Test, Hà Nội', 'productName' => 'Áo x2; Quần x1',
+                'quantity' => 3, 'totalPrice' => 250000, 'moneyCollection' => 200000, 'shippingProviderId' => 87,
+            ], json_decode($request->body(), true, 512, JSON_THROW_ON_ERROR));
+
+            return Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'FAKE-DISCOVERED-87']]);
+        });
+        $response = $this->postJson($this->url('/viettel-post'), ['shippingProviderId' => 9999, 'moneyCollection' => 1, 'tenantId' => 'browser-tenant'])
+            ->assertOk()->assertJsonPath('data.tracking_number', 'FAKE-DISCOVERED-87');
+        $this->assertSame([['GET', ['local-only-test-secret']], ['POST', ['local-only-test-secret']]], $calls);
+        $this->assertSame(87, AicrmShipmentAttempt::first()->request_payload['shippingProviderId']);
+        $this->assertSame('FAKE-DISCOVERED-87', $this->order->fresh()->order_number_vtp);
+        foreach (['private-discovery-token', 'local-only-test-secret'] as $secret) {
+            $this->assertStringNotContainsString($secret, $response->getContent());
+            $this->assertStringNotContainsString($secret, AicrmShipmentAttempt::first()->toJson().AicrmShipment::first()->toJson());
+        }
+        $this->assertProviderSecretsNotLogged(['private-discovery-token', 'local-only-test-secret']);
+        $this->postJson($this->url('/viettel-post'))->assertOk()->assertJsonPath('replayed', true);
+        Http::assertSentCount(2);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 1);
+    }
+
+    public static function outdatedProviderConfiguration(): array
+    {
+        return [[null], [999], [0]];
+    }
+
+    public function test_readiness_discovers_provider_even_when_env_provider_id_is_missing(): void
+    {
+        $this->loopback();
+        config(['aicrm.live.loopback.shipping_provider_id' => null]);
+        $this->preflightProviderOverride = ['id' => 87];
+        $this->fakeHttp(['*' => Http::response([])]);
+        $this->getJson($this->url())->assertOk()->assertJsonPath('data.can_create_shipment', true)
+            ->assertJsonPath('data.shipment_blockers', []);
+        Http::assertSentCount(1);
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+        $this->assertDatabaseCount('aicrm_shipments', 0);
+    }
+
+    #[DataProvider('invalidCreationProviderResponses')]
+    public function test_provider_discovery_failure_never_reserves_or_posts(mixed $body, int $status, string $message): void
+    {
+        $this->loopback();
+        Log::spy();
+        Http::fake(function ($request) use ($body, $status) {
+            $this->assertSame('GET', $request->method());
+            $this->assertSame('http://127.0.0.1:8185/api/v1/shipping-providers', $request->url());
+            $this->assertTrue($request->hasHeader('X-API-Key', 'local-only-test-secret'));
+
+            return Http::response($body, $status);
+        });
+        $response = $this->postJson($this->url('/viettel-post'))->assertStatus(409);
+        $this->assertStringContainsString($message, $response->json('message'));
+        $this->assertStringNotContainsString('private-rejected-provider-token', $response->getContent());
+        $this->assertProviderSecretsNotLogged(['private-rejected-provider-token', 'local-only-test-secret']);
+        $this->assertDatabaseCount('aicrm_shipments', 0);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 0);
+        $this->assertNull($this->order->fresh()->order_number_vtp);
+        Http::assertSentCount(1);
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+    }
+
+    public static function invalidCreationProviderResponses(): array
+    {
+        $provider = ['id' => 87, 'code' => 'VIETTEL_POST', 'isEnable' => true, 'token' => 'private-rejected-provider-token'];
+
+        return [
+            'empty' => [[], 200, 'Không tìm thấy provider'],
+            'other carrier' => [[array_replace($provider, ['code' => 'GHN'])], 200, 'Không tìm thấy provider'],
+            'disabled' => [[array_replace($provider, ['isEnable' => false])], 200, 'Không tìm thấy provider'],
+            'string enabled' => [[array_replace($provider, ['isEnable' => 'true'])], 200, 'Không tìm thấy provider'],
+            'multiple active' => [[$provider, array_replace($provider, ['id' => 88])], 200, 'Có nhiều provider'],
+            'duplicate row' => [[$provider, $provider], 200, 'bản ghi trùng'],
+            'missing id' => [[array_diff_key($provider, ['id' => true])], 200, 'ID provider'],
+            'string id' => [[array_replace($provider, ['id' => '87'])], 200, 'ID provider'],
+            'zero id' => [[array_replace($provider, ['id' => 0])], 200, 'ID provider'],
+            'wrong envelope' => [['data' => [$provider]], 200, 'cấu trúc mảng'],
+            'html' => ['<html>private-rejected-provider-token</html>', 200, 'cấu trúc mảng'],
+            'auth denied' => [[$provider], 401, 'chưa trả danh sách'],
+            'server error' => [[$provider], 500, 'chưa trả danh sách'],
+        ];
+    }
+
+    public function test_sandbox_aicrm_contract_needs_only_provider_id_code_and_enabled(): void
+    {
+        $this->sandbox();
+        config(['aicrm.shipping_provider_id' => null]);
+        $calls = [];
+        Http::fake(function ($request) use (&$calls) {
+            $this->assertTrue($request->hasHeader('X-API-Key', 'test-secret'));
+            $this->assertFalse($request->hasHeader('Authorization'));
+            $this->assertFalse($request->hasHeader('X-Tenant-ID'));
+            $calls[] = $request->method();
+            if ($request->method() === 'GET') {
+                $this->assertSame('http://127.0.0.1:8011/api/v1/shipping-providers', $request->url());
+
+                return Http::response([['id' => 87, 'code' => 'VIETTEL_POST', 'isEnable' => true]]);
+            }
+            $this->assertSame(['GET', 'POST'], $calls);
+            $this->assertSame('http://127.0.0.1:8011/api/v1/orders', $request->url());
+            $this->assertCount(8, $request->data());
+            $this->assertSame(87, $request['shippingProviderId']);
+            $this->assertSame(200000, $request['moneyCollection']);
+            $this->assertArrayNotHasKey('tenantId', $request->data());
+
+            return Http::response(['status' => 200, 'error' => false, 'data' => ['ORDER_NUMBER' => 'FAKE-AICRM-SANDBOX']]);
+        });
+        $this->postJson($this->url('/viettel-post'), ['moneyCollection' => 1, 'shippingProviderId' => 999])
+            ->assertOk()->assertJsonPath('data.tracking_number', 'FAKE-AICRM-SANDBOX');
+        $this->assertSame('FAKE-AICRM-SANDBOX', $this->order->fresh()->order_number_vtp);
+        $this->assertSame(87, AicrmShipmentAttempt::first()->request_payload['shippingProviderId']);
+        Http::assertSentCount(2);
+    }
+
+    #[DataProvider('invalidCreationProviderResponses')]
+    public function test_sandbox_provider_errors_do_not_send_post(mixed $body, int $status, string $message): void
+    {
+        $this->sandbox();
+        Http::fake(function ($request) use ($body, $status) {
+            $this->assertSame('GET', $request->method());
+            $this->assertSame('http://127.0.0.1:8011/api/v1/shipping-providers', $request->url());
+            $this->assertTrue($request->hasHeader('X-API-Key', 'test-secret'));
+
+            return Http::response($body, $status);
+        });
+        $response = $this->postJson($this->url('/viettel-post'))->assertStatus(409);
+        $this->assertStringContainsString($message, $response->json('message'));
+        $this->assertStringNotContainsString('private-rejected-provider-token', $response->getContent());
+        $this->assertDatabaseCount('aicrm_shipments', 0);
+        $this->assertDatabaseCount('aicrm_shipment_attempts', 0);
+        Http::assertSentCount(1);
+    }
+
+    private function assertProviderSecretsNotLogged(array $secrets): void
+    {
+        foreach (['debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency', 'log'] as $level) {
+            Log::shouldNotHaveReceived($level, function (...$arguments) use ($secrets) {
+                $text = json_encode($arguments);
+
+                return collect($secrets)->contains(fn ($secret) => str_contains($text, $secret));
+            });
+        }
+    }
+
+    private function loopback(): void
+    {
+        $this->app->detectEnvironment(fn () => 'local');
+        $this->shop = Shop::forceCreate(['id' => 38, 'name' => 'Shop TEST 38', 'pancake_shop_id' => 'loopback-test', 'api_key' => 'pancake-test']);
+        $this->actor->shops()->attach(38);
+        $this->order->update(['shop_id' => 38]);
+        $this->live(true);
+        config(['aicrm.live.base_url' => 'http://127.0.0.1:8185', 'aicrm.live.loopback.enabled' => true,
+            'aicrm.live.loopback.api_key' => 'local-only-test-secret', 'aicrm.live.loopback.credential_tenant' => config('aicrm.live.credential_tenant'),
+            'aicrm.live.loopback.shop_tenants' => [38 => config('aicrm.live.credential_tenant')],
+            'aicrm.live.loopback.shipping_provider_id' => 1, 'aicrm.live.providers_path' => '/api/v1/shipping-providers',
+            'aicrm.live.orders_path' => '/api/v1/orders']);
+    }
+
+    private array $preflightProviderOverride = [];
+
+    /** Existing response/timeout tests now include the real provider preflight. */
+    private function fakeHttp($callback): void
+    {
+        Http::fake(function ($request) use ($callback) {
+            if (config('aicrm.mode') === 'sandbox' && $request->method() === 'GET'
+                && $request->url() === rtrim(config('aicrm.base_url'), '/').'/api/v1/shipping-providers') {
+                return Http::response([['id' => (int) config('aicrm.shipping_provider_id'), 'code' => 'VIETTEL_POST', 'isEnable' => true]]);
+            }
+            $providerUrl = rtrim((string) config('aicrm.live.base_url'), '/').config('aicrm.live.providers_path');
+            if (config('aicrm.live.creation_enabled') && $request->method() === 'GET' && $request->url() === $providerUrl) {
+                $prefix = config('aicrm.live.base_url') === 'http://127.0.0.1:8185' ? 'aicrm.live.loopback.' : 'aicrm.live.';
+                $id = config($prefix.'shipping_provider_id');
+                foreach (config($prefix.'tenant_credentials', []) as $credential) {
+                    if ($request->hasHeader('X-API-Key', $credential['api_key'])) {
+                        $id = $credential['shipping_provider_id'];
+                    }
+                }
+
+                return Http::response([array_replace([
+                    'id' => (int) $id, 'code' => 'VIETTEL_POST', 'isEnable' => true,
+                    'token' => 'fake-carrier-token', 'token_expires_at' => now()->addDay()->toIso8601String(),
+                    'senderName' => 'Sender', 'senderPhone' => '0901234567', 'senderAddress' => '123 Sender address',
+                ], $this->preflightProviderOverride)]);
+            }
+            if (is_array($callback)) {
+                foreach ($callback as $pattern => $response) {
+                    if (Str::is($pattern, $request->url())) {
+                        return is_callable($response) ? $response($request) : $response;
+                    }
+                }
+
+                return null;
+            }
+
+            return is_callable($callback) ? $callback($request) : $callback;
         });
     }
 

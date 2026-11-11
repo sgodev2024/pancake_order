@@ -1,0 +1,18 @@
+{
+    "checked_at_vietnam": "2026-11-05T10:58:52+07:00",
+    "method": "GET",
+    "resource": "/api/v1/api-keys",
+    "post_requests_sent": 0,
+    "tenant_uuid_verified": false,
+    "http_status": 200,
+    "matching_prefix_records": 1,
+    "matching_key_record": {
+        "id": "cf2ae311-05b6-4060-afd1-c5c8c521a7a6",
+        "name": "web2",
+        "status": "ACTIVE",
+        "expires_at": "2027-11-04T23:57:09.031+00:00",
+        "created_at": "2026-11-04T23:57:09.032+00:00"
+    },
+    "match_method": "Configured Backend key first 12 characters compared in memory; no raw key, prefix or hash printed.",
+    "tenant_uuid_exposed_by_key_list": false
+}

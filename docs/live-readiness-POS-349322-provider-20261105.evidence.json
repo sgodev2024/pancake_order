@@ -1,0 +1,21 @@
+{
+    "checked_at_vietnam": "2026-11-05T10:54:20+07:00",
+    "method": "GET",
+    "resource": "shipping-providers",
+    "requests_sent": 1,
+    "post_requests_sent": 0,
+    "tenant_verified": false,
+    "carrier_environment_verified": false,
+    "http_status": 200,
+    "provider": {
+        "id": 1,
+        "code": "VIETTEL_POST",
+        "enabled": true,
+        "token_configured": true,
+        "token_expiry_supplied": true,
+        "token_declared_not_expired": true,
+        "sender_name_configured": true,
+        "sender_phone_configured": true,
+        "sender_address_configured": true
+    }
+}

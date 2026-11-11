@@ -4,6 +4,7 @@ namespace App\Services;
 
 use GuzzleHttp\Psr7\Response as PsrResponse;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
@@ -34,6 +35,22 @@ class AicrmOrderClient
         app(AicrmTenantCredentials::class)->forShop($shopId, false);
     }
 
+    public function shippingProviderId(int $shopId): int
+    {
+        $this->validateConfiguration($shopId);
+        if (config('aicrm.mode') === 'live') {
+            return app(AicrmLiveConnection::class)->validateProvider($shopId);
+        }
+        abort_unless(config('aicrm.mode') === 'sandbox', 409, 'Chỉ khám phá provider khi kết nối API AICRM thật.');
+        try {
+            $response = $this->request($shopId)->get(rtrim(config('aicrm.base_url'), '/').'/api/v1/shipping-providers');
+        } catch (ConnectionException) {
+            abort(409, 'Không kiểm tra được provider AICRM. Kiểm tra kết nối rồi tải lại; chưa gửi POST.');
+        }
+
+        return app(AicrmShippingProviders::class)->viettelPostId($response);
+    }
+
     public function create(array $payload, int $shopId, string $reference, ?int $orderId = null): Response
     {
         $this->validateConfiguration($shopId);
@@ -48,13 +65,18 @@ class AicrmOrderClient
 
             return new Response(new PsrResponse($status, ['Content-Type' => 'application/json'], json_encode($body)));
         }
-        $headers = ['X-API-Key' => app(AicrmTenantCredentials::class)->forShop($shopId, false)['api_key']];
 
         // Never retry POST automatically; AICRM v1 does not document idempotency.
         // Never follow a redirect that could forward credentials to another host.
+        return $this->request($shopId)->post(rtrim(config('aicrm.base_url'), '/').'/api/v1/orders', $payload);
+    }
+
+    private function request(int $shopId): PendingRequest
+    {
+        $headers = ['X-API-Key' => app(AicrmTenantCredentials::class)->forShop($shopId, false)['api_key']];
+
         return Http::asJson()->acceptJson()->withHeaders($headers)->withoutRedirecting()
             ->connectTimeout(max(1, config('aicrm.connect_timeout')))->timeout(max(1, config('aicrm.timeout')))
-            ->withOptions(['verify' => true, 'cookies' => false])
-            ->post(rtrim(config('aicrm.base_url'), '/').'/api/v1/orders', $payload);
+            ->withOptions(['verify' => true, 'cookies' => false]);
     }
 }

@@ -20,7 +20,7 @@
 .pos-order > .ant-card-body > .ant-alert { margin-bottom: 16px; }
 .pos-two-fields, .pos-adjustments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
 .pos-adjustments .ant-input-number, .pos-two-fields .ant-select { width: 100%; }
-.pos-adjustments .pos-money-input .ant-input-number-input { text-align: right; }
+.pos-adjustments .pos-money-input .ant-input { text-align: right; }
 .pos-cart { border-block: 1px solid #e2e8f0; padding-block: 8px; margin: 4px 0 16px; max-height: 340px; overflow: auto; }
 .pos-cart-row { display: grid; grid-template-columns: minmax(110px, 1fr) auto auto 28px; gap: 8px; align-items: center; padding: 12px 0; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
 .pos-cart-row:last-child { border: 0; }

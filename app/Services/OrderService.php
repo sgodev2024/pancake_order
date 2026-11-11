@@ -15,7 +15,9 @@ use Illuminate\Validation\ValidationException;
 
 class OrderService
 {
-    private const MAX_MONEY_CENTS = 99999999999999;
+    // Keep exact cents and decimal storage for legacy readers/idempotency hashes.
+    // Every newly created amount must nevertheless be a whole VND.
+    private const MAX_MONEY_CENTS = 99999999999900;
 
     public function createLocalOrder(User $actor, array $input): Order
     {
@@ -242,12 +244,12 @@ class OrderService
         return hash('sha256', json_encode($input, JSON_THROW_ON_ERROR));
     }
 
-    /** Exact base-10 arithmetic; floats are only accepted at the normalized model boundary. */
+    /** Whole VND only; allow zero decimal suffixes at the catalog/model boundary. */
     private static function moneyCents(int|float|string $value): int
     {
-        $text = is_float($value) ? number_format($value, 2, '.', '') : (string) $value;
-        if (! preg_match('/^\d{1,12}(?:\.\d{1,2})?$/D', $text)) {
-            throw ValidationException::withMessages(['items' => 'Số tiền không hợp lệ.']);
+        $text = (string) $value;
+        if (! preg_match('/^\d{1,12}(?:\.0{1,2})?$/D', $text)) {
+            throw ValidationException::withMessages(['items' => 'Số tiền phải là số nguyên VND không âm.']);
         }
         [$whole, $fraction] = array_pad(explode('.', $text, 2), 2, '');
 

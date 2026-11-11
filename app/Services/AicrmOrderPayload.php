@@ -4,10 +4,25 @@ namespace App\Services;
 
 use App\Models\Order;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class AicrmOrderPayload
 {
-    public function make(Order $order): array
+    public function validateRecipient(Order $order): void
+    {
+        $recipient = implode(' ', [$order->customer_name, $order->customer_address]);
+        $normalized = strtoupper(Str::ascii($recipient));
+        Validator::make($order->only(['customer_name', 'customer_phone', 'customer_address']), [
+            'customer_name' => ['required', 'string', 'max:255'],
+            'customer_phone' => ['required', 'regex:/^\+?[0-9]{9,15}$/D', 'not_regex:/^\+?0{3,}/', 'not_regex:/^\+?([0-9])\1{8,}$/D'],
+            'customer_address' => ['required', 'string', 'min:10', 'max:1000'],
+        ], ['customer_phone.regex' => 'Cần số điện thoại người nhận hợp lệ.',
+            'customer_phone.not_regex' => 'Không dùng số điện thoại test như 0000000641 hoặc số lặp.'])->validate();
+        abort_if(preg_match('/KHONG[\s_-]+GIAO[\s_-]+HANG|KHONG[\s_-]+THU[\s_-]+TIEN/', $normalized),
+            422, 'Người nhận đang đánh dấu KHÔNG GIAO HÀNG/KHÔNG THU TIỀN. Cần đơn có người nhận hợp lệ, được phê duyệt.');
+    }
+
+    public function make(Order $order, bool $simulation = false, ?int $shippingProviderId = null): array
     {
         $items = collect(data_get($order->pancake_full_data, 'items', []));
         $lines = $items->map(fn ($item) => [
@@ -37,8 +52,8 @@ class AicrmOrderPayload
             'quantity' => array_sum(array_column($lines, 'quantity')),
             'totalPrice' => $total,
             'moneyCollection' => $order->cod,
-            'shippingProviderId' => config('aicrm.mode') === 'mock' ? config('aicrm.shipping_provider_id')
-                : app(AicrmTenantCredentials::class)->forShop((int) $order->shop_id, config('aicrm.mode') === 'live')['shipping_provider_id'],
+            'shippingProviderId' => $shippingProviderId ?? ($simulation ? 1 : (config('aicrm.mode') === 'mock' ? config('aicrm.shipping_provider_id')
+                : app(AicrmTenantCredentials::class)->forShop((int) $order->shop_id, config('aicrm.mode') === 'live')['shipping_provider_id'])),
         ];
         Validator::make($payload, [
             'receiveFullName' => ['required', 'string', 'max:255'],

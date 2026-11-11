@@ -1,0 +1,45 @@
+{
+  "branch": "viet_dev",
+  "pancake_backend": {
+    "pid": 43393,
+    "url": "http://127.0.0.1:8002",
+    "php": "8.4.26",
+    "explicit_process_environment": {
+      "APP_ENV": "local",
+      "AICRM_MODE": "live",
+      "AICRM_LIVE_ENABLED": "false",
+      "AICRM_LIVE_CREATION_ENABLED": "false",
+      "AICRM_LIVE_CONTRACT_CONFIRMED": "false",
+      "AICRM_LIVE_API_URL": "https://api-vtp.aicrm.vn",
+      "AICRM_LOCAL_ENABLED": "false"
+    }
+  },
+  "aicrm_backend": {
+    "pid": 24705,
+    "url": "http://127.0.0.1:8185",
+    "working_directory": "/Users/viet/api-vtp/backend",
+    "packaged_config_files": ["BOOT-INF/classes/application.yml"],
+    "packaged_viettelpost_base_url": "${VIETTELPOST_API_URL:https://partnerdev.viettelpost.vn}",
+    "process_environment": {
+      "SPRING_PROFILES_ACTIVE": "local",
+      "SPRING_CONFIG_LOCATION": "classpath:/application.yml",
+      "SPRING_CONFIG_ADDITIONAL_LOCATION": null,
+      "VIETTELPOST_API_URL": "http://127.0.0.1:9"
+    },
+    "matching_command_line_overrides": [],
+    "matching_jvm_system_property_overrides": [],
+    "sun.java.command": "/Users/viet/api-vtp/backend/target/core-platform-runtime-1.0.0-SNAPSHOT.jar",
+    "upstream_environment": "disabled_loopback_sink_neither_sandbox_nor_production"
+  },
+  "checks": {
+    "client_php84_lint": "PASS",
+    "backend_tests": {"passed": 134, "assertions": 890},
+    "frontend_tests": {"passed": 12, "failed": 0},
+    "http_fake_prevent_stray_requests": true,
+    "real_carrier_post_sent": false,
+    "local_mysql_shipments": 0,
+    "local_mysql_attempts": 0,
+    "aicrm_test_postgres_orders": 0,
+    "order_349323_activity_log_count": 2
+  }
+}

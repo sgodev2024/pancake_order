@@ -10,10 +10,19 @@ const states = {
 
 export const ShipmentButton = ({ order, allowed, pending, mode, onCreate }) => {
   if (!allowed || order?.warehouse_status !== 'packed') return null
-  return <Button disabled={!order.can_create_shipment || pending} loading={pending}
+  return <Space orientation="vertical" size={4}><Button disabled={!order.can_create_shipment || pending} loading={pending}
     onClick={() => onCreate(order)}>
     Tạo vận đơn Viettel Post{mode === 'live' ? ' (Live)' : mode === 'sandbox' ? '' : ' (Mock)'}
   </Button>
+    {!order.can_create_shipment && order.shipment_blockers?.map((reason) => <Typography.Text key={reason.code} type="secondary" style={{ maxWidth: 380 }}>
+      {reason.message} {reason.remedy}
+    </Typography.Text>)}
+  </Space>
+}
+
+export const ShipmentSimulationButton = ({ order, allowed, pending, onSimulate }) => {
+  if (!allowed || !order?.can_simulate_shipment) return null
+  return <Button disabled={pending} loading={pending} onClick={() => onSimulate(order)}>Mô phỏng TEST/Mock</Button>
 }
 
 export const ShipmentStatus = ({ order, history = false }) => {

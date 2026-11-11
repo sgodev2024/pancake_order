@@ -1,34 +1,37 @@
-// UI estimates only; the order API validates prices and calculates authoritative totals.
-export const toCents = (value) => {
-  const text = String(value ?? 0)
-  if (!/^\d{1,12}(\.\d{1,2})?$/.test(text)) return null
-  const [whole, fraction = ''] = text.split('.')
-  return Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
+import { MAX_VND, VND_INPUT_ERROR } from './posMoneyInput.js'
+
+// UI estimates in whole VND; the order API validates prices and calculates authoritative totals.
+export const toVnd = (value) => {
+  if (typeof value !== 'number' && typeof value !== 'string') return null
+  if (!/^\d{1,12}$/.test(String(value))) return null
+  const amount = Number(value)
+  return Number.isSafeInteger(amount) && amount <= MAX_VND ? amount : null
 }
 
+// Catalog/model values may retain a decimal storage suffix; never round a fractional price.
+export const productPriceVnd = (value) => typeof value === 'string' ? toVnd(value.replace(/\.0{1,2}$/, '')) : toVnd(value)
+
 export const calculatePosTotals = (items, adjustments = {}) => {
-  const amounts = ['discount_amount', 'shipping_fee', 'surcharge'].map((key) => optionalMoneyCents(adjustments[key]))
-  amounts.push(toCents(adjustments.paid_amount))
-  if (amounts.some((amount) => amount === null)) return { error: 'Nhập số tiền hợp lệ, tối đa 2 chữ số thập phân.' }
+  const amounts = ['discount_amount', 'shipping_fee', 'surcharge'].map((key) => optionalMoneyVnd(adjustments[key]))
+  amounts.push(toVnd(adjustments.paid_amount ?? 0))
+  if (amounts.some((amount) => amount === null)) return { error: VND_INPUT_ERROR }
   const [discount, shipping, surcharge, paid] = amounts
   let subtotal = 0
   for (const item of items) {
-    const price = toCents(item.unit_price)
+    const price = productPriceVnd(item.unit_price)
     if (price === null || !Number.isInteger(item.quantity) || item.quantity < 1) return { error: 'Kiểm tra lại sản phẩm và số lượng.' }
     subtotal += price * item.quantity
   }
-  if (!Number.isSafeInteger(subtotal) || subtotal > 99999999999999) return { error: 'Giá trị đơn vượt giới hạn.' }
+  if (!Number.isSafeInteger(subtotal) || subtotal > MAX_VND) return { error: 'Giá trị đơn vượt giới hạn.' }
   if (discount > subtotal) return { error: 'Giảm giá không được vượt tiền hàng.' }
   const total = subtotal - discount + shipping + surcharge
-  if (total > 99999999999999) return { error: 'Giá trị đơn vượt giới hạn.' }
+  if (total > MAX_VND) return { error: 'Giá trị đơn vượt giới hạn.' }
   if (paid > total) return { error: 'Tiền đã trả không được vượt tổng thanh toán.' }
   return { subtotal, discount, shipping, surcharge, total, paid, remaining: total - paid,
     cod: adjustments.cod_mode === 'none' ? 0 : total - paid }
 }
 
-export const optionalMoneyCents = (value) => toCents(value == null || (typeof value === 'string' && value.trim() === '') ? 0 : value)
-
-export const centsToAmount = (cents) => `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`
+export const optionalMoneyVnd = (value) => toVnd(value == null || (typeof value === 'string' && value.trim() === '') ? 0 : value)
 
 export const POS_PAYMENT_OPTIONS = [
   { value: 'cash', label: 'Tiền mặt — đã thu đủ' },

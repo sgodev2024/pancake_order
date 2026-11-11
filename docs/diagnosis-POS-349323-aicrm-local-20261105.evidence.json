@@ -1,0 +1,21 @@
+{
+  "database": "aicrm_api_key_test",
+  "key_owner": {
+    "tenant_id": "9a9e92ae-fd89-4026-ba91-7edc972b6f9a",
+    "status": "ACTIVE",
+    "not_expired": true
+  },
+  "provider": {
+    "id": 1,
+    "tenant_id": "9a9e92ae-fd89-4026-ba91-7edc972b6f9a",
+    "code": "VIETTEL_POST",
+    "is_enabled": false,
+    "is_configured": false,
+    "token_present": false,
+    "token_not_expired": null,
+    "sender_name_present": true,
+    "sender_phone_present": true,
+    "sender_address_present": true
+  },
+  "remote_local_orders_count": 0
+}

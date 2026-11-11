@@ -1,0 +1,226 @@
+{
+    "runtime": [
+        {
+            "env": "local",
+            "config_cached": false,
+            "db_host": "127.0.0.1",
+            "db_name": "pancake_order",
+            "aicrm": {
+                "mode": "live",
+                "base_url": null,
+                "api_key": "[SET, REDACTED]",
+                "shipping_provider_id": "1",
+                "tenant_header": null,
+                "tenant_mode": "api_key",
+                "credential_tenant": null,
+                "shop_tenants": [],
+                "tenant_credentials": [],
+                "sandbox_enabled": false,
+                "sandbox_hosts": [
+                    "127.0.0.1",
+                    "localhost",
+                    "::1"
+                ],
+                "timeout": 10,
+                "connect_timeout": 3,
+                "mock_scenario": "success",
+                "local": {
+                    "enabled": false,
+                    "base_url": "http://127.0.0.1:8185",
+                    "api_key_file": "/Users/viet/Pancake/pancake_order/storage/app/private/aicrm-local/aicrm-test-api-key",
+                    "credential_tenant": "9a9e92ae-fd89-4026-ba91-7edc972b6f9a",
+                    "shop_tenants": {
+                        "40": "9a9e92ae-fd89-4026-ba91-7edc972b6f9a"
+                    },
+                    "expected_provider_id": "1"
+                },
+                "live": {
+                    "enabled": false,
+                    "creation_enabled": false,
+                    "contract_confirmed": false,
+                    "base_url": "https://api-vtp.aicrm.vn",
+                    "hosts": [
+                        "api-vtp.aicrm.vn"
+                    ],
+                    "api_key": "[SET, REDACTED]",
+                    "tenant_mode": "api_key",
+                    "tenant_header": null,
+                    "credential_tenant": "",
+                    "shop_tenants": [],
+                    "tenant_credentials": [],
+                    "shipping_provider_id": "1",
+                    "auth_check_path": null,
+                    "providers_path": "/api/v1/shipping-providers",
+                    "orders_path": "/api/v1/orders",
+                    "order_detail_path": "/api/v1/orders/{id}",
+                    "reconciliation_max_pages": 100,
+                    "reconciliation_confirmed": false,
+                    "approved_order_id": "",
+                    "activated_at": "2026-11-05T09:45:12+07:00"
+                }
+            },
+            "services_aicrm_keys": []
+        }
+    ],
+    "order": [
+        {
+            "id": 349323,
+            "shop_id": 38,
+            "origin": "local_pos",
+            "status": 0,
+            "warehouse_status": "packed",
+            "packed_at": "2026-11-05T04:19:08.000000Z",
+            "packed_by_user_id": 637,
+            "created_by_user_id": 641,
+            "created_at": "2026-11-05T04:18:36.000000Z",
+            "warehouse_queued_at": "2026-11-05T04:18:36.000000Z",
+            "customer_name": "TEST-POS-CSKH-SALE-20261104 - CSKH - KHONG GIAO HANG",
+            "customer_phone": "0000000641",
+            "customer_address": "TEST-POS-CSKH-SALE-20261104 - KHONG GIAO HANG - KHONG THU TIEN",
+            "cod": "99000.00",
+            "prepaid_amount": null,
+            "total_quantity": 1,
+            "order_number_vtp": null
+        }
+    ],
+    "pos_totals": [
+        {
+            "subtotal": "99000.00",
+            "discount_amount": "0.00",
+            "shipping_fee": "0.00",
+            "surcharge": "0.00",
+            "total_amount": "99000.00",
+            "paid_amount": "0.00",
+            "remaining_amount": "99000.00",
+            "expected_cod": "99000.00"
+        }
+    ],
+    "guards": [
+        {
+            "warehouse_enabled": true,
+            "in_active_queue": true,
+            "packable_status": true,
+            "shipment": null,
+            "attempts": 0
+        }
+    ],
+    "warehouse_response": [
+        {
+            "id": 349323,
+            "shop_id": 38,
+            "origin": "local_pos",
+            "warehouse_status": "packed",
+            "warehouse_queued_at": "2026-11-05T04:18:36.000000Z",
+            "source_created_at": null,
+            "first_synced_at": null,
+            "packed_by_user_id": 637,
+            "packed_at": "2026-11-05T04:19:08.000000Z",
+            "created_at": "2026-11-05T04:18:36.000000Z",
+            "customer_name": "TEST-POS-CSKH-SALE-20261104 - CSKH - KHONG GIAO HANG",
+            "customer_phone": "0000000641",
+            "customer_address": "TEST-POS-CSKH-SALE-20261104 - KHONG GIAO HANG - KHONG THU TIEN",
+            "note": null,
+            "total_quantity": 1,
+            "status": 0,
+            "reference": "POS-349323",
+            "shop": {
+                "id": 38,
+                "name": "TEST Local PLAN 3 - Shop A - KHONG GIAO HANG"
+            },
+            "shipment": null,
+            "existing_tracking_number": null,
+            "can_create_shipment": false,
+            "packed_by": {
+                "id": 637,
+                "name": "TEST Local Kho 1 PLAN 3"
+            },
+            "creator": {
+                "id": 641,
+                "name": "TEST POS ROLE 20261104 - CSKH - KHONG GIAO HANG"
+            },
+            "items": [
+                {
+                    "name": "Nước giặt omo",
+                    "image": "http://127.0.0.1:8000/storage/products/MZUnh7R48HziXMqfR9QyZYNwvrwGNpaYGYgL4Mjq.png",
+                    "quantity": 1
+                }
+            ],
+            "history": [
+                {
+                    "id": 74,
+                    "action": "warehouse.packed",
+                    "actor_user_id": 637,
+                    "actor_name": "TEST Local Kho 1 PLAN 3",
+                    "created_at": "2026-11-05T04:19:08.000000Z",
+                    "old_values": {
+                        "warehouse_status": "waiting_packing"
+                    },
+                    "new_values": {
+                        "warehouse_status": "packed"
+                    }
+                }
+            ]
+        }
+    ],
+    "live_configuration": [
+        {
+            "pass": false,
+            "reason": "Kết nối Live AICRM đang tắt."
+        }
+    ],
+    "live_creation": [
+        {
+            "pass": false,
+            "reason": "Kết nối Live AICRM đang tắt."
+        }
+    ],
+    "tenant_binding": [
+        {
+            "pass": false,
+            "reason": "Shop chưa được ánh xạ UUID tenant AICRM hợp lệ."
+        }
+    ],
+    "payload": [
+        {
+            "pass": false,
+            "reason": "Shop chưa được ánh xạ UUID tenant AICRM hợp lệ."
+        }
+    ],
+    "actor": [
+        {
+            "id": 641,
+            "role_id": 13,
+            "can_access_shop": true,
+            "warehouse_permissions": []
+        },
+        {
+            "id": 637,
+            "role_id": 17,
+            "can_access_shop": true,
+            "warehouse_permissions": [
+                "warehouse-view",
+                "warehouse-pack"
+            ]
+        }
+    ],
+    "counts": [
+        {
+            "shipments": 0,
+            "attempts": 0,
+            "activity_logs": 2
+        }
+    ],
+    "individual_gates": [
+        {
+            "live_enabled": false,
+            "creation_enabled": false,
+            "contract_confirmed": false,
+            "reconciliation_confirmed": false,
+            "approved_order_matches": false,
+            "created_after_configured_activation": true,
+            "existing_order_update_method": false,
+            "phone_regex_accepts_test_number": true
+        }
+    ],
+    "inspected_at": "2026-11-05T12:09:55+07:00"
+}

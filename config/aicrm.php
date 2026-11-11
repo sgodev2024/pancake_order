@@ -18,20 +18,31 @@ return [
     'timeout' => (int) env('AICRM_TIMEOUT', 10),
     'connect_timeout' => (int) env('AICRM_CONNECT_TIMEOUT', 3),
     'mock_scenario' => env('AICRM_MOCK_SCENARIO', 'success'),
+    // A dry run uses the existing shipment route, never HTTP or shipment records.
+    'simulation_enabled' => env('AICRM_SIMULATION_ENABLED', true),
+    'simulation_shop_ids' => [38],
     // Separate read-only Local integration; never enables shipment creation or changes Live/Sandbox gates.
-    'local' => [
-        'enabled' => env('AICRM_LOCAL_ENABLED', false),
-        'base_url' => env('AICRM_LOCAL_API_URL', 'http://127.0.0.1:8185'),
-        'api_key_file' => env('AICRM_LOCAL_API_KEY_FILE'),
-        'credential_tenant' => env('AICRM_LOCAL_CREDENTIAL_TENANT'),
-        'shop_tenants' => json_decode(env('AICRM_LOCAL_SHOP_TENANTS', '{}'), true) ?: [],
-        'expected_provider_id' => env('AICRM_LOCAL_EXPECTED_PROVIDER_ID'),
-    ],
+'local' => [
+    'enabled' => env('AICRM_LOCAL_ENABLED', false),
+    'base_url' => env('AICRM_LOCAL_API_URL', 'http://127.0.0.1:8185'),
+    'api_key' => env('AICRM_LOCAL_API_KEY'),
+],
     'live' => [
         'enabled' => env('AICRM_LIVE_ENABLED', false),
         'creation_enabled' => env('AICRM_LIVE_CREATION_ENABLED', false),
         'contract_confirmed' => env('AICRM_LIVE_CONTRACT_CONFIRMED', false),
         'base_url' => env('AICRM_LIVE_API_URL'),
+        // Dedicated credentials: never fall back to the remote Live key for loopback.
+        'loopback' => [
+            'enabled' => env('AICRM_LIVE_LOCAL_HTTP_ENABLED', false),
+            'api_key' => env('AICRM_LIVE_LOCAL_API_KEY'),
+            'tenant_mode' => 'api_key',
+            'tenant_header' => null,
+            'credential_tenant' => env('AICRM_LIVE_LOCAL_CREDENTIAL_TENANT'),
+            'shop_tenants' => json_decode(env('AICRM_LIVE_LOCAL_SHOP_TENANTS', '{}'), true) ?: [],
+            'tenant_credentials' => [],
+            'shipping_provider_id' => env('AICRM_LIVE_LOCAL_SHIPPING_PROVIDER_ID'),
+        ],
         'hosts' => array_values(array_filter(array_map('trim', explode(',', env('AICRM_LIVE_HOSTS', ''))))),
         'api_key' => env('AICRM_LIVE_API_KEY'),
         'tenant_mode' => env('AICRM_LIVE_TENANT_MODE', 'api_key'),

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\ActivityLog;
 use App\Models\Order;
+use App\Services\AicrmShipmentService;
 use App\Services\ShopAccessService;
 use App\Services\WarehouseService;
 use Illuminate\Http\Request;
@@ -105,15 +106,10 @@ class WarehouseController extends Controller implements HasMiddleware
         $data['shop'] = $order->shop?->only(['id', 'name']);
         $data['shipment'] = $order->aicrmShipment?->summary($history);
         $data['existing_tracking_number'] = $order->order_number_vtp ?: data_get($order->pancake_full_data, 'partner.order_number_vtp');
-        $data['can_create_shipment'] = $order->warehouse_status === Order::WAREHOUSE_PACKED && $order->packed_at
-            && $this->warehouse->packableStatus($order->status) && blank($data['existing_tracking_number'])
-            && (! $order->aicrmShipment || ($order->aicrmShipment->status === 'failed' && $order->aicrmShipment->mode === config('aicrm.mode')));
-        if (config('aicrm.mode') === 'live') {
-            $data['can_create_shipment'] = $data['can_create_shipment'] && config('aicrm.live.enabled') === true
-                && config('aicrm.live.creation_enabled') === true && config('aicrm.live.contract_confirmed') === true
-                && config('aicrm.live.reconciliation_confirmed') === true
-                && (string) config('aicrm.live.approved_order_id') === (string) $order->id;
-        }
+        $shipping = app(AicrmShipmentService::class);
+        $data['shipment_blockers'] = $shipping->creationBlockers($order);
+        $data['can_create_shipment'] = $data['shipment_blockers'] === [];
+        $data['can_simulate_shipment'] = $shipping->canSimulate($order);
         $data['packed_by'] = $order->packedBy?->only(['id', 'name']) ?? ($order->packingLog ? [
             'id' => $order->packed_by_user_id, 'name' => $order->packingLog->actor_name,
         ] : null);
@@ -127,7 +123,7 @@ class WarehouseController extends Controller implements HasMiddleware
             ])->values();
         if ($history) {
             $data['history'] = ActivityLog::where('shop_id', $order->shop_id)->where('subject_type', 'order')
-                ->where('subject_id', (string) $order->id)->whereIn('action', ['warehouse.packed', 'warehouse.order_removed'])
+                ->where('subject_id', (string) $order->id)->whereIn('action', ['warehouse.packed', 'warehouse.order_removed', 'shipment.simulated'])
                 ->orderBy('id')->get(['id', 'action', 'actor_user_id', 'actor_name', 'created_at', 'old_values', 'new_values']);
         }
 

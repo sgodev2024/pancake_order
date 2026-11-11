@@ -1,0 +1,18 @@
+{
+  "credential_source": "configured_local_file_key",
+  "method": "GET",
+  "url": "http://127.0.0.1:8185/api/v1/shipping-providers",
+  "http_status": 200,
+  "array_response": true,
+  "providers": [
+    {
+      "id": 1,
+      "code": "VIETTEL_POST",
+      "name": "Viettel Post - LOCAL TEST ONLY",
+      "isEnable": false
+    }
+  ],
+  "raw_response_omitted": true,
+  "live_key_sent": false,
+  "real_post_sent": false
+}
