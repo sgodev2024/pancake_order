@@ -101,6 +101,18 @@ test('live confirmation clearly identifies a real shipment and never sends witho
   assert.doesNotMatch(html, /Mock/)
 })
 
+test('local creation uses the plain button and identifies AICRM DEV in confirmation and status', () => {
+  const dialog = shipmentConfirmation(packed, 'local', () => {})
+  assert.match(dialog.content, /API AICRM DEV/)
+  assert.match(dialog.content, /COD và tổng tiền/)
+  assert.equal(dialog.okText, 'Gửi tới AICRM DEV')
+  const button = render(ui.ShipmentButton, { order: packed, allowed: true, mode: 'local' })
+  assert.match(button, />Tạo vận đơn Viettel Post</)
+  const status = render(ui.ShipmentStatus, { order: { shipment: { status: 'succeeded', mode: 'local', tracking_number: 'LOCAL-123' } } })
+  assert.match(status, /AICRM DEV/)
+  assert.doesNotMatch(status, /Mock/)
+})
+
 test('persisted live result displays real environment, AICRM identity and response status', () => {
   const html = render(ui.ShipmentStatus, { history: true, order: { shipment: {
     mode: 'live', status: 'succeeded', tracking_number: 'FAKE-TEST-LIVE', remote_order_id: 'remote-test-id', remote_status: 'PENDING',

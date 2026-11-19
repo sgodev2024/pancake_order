@@ -75,7 +75,7 @@ const WarehousePage = () => {
   const simulation = useMutation({
     mutationFn: simulateViettelPostShipment, retry: false,
     onSuccess: (response) => { setSimulationResult(response); message.success(response.message); refreshShipping() },
-    onError: (error) => { message.error(getApiErrorMessage(error, 'Không thể mô phỏng TEST/Mock.')); refreshShipping() },
+    onError: (error) => { message.error(getApiErrorMessage(error, 'Không thể xem trước payload TEST.')); refreshShipping() },
   })
   const shippingPending = shipment.isPending || simulation.isPending
   const confirmShipment = (order, simulate = false) => {
@@ -132,10 +132,14 @@ const WarehousePage = () => {
   const order = detail.data
   return <main className="warehouse-page"><Card title="Quản lý Kho" extra={<Button icon={<ReloadOutlined />} onClick={() => list.refetch()} loading={list.isFetching}>Tải lại</Button>}>
     {simulationResult && <Alert className="warehouse-alert" type="info" showIcon closable onClose={() => setSimulationResult(null)}
-      title={`TEST/Mock · POS-${simulationResult.data.order_id}`} description={simulationResult.message} />}
-    {status === 'packed' && <Alert className="warehouse-alert" showIcon type={shippingMode === 'live' ? 'warning' : 'info'} title={shippingMode === 'live'
+      title={`Payload TEST · Đơn ${simulationResult.data.order_id}`}
+      description={<>{simulationResult.message}<pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {JSON.stringify(simulationResult.data.payload, null, 2)}
+      </pre></>} />}
+    {status === 'packed' && <Alert className="warehouse-alert" showIcon type={shippingMode === 'live' || shippingMode === 'local' ? 'warning' : 'info'} title={shippingMode === 'live'
       ? (list.data?.shipping?.live_enabled && list.data?.shipping?.live_creation_enabled ? 'AICRM Live · Tạo vận đơn thật cho đơn được phê duyệt' : 'AICRM Live · Tạo vận đơn thật đang tắt')
-      : shippingMode !== 'sandbox' ? 'Vận đơn đang ở chế độ Mock trên Local' : 'Vận đơn đang ở chế độ AICRM Sandbox'}
+      : shippingMode === 'local' ? 'AICRM DEV · Viettel Post'
+        : shippingMode !== 'sandbox' ? 'Vận đơn đang ở chế độ Mock trên Local' : 'Vận đơn đang ở chế độ AICRM Sandbox'}
       description="Tạo vận đơn bằng nút xác nhận của từng đơn. Nếu chưa rõ kết quả gửi, cần đối soát trước khi thử lại." />}
     {configuration && !configuration.enabled && <Alert className="warehouse-alert" type={configuration.configuration_valid ? 'info' : 'warning'} showIcon
       title={configuration.configuration_valid ? 'Module Kho đang tắt' : 'Thời điểm kích hoạt Kho chưa hợp lệ'}

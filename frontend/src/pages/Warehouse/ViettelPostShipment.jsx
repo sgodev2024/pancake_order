@@ -12,7 +12,7 @@ export const ShipmentButton = ({ order, allowed, pending, mode, onCreate }) => {
   if (!allowed || order?.warehouse_status !== 'packed') return null
   return <Space orientation="vertical" size={4}><Button disabled={!order.can_create_shipment || pending} loading={pending}
     onClick={() => onCreate(order)}>
-    Tạo vận đơn Viettel Post{mode === 'live' ? ' (Live)' : mode === 'sandbox' ? '' : ' (Mock)'}
+    Tạo vận đơn Viettel Post{mode === 'live' ? ' (Live)' : ['local', 'sandbox'].includes(mode) ? '' : ' (Mock)'}
   </Button>
     {!order.can_create_shipment && order.shipment_blockers?.map((reason) => <Typography.Text key={reason.code} type="secondary" style={{ maxWidth: 380 }}>
       {reason.message} {reason.remedy}
@@ -22,7 +22,7 @@ export const ShipmentButton = ({ order, allowed, pending, mode, onCreate }) => {
 
 export const ShipmentSimulationButton = ({ order, allowed, pending, onSimulate }) => {
   if (!allowed || !order?.can_simulate_shipment) return null
-  return <Button disabled={pending} loading={pending} onClick={() => onSimulate(order)}>Mô phỏng TEST/Mock</Button>
+  return <Button disabled={pending} loading={pending} onClick={() => onSimulate(order)}>Xem trước payload TEST</Button>
 }
 
 export const ShipmentStatus = ({ order, history = false }) => {
@@ -32,7 +32,8 @@ export const ShipmentStatus = ({ order, history = false }) => {
   const remoteLabel = Object.hasOwn(aicrmOrderStatuses, shipment.remote_status) ? aicrmOrderStatuses[shipment.remote_status] : null
   return <Space orientation="vertical" size={6}>
     <Space wrap><Tag color={color}>{label}</Tag>{shipment.mode === 'live' ? <Tag color="red">Live · Vận đơn thật</Tag>
-      : shipment.mode === 'sandbox' ? <Tag>Sandbox</Tag> : <Tag color="purple">Mock · Local</Tag>}</Space>
+      : shipment.mode === 'local' ? <Tag color="blue">AICRM DEV</Tag>
+        : shipment.mode === 'sandbox' ? <Tag>Sandbox</Tag> : <Tag color="purple">Mock · Local</Tag>}</Space>
     {shipment.tracking_number && <Typography.Text copyable>{shipment.tracking_number}</Typography.Text>}
     {history && shipment.remote_order_id && <Typography.Text>ID đơn AICRM: {shipment.remote_order_id}</Typography.Text>}
     {history && shipment.status === 'succeeded' && !shipment.remote_order_id && <Typography.Text type="secondary">Chưa liên kết UUID đơn AICRM</Typography.Text>}

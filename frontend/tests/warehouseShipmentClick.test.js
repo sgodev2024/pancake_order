@@ -52,9 +52,9 @@ afterEach(async () => {
 const settle = async () => {
   for (let i = 0; i < 6; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
 }
-const mount = async (order) => {
+const mount = async (order, mode = 'live') => {
   useAuthStore.setState({ user: { id: 637, role: { slug: 'warehouse-test', permissions: ['warehouse-view', 'warehouse-pack'].map((slug) => ({ slug })) } }, token: 'fake-session' })
-  apiClient.get = async () => ({ data: { data: { orders: [order], total_items: 1, module: { enabled: true }, shipping: { mode: 'live' } } } })
+  apiClient.get = async () => ({ data: { data: { orders: [order], total_items: 1, module: { enabled: true }, shipping: { mode } } } })
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })
   await act(async () => { renderer = create(React.createElement(QueryClientProvider, { client }, React.createElement(Page))) })
   await settle()
@@ -92,24 +92,39 @@ test('actual warehouse click opens one dialog, POSTs only ID once, shows loading
   assert.ok(visibleText().includes('FAKE-ORDER-NUMBER'))
 })
 
-test('disabled Live explains remedies while separate TEST/Mock action succeeds without a fake tracking number', async () => {
+test('disabled Live explains remedies while TEST payload preview shows the data without creating a shipment', async () => {
   const order = { ...packed, can_create_shipment: false, shipment_blockers: [{ code: 'provider_not_ready',
     message: 'Provider Viettel Post đang tắt.', remedy: 'Kiểm tra token tại AICRM.' }] }
   const posts = []
   apiClient.post = async (...args) => {
     posts.push(args)
-    return { data: { success: true, message: 'TEST/Mock: không tạo shipment hoặc mã vận đơn.', data: { order_id: 349323, mode: 'simulation', tracking_number: null } } }
+    return { data: { success: true, message: 'Xem trước dữ liệu đơn.',
+      data: { order_id: 349323, mode: 'simulation', tracking_number: null, network_sent: false, payload: { productName: 'Áo x2' } } } }
   }
   await mount(order)
   assert.equal(button('Tạo vận đơn Viettel Post').props.disabled, true)
   assert.ok(visibleText().includes('Kiểm tra token tại AICRM.'))
-  await act(async () => button('Mô phỏng TEST/Mock').props.onClick())
-  assert.match(dialogs[0].content, /Không gọi AICRM/)
+  await act(async () => button('Xem trước payload TEST').props.onClick())
+  assert.match(dialogs[0].title, /Xem trước payload TEST cho đơn POS-349323/)
+  assert.equal(dialogs[0].okText, 'Xem payload')
   await act(async () => dialogs[0].onOk())
   await settle()
   assert.deepEqual(posts, [['/warehouse/orders/349323/viettel-post?simulate=1']])
-  assert.ok(renderer.root.findAllByType('alert-control').some((node) => node.props.title === 'TEST/Mock · POS-349323'))
+  const preview = renderer.root.findAllByType('alert-control').find((node) => node.props.title === 'Payload TEST · Đơn 349323')
+  assert.ok(preview)
+  const [, payload] = preview.props.description.props.children
+  assert.equal(payload.props.children, JSON.stringify({ productName: 'Áo x2' }, null, 2))
   assert.equal(order.shipment, undefined)
+})
+
+test('Local uses the plain shipment button and displays the Local upstream blocker', async () => {
+  const reason = 'Chưa xác minh AICRM DEV sử dụng upstream Viettel Post Sandbox/mock.'
+  await mount({ ...packed, can_create_shipment: false, shipment_blockers: [{ code: 'configuration', message: reason }] }, 'local')
+  const createShipment = button('Tạo vận đơn Viettel Post')
+  assert.equal(createShipment.children.join(''), 'Tạo vận đơn Viettel Post')
+  assert.equal(createShipment.props.disabled, true)
+  assert.ok(visibleText().includes(reason))
+  assert.ok(!visibleText().includes('Live'))
 })
 
 test('unknown result refreshes eligibility, shows reconciliation error and never retries POST', async () => {
