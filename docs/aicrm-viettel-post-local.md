@@ -1,12 +1,16 @@
 # Viettel Post qua AICRM — triển khai Local
 
-> **Hợp đồng mới:** xem [AICRM API Key](aicrm-api-key-integration.md).
-> Mock HTTP/Sandbox hiện dùng `AICRM_API_KEY` và `X-API-Key`; mock server nhận
-> `AICRM_MOCK_API_KEY`. Tenant được xác định bởi API Key, không thêm header tenant.
+## Cấu hình luồng tạo vận đơn hiện tại
 
-> Cập nhật kết nối thật: xem [AICRM Live](aicrm-viettel-post-live.md). Phần bên dưới
-> mô tả Mock/Sandbox ban đầu. Live có cấu hình/công tắc riêng, hiện vẫn OFF;
-> GET tới host được cung cấp đang bị Cloudflare 1010 chặn, chưa xác minh B2B.
+Laravel gọi `POST /api/v1/orders/auto` với header `X-API-Key`. AICRM xác định
+tenant từ key và tự chọn dịch vụ Viettel Post. Có thể đặt `AICRM_AUTO_URL` thành
+URL đầy đủ và `AICRM_AUTO_API_KEY` thành key dành cho môi trường đang chạy.
+Nếu để trống, Laravel dùng URL gốc và key hiện có của mode
+(`AICRM_LOCAL_*`, `AICRM_LIVE_*` hoặc `AICRM_API_*`).
+
+Khi AICRM xác nhận thành công, Laravel lưu `data.ORDER_NUMBER`. Kết quả
+`unknown` cần kiểm tra tại AICRM trước khi xử lý tiếp. Luồng `/auto` chưa có API
+đối soát được tích hợp trong Laravel.
 
 Nguồn phát triển: repo `pancake_order`, nhánh `viet_dev`, frontend `frontend/`.
 Tài liệu hợp đồng API v1.0 được sao chép nguyên bản vào [order_api.md](order_api.md).
@@ -34,10 +38,8 @@ Luồng đồng bộ Pancake, đóng hàng, job và scheduler không tự tạo 
 | `receiverPhone` | `orders.customer_phone` |
 | `receiverAddress` | `orders.customer_address` |
 | `productName` | Ghép tên từng dòng `items`: `variation_info.name`, `name`, hoặc `product.name`, kèm `x<số lượng>` |
-| `quantity` | Tổng `items[*].quantity` đã kiểm tra số nguyên dương |
 | `totalPrice` | Pancake: `cod + prepaid_amount`, dự phòng `pancake_full_data.prepaid` nếu cột prepaid chưa có; POS: `pos_totals.total_amount` |
 | `moneyCollection` | `orders.cod`, giữ nguyên COD bằng 0 |
-| `shippingProviderId` | `AICRM_SHIPPING_PROVIDER_ID` |
 
 Tổng tiền dùng cùng cách tính với màn hình đơn hiện có. `cash` là tiền thực nhận,
 không cộng vào giá trị đơn. POS vẫn dùng tổng riêng khi `cod_mode=none`.
@@ -66,8 +68,8 @@ thiếu hoặc không hợp lệ trả 422, không tạo bản ghi gửi hoặc 
 | --- | --- |
 | `processing` | Đang gửi; chặn mọi lần gửi tiếp, kể cả bản ghi tồn tại lâu do tiến trình chết |
 | `succeeded` | Đã xác nhận `error=false`, `status=200`, có `data.ORDER_NUMBER`; gửi lại chỉ trả kết quả đã lưu |
-| `failed` | HTTP 400/401/403/422: API từ chối; sau kiểm tra dữ liệu/cấu hình có thể bấm thử lại, giữ toàn bộ lịch sử |
-| `unknown` | Timeout, lỗi kết nối, 5xx, redirect, JSON không hợp lệ, thiếu mã hoặc envelope lỗi không rõ; khóa gửi lại để đối soát |
+| `failed` | HTTP 401 với thông báo AICRM chưa xác định được tenant trước khi xử lý đơn. Có thể gửi lại sau khi sửa key, giữ lịch sử lần gửi |
+| `unknown` | Timeout, lỗi kết nối, HTTP lỗi ngoài trường hợp trên, redirect, JSON không hợp lệ hoặc thiếu mã; khóa gửi lại để đối soát |
 
 Không tự retry POST, không theo redirect, không tự giải phóng `processing` theo TTL.
 AICRM v1 chưa cam kết nhận `Idempotency-Key` hoặc mã tham chiếu do client cấp;
@@ -82,15 +84,10 @@ idempotency và tenant chính thức; không xóa dòng DB để thử lại tù
 
 ## Cấu hình `.env`
 
-Local hiện được cấu hình `mock`, provider ID **giả lập** là `1`, không có URL/token
-dịch vụ bên ngoài và `AICRM_SANDBOX_ENABLED=false`. Giá trị provider thật phải do
-AICRM cấp, không suy luận từ ID dùng cho Mock. Tất cả khóa có trong `.env.example`.
-
 ### Mock ngoại tuyến (mặc định)
 
 ```dotenv
 AICRM_MODE=mock
-AICRM_SHIPPING_PROVIDER_ID=1
 AICRM_SANDBOX_ENABLED=false
 AICRM_MOCK_SCENARIO=success
 ```
@@ -107,7 +104,7 @@ Mở terminal trong repo backend, đặt API Key **chỉ dùng thử** rồi ch�
 AICRM_MOCK_API_KEY=local-test-only php -S 127.0.0.1:8011 scripts/aicrm-mock-router.php
 ```
 
-Mock có `GET /health`, `POST /api/v1/orders`, kiểm tra X-API-Key và request;
+Mock có `GET /health`, `POST /api/v1/orders/auto`, kiểm tra X-API-Key và request;
 dùng chung envelope với tài liệu. Không boot Laravel, không truy cập DB và không
 có đường gọi Viettel Post. Có thể đặt `AICRM_MOCK_SCENARIO` cho terminal này.
 
@@ -117,10 +114,6 @@ Cấu hình backend:
 AICRM_MODE=mock_http
 AICRM_API_URL=http://127.0.0.1:8011
 AICRM_API_KEY=local-test-only
-# UUID dưới đây chỉ dùng cho Mock HTTP local, không phải tenant thật.
-AICRM_CREDENTIAL_TENANT=11111111-1111-4111-8111-111111111111
-AICRM_SHOP_TENANTS='{"12":"11111111-1111-4111-8111-111111111111"}'
-AICRM_SHIPPING_PROVIDER_ID=1
 ```
 
 `mock_http` chỉ chấp nhận loopback; đây vẫn là Mock, không ghi mã giả vào trường VTP cũ.
@@ -135,25 +128,14 @@ AICRM_API_URL=https://sandbox-host-do-aicrm-cap.example
 AICRM_SANDBOX_ENABLED=true
 AICRM_SANDBOX_HOSTS=sandbox-host-do-aicrm-cap.example
 AICRM_API_KEY=<api-key-sandbox>
-AICRM_CREDENTIAL_TENANT=<uuid-tenant-sandbox>
-AICRM_SHOP_TENANTS='{"12":"<uuid-tenant-sandbox>"}'
-AICRM_SHIPPING_PROVIDER_ID=<id-viettel-post-sandbox>
 AICRM_TIMEOUT=10
 AICRM_CONNECT_TIMEOUT=3
 ```
 
-URL là origin hoặc prefix trước `/api/v1/orders`, không bao gồm đường dẫn endpoint
-này lần nữa. Không dùng user/password/query/fragment trong URL. Máy chủ ngoài
-loopback bắt buộc HTTPS. Không có chế độ `production`; ứng dụng `APP_ENV=production`
-cũng bị chặn gửi. Không dùng URL/token Production trong bất kỳ chế độ nào.
-
-Source đã xác nhận X-API-Key và tenant theo key; không có Bearer hoặc X-Tenant-ID.
-Cấu hình Sandbox cần mapping shop Local → UUID tenant và credential đúng tenant,
-theo [hướng dẫn hiện hành](aicrm-api-key-integration.md).
-Các biến AUTH_HEADER/AUTH_SCHEME/AUTH_TOKEN cũ không còn được dùng;
-thay bằng AICRM_API_KEY, AICRM_CREDENTIAL_TENANT, AICRM_SHOP_TENANTS hoặc
-AICRM_TENANT_CREDENTIALS cho nhiều tenant. productName tối đa 255 ký tự;
-moneyCollection là số nguyên VND không âm. POST không trả UUID AICRM hoặc trạng thái vận chuyển.
+Dùng `AICRM_API_URL` cho URL gốc hoặc `AICRM_AUTO_URL` cho URL đầy đủ
+kết thúc bằng `/api/v1/orders/auto`. Máy chủ ngoài loopback dùng HTTPS.
+`productName` tối đa 255 ký tự và `moneyCollection` là số nguyên VND không âm.
+Phản hồi POST cung cấp mã vận đơn Viettel Post trong `data.ORDER_NUMBER`.
 
 Sau đổi `.env`: chạy `php artisan config:clear` nếu đã cache config và khởi động lại
 backend Local. Dùng **đơn kiểm thử mới** khi đổi môi trường: không chuyển một đơn
@@ -178,7 +160,7 @@ npm run lint
 npm run build
 ```
 
-Kiểm thử HTTP thực tới Mock (terminal server dùng `AICRM_MOCK_TOKEN=test-secret`):
+Kiểm thử HTTP thực tới Mock (terminal server dùng `AICRM_MOCK_API_KEY=test-secret`):
 
 ```sh
 AICRM_LOCAL_HTTP_TEST_URL=http://127.0.0.1:8011 APP_ENV=testing DB_CONNECTION=sqlite DB_DATABASE=:memory: php vendor/bin/phpunit tests/Feature/AicrmShipmentTest.php --filter=test_local_http_mock_mode_never_writes_mock_tracking_to_legacy_carrier_fields
