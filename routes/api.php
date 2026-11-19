@@ -1,6 +1,5 @@
 <?php
 
-use App\Http\Controllers\AicrmOrderController;
 use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CustomerCareController;
@@ -100,12 +99,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('warehouse/orders', [\App\Http\Controllers\Api\WarehouseController::class, 'index']);
     Route::get('warehouse/orders/{order}', [\App\Http\Controllers\Api\WarehouseController::class, 'show']);
     Route::post('warehouse/orders/{order}/complete', [\App\Http\Controllers\Api\WarehouseController::class, 'complete']);
-    Route::post(
-    'warehouse/orders/{order}/viettel-post',
-    [\App\Http\Controllers\Api\AicrmDevTestController::class, 'store']
-);
-    Route::post('/aicrm/orders', [AicrmOrderController::class, 'store']);
-
+    Route::post('warehouse/orders/{order}/viettel-post', [\App\Http\Controllers\Api\AicrmShipmentController::class, 'store']);
 
     Route::post('webhook-monitor/cleanup', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'cleanup'])->middleware(AdminOnlyMiddleware::class);
     Route::get('webhook-monitor', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'index'])->middleware(AdminOnlyMiddleware::class);
