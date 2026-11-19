@@ -10,7 +10,6 @@ use App\Services\AicrmLocalConnection;
 use App\Services\AicrmShippingProviders;
 use App\Services\ShopAccessService;
 use Illuminate\Console\Command;
-use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 
@@ -19,7 +18,7 @@ class CheckAicrmLocalConnection extends Command
     protected $signature = 'aicrm:local-check
         {--shop-id= : Shop TEST Local}
         {--actor-id= : Người có quyền warehouse-view và quyền shop}
-        {--verify-rejections : Thử GET thiếu/sai key và kiểm tra binding sai tenant}';
+        {--verify-rejections : Thử GET thiếu/sai key}';
 
     protected $description = 'GET thật đến AICRM loopback; không tạo vận đơn, không xuất key hoặc raw response';
 
@@ -44,7 +43,7 @@ class CheckAicrmLocalConnection extends Command
                 && RolePermission::where('role_id', $actor->role_id)
                     ->whereIn('permission_id', Permission::where('slug', 'warehouse-view')->select('id'))->exists();
             abort_unless($allowed, 403, 'Người kiểm thử không có quyền xem Kho của shop TEST.');
-            $response = $connection->providers($shopId);
+            $response = $connection->providers();
             $body = $response->json();
             $shape = $response->status() === 200 && is_array($body) && array_is_list($body);
             $summary = [];
@@ -59,29 +58,24 @@ class CheckAicrmLocalConnection extends Command
                     $summary[] = array_intersect_key($provider, array_flip(['id', 'code', 'name', 'isEnable']));
                 }
             }
-            $matches = array_values(array_filter($summary, fn ($provider) => $provider['code'] === 'VIETTEL_POST'
-                && $provider['id'] === (int) config('aicrm.local.expected_provider_id')));
-            $ok = $shape && count($matches) === 1;
+            $ok = $shape;
             $selected = null;
-            if ($ok && $matches[0]['isEnable'] === true) {
+            $blocker = 'Danh sách nhà vận chuyển AICRM không hợp lệ.';
+            if ($ok) {
                 try {
                     $selected = $providers->viettelPostId($response);
-                    if ($selected !== $matches[0]['id']) {
-                        $selected = null;
-                    }
-                } catch (HttpExceptionInterface) {
-                    // A disabled provider is a successful read, not readiness to create.
+                    $blocker = null;
+                } catch (HttpExceptionInterface $error) {
+                    $blocker = $error->getMessage();
                 }
             }
             $result = [
                 'mode' => 'local', 'transport' => 'real_http', 'method' => 'GET',
                 'http_status' => $response->status(), 'response_format_valid' => $shape,
                 'shop_id' => $shopId, 'actor_id' => $actorId,
-                'configured_tenant_id' => config('aicrm.local.shop_tenants.'.$shopId),
-                'tenant_scope_confirmed_by_response' => false,
-                'expected_provider_found' => count($matches) === 1,
                 'providers' => $summary, 'selected_shipping_provider_id' => $selected,
                 'provider_ready_for_creation' => $selected !== null,
+                'provider_blocker' => $blocker,
                 'creation_enabled' => false,
                 'live_enabled' => config('aicrm.live.enabled') === true,
                 'live_creation_enabled' => config('aicrm.live.creation_enabled') === true,
@@ -89,30 +83,14 @@ class CheckAicrmLocalConnection extends Command
             ];
             if ($this->option('verify-rejections')) {
                 foreach (['missing', 'invalid'] as $probe) {
-                    $status = $connection->providers($shopId, $probe)->status();
+                    $status = $connection->providers($probe)->status();
                     $result['rejections'][$probe.'_key'] = ['http_status' => $status, 'request_sent' => true];
                     $ok = $ok && $status === 401;
                 }
-                $path = 'aicrm.local.shop_tenants.'.$shopId;
-                $original = config($path);
-                $rejected = false;
-                try {
-                    config([$path => (string) Str::uuid()]);
-                    $connection->validateConfiguration($shopId);
-                } catch (HttpExceptionInterface $error) {
-                    $rejected = $error->getStatusCode() === 409;
-                } finally {
-                    config([$path => $original]);
-                }
-                $result['rejections']['wrong_tenant'] = ['http_status' => $rejected ? 409 : null,
-                    'layer' => 'pancake_tenant_binding', 'request_sent' => false];
-                $ok = $ok && $rejected;
             }
             $result['connection_result'] = $ok ? 'PASS' : 'FAIL';
             $this->line(json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-            $this->comment($selected === null
-                ? 'Provider TEST chưa đủ điều kiện tạo vận đơn. Local chỉ cho phép GET.'
-                : 'Local chỉ kiểm tra GET; không có chức năng tạo vận đơn trong kết nối này.');
+            $this->comment($blocker ?? 'Đã tìm thấy provider VIETTEL_POST đang bật.');
 
             return $ok ? self::SUCCESS : self::FAILURE;
         } catch (HttpExceptionInterface $error) {

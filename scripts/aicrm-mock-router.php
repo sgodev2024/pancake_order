@@ -13,7 +13,7 @@ if ($path === '/health') {
 
     return;
 }
-if ($path !== '/api/v1/orders' || $_SERVER['REQUEST_METHOD'] !== 'POST') {
+if ($path !== '/api/v1/orders/auto' || $_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(404);
     echo json_encode(['error' => true]);
 
@@ -31,10 +31,10 @@ $valid = is_array($payload);
 foreach (['receiveFullName', 'receiverPhone', 'receiverAddress'] as $key) {
     $valid = $valid && is_string($payload[$key] ?? null) && trim($payload[$key]) !== '';
 }
-foreach (['totalPrice', 'moneyCollection', 'shippingProviderId'] as $key) {
+foreach (['totalPrice', 'moneyCollection'] as $key) {
     $valid = $valid && is_numeric($payload[$key] ?? null) && $payload[$key] >= 0;
 }
-if (! $valid || $payload['shippingProviderId'] < 1 || $payload['moneyCollection'] > $payload['totalPrice']) {
+if (! $valid || $payload['moneyCollection'] > $payload['totalPrice']) {
     http_response_code(400);
     echo json_encode(['error' => 'Invalid CreateOrderRequest', 'statusCode' => 400]);
 

@@ -38,13 +38,18 @@ class AicrmLiveConnection
             409, 'Chưa xác nhận quy trình đối soát AICRM khi timeout.');
         abort_unless((string) config('aicrm.live.approved_order_id') === (string) $order->id,
             409, 'Đơn chưa được phê duyệt cho lần tạo vận đơn Live có kiểm soát.');
+        $this->validateActivation($order);
+        $this->endpoint('orders');
+    }
+
+    public function validateActivation(Order $order): void
+    {
         $value = config('aicrm.live.activated_at');
         $at = is_string($value) && preg_match('/(?:Z|[+-]\d{2}:?\d{2})$/D', $value)
             ? app(WarehouseService::class)->sourceCreatedAt(['created_at' => $value], false) : null;
         $created = $order->origin === 'local_pos' ? $order->created_at : $order->source_created_at;
         abort_unless($at && $created && $created->greaterThanOrEqualTo($at),
             409, 'Chỉ cho phép đơn kiểm thử mới từ thời điểm kích hoạt Live đã xác nhận.');
-        $this->endpoint('orders');
     }
 
     public function create(array $payload, int $shopId, int $orderId): Response

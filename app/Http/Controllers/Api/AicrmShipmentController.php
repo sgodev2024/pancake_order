@@ -25,7 +25,7 @@ class AicrmShipmentController extends Controller implements HasMiddleware
         $request->validate(['simulate' => ['sometimes', 'boolean']]);
         if ($request->boolean('simulate')) {
             return response()->json(['success' => true,
-                'message' => 'TEST/Mock: mô phỏng thành công. Không gọi AICRM, không tạo shipment hoặc mã vận đơn.',
+                'message' => 'Xem trước dữ liệu đơn. AICRM sẽ tự chọn dịch vụ vận chuyển khi tạo vận đơn.',
                 'data' => $service->simulate($request->user(), $order->id)]);
         }
         // Payload is always constructed server-side from the authorized order.
@@ -38,6 +38,7 @@ class AicrmShipmentController extends Controller implements HasMiddleware
                 ? match ($shipment->mode) {
                     'live' => 'Đã tạo vận đơn thật qua AICRM Live.',
                     'sandbox' => 'Đã tạo vận đơn qua AICRM Sandbox.',
+                    'local' => 'Đã tạo vận đơn Viettel Post qua AICRM DEV.',
                     default => 'Đã tạo vận đơn Mock trên Local.',
                 }
                 : $shipment->last_error,

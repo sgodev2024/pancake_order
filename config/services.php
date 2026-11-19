@@ -32,6 +32,11 @@ return [
         'api_v1_url' => env('PANCAKE_API_V1', 'https://pos.pages.fm/api/v1/'),
     ],
 
+    'aicrm' => [
+        'auto_url' => env('AICRM_AUTO_URL'),
+        'api_key' => env('AICRM_AUTO_API_KEY'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

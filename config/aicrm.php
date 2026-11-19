@@ -21,12 +21,13 @@ return [
     // A dry run uses the existing shipment route, never HTTP or shipment records.
     'simulation_enabled' => env('AICRM_SIMULATION_ENABLED', true),
     'simulation_shop_ids' => [38],
-    // Separate read-only Local integration; never enables shipment creation or changes Live/Sandbox gates.
-'local' => [
-    'enabled' => env('AICRM_LOCAL_ENABLED', false),
-    'base_url' => env('AICRM_LOCAL_API_URL', 'http://127.0.0.1:8185'),
-    'api_key' => env('AICRM_LOCAL_API_KEY'),
-],
+    // DEV uses the loopback API and its dedicated key.
+    'local' => [
+        'enabled' => env('AICRM_LOCAL_ENABLED', false),
+        'base_url' => env('AICRM_LOCAL_API_URL', 'http://127.0.0.1:8185'),
+        'api_key' => env('AICRM_LOCAL_API_KEY'),
+        'upstream_verified' => env('AICRM_LOCAL_UPSTREAM_VERIFIED', false),
+    ],
     'live' => [
         'enabled' => env('AICRM_LIVE_ENABLED', false),
         'creation_enabled' => env('AICRM_LIVE_CREATION_ENABLED', false),
