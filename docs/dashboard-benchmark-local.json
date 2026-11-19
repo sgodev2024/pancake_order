@@ -1,0 +1,157 @@
+{
+    "measured_at": "2026-11-02T11:26:25+07:00",
+    "scope": "local admin controllers; excludes HTTP\/auth\/bootstrap\/browser rendering",
+    "cache_store": "database",
+    "samples": [
+        {
+            "operation": "product_sales_month",
+            "iteration": 1,
+            "ms": 73.42,
+            "sql_queries": 25,
+            "sql_ms": 37.9,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "miss"
+        },
+        {
+            "operation": "product_sales_month",
+            "iteration": 2,
+            "ms": 3,
+            "sql_queries": 6,
+            "sql_ms": 2.06,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "hit"
+        },
+        {
+            "operation": "product_sales_month",
+            "iteration": 3,
+            "ms": 2.66,
+            "sql_queries": 6,
+            "sql_ms": 1.84,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "hit"
+        },
+        {
+            "operation": "product_period_year",
+            "iteration": 1,
+            "ms": 97.05,
+            "sql_queries": 15,
+            "sql_ms": 43.17,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "miss"
+        },
+        {
+            "operation": "product_period_year",
+            "iteration": 2,
+            "ms": 3.78,
+            "sql_queries": 6,
+            "sql_ms": 2.58,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "hit"
+        },
+        {
+            "operation": "product_period_year",
+            "iteration": 3,
+            "ms": 2.91,
+            "sql_queries": 6,
+            "sql_ms": 1.91,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "hit"
+        },
+        {
+            "operation": "order_totals_all_time",
+            "iteration": 1,
+            "ms": 50.49,
+            "sql_queries": 8,
+            "sql_ms": 37.11,
+            "source_order_queries": 0,
+            "care_queries": 1,
+            "response_cache": "not_used"
+        },
+        {
+            "operation": "order_totals_all_time",
+            "iteration": 2,
+            "ms": 57.03,
+            "sql_queries": 8,
+            "sql_ms": 47.77,
+            "source_order_queries": 0,
+            "care_queries": 1,
+            "response_cache": "not_used"
+        },
+        {
+            "operation": "order_totals_all_time",
+            "iteration": 3,
+            "ms": 54.6,
+            "sql_queries": 8,
+            "sql_ms": 45.34,
+            "source_order_queries": 0,
+            "care_queries": 1,
+            "response_cache": "not_used"
+        },
+        {
+            "operation": "care_overview",
+            "iteration": 1,
+            "ms": 823.99,
+            "sql_queries": 10,
+            "sql_ms": 814.99,
+            "source_order_queries": 2,
+            "care_queries": 3,
+            "response_cache": "miss"
+        },
+        {
+            "operation": "care_overview",
+            "iteration": 2,
+            "ms": 3.03,
+            "sql_queries": 5,
+            "sql_ms": 1.87,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "hit"
+        },
+        {
+            "operation": "care_overview",
+            "iteration": 3,
+            "ms": 2.47,
+            "sql_queries": 5,
+            "sql_ms": 1.45,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "hit"
+        },
+        {
+            "operation": "monthly_order_counts",
+            "iteration": 1,
+            "ms": 14.22,
+            "sql_queries": 5,
+            "sql_ms": 9.75,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "not_used"
+        },
+        {
+            "operation": "monthly_order_counts",
+            "iteration": 2,
+            "ms": 6.32,
+            "sql_queries": 5,
+            "sql_ms": 5.43,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "not_used"
+        },
+        {
+            "operation": "monthly_order_counts",
+            "iteration": 3,
+            "ms": 6.17,
+            "sql_queries": 5,
+            "sql_ms": 5.31,
+            "source_order_queries": 0,
+            "care_queries": 0,
+            "response_cache": "not_used"
+        }
+    ]
+}

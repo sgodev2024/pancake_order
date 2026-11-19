@@ -87,12 +87,13 @@ class CustomerController extends Controller implements HasMiddleware
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
             $query->select([
                 'id',
-                'purchased_amount',
+                \Illuminate\Support\Facades\DB::raw(\App\Services\CustomerCrmPurchaseValue::sql().' AS purchased_amount'),
                 'shop_id',
                 'name',
                 'phone_numbers',
                 'pancake_customer_id',
                 'pancake_full_data',
+                'crm_shipping_address',
                 'created_at',
                 'loyalty_tier_id',
                 'order_count',
@@ -117,7 +118,7 @@ class CustomerController extends Controller implements HasMiddleware
                 $query->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
             }
             if (! $this->shopAccessService->isGlobal($user)) {
-                $this->customerReadAccessService->applyRecordScope($query, $user, 'assigned_user_id');
+                $this->customerReadAccessService->applyRecordScope($query, $user, 'assigned_user_id', allowCskhShopCustomers: true);
             }
             $this->customerJourneyFilterService->apply($query, $journeyFilters);
             $pageNumber = $inputs['page'];
@@ -150,27 +151,50 @@ class CustomerController extends Controller implements HasMiddleware
         $data = $request->validate([
             'shop_id' => ['required', 'integer', 'min:1'],
             'search' => ['nullable', 'string', 'max:255'],
+            'customer_id' => ['nullable', 'integer', 'min:1'],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
         $this->shopAccessService->authorizeRequestedShopId($request->user(), $data['shop_id']);
         $query = Customer::where('shop_id', $data['shop_id']);
-        $this->customerReadAccessService->applyRecordScope($query, $request->user());
-        if (! empty($data['search'])) {
-            $query->where(function ($q) use ($data) {
-                $q->where('name', 'like', '%'.$data['search'].'%')
-                    ->orWhere('phone_numbers', 'like', '%'.$data['search'].'%');
-            });
+        $this->customerReadAccessService->applyRecordScope($query, $request->user(), allowCskhShopCustomers: true);
+        if (! empty($data['customer_id'])) {
+            $query->whereKey($data['customer_id']);
         }
-        $rows = $query->orderBy('name')->paginate(20, ['id', 'name', 'phone_numbers', 'pancake_full_data'], 'page', $data['page'] ?? 1);
+        $search = trim($data['search'] ?? '');
+        if ($search !== '') {
+            if (preg_match('/^\+?[0-9\s().-]+$/D', $search) && preg_match('/[0-9]/', $search)) {
+                $digits = preg_replace('/[^0-9]/', '', $search);
+                $variants = [$digits];
+                if (preg_match('/^84([0-9]{9,10})$/D', $digits, $match)) {
+                    $variants[] = '0'.$match[1];
+                } elseif (preg_match('/^0([0-9]{9,10})$/D', $digits, $match)) {
+                    $variants[] = '84'.$match[1];
+                }
+                $phone = 'phone_numbers';
+                foreach ([' ', '.', '-', '(', ')', '+'] as $separator) {
+                    $phone = "REPLACE({$phone}, '{$separator}', '')";
+                }
+                $query->where(function ($matches) use ($phone, $variants): void {
+                    foreach ($variants as $variant) {
+                        $matches->orWhereRaw("{$phone} LIKE ?", ['%'.$variant.'%']);
+                    }
+                });
+                $placeholders = implode(', ', array_fill(0, count($variants), '?'));
+                $query->orderByRaw("CASE WHEN {$phone} IN ({$placeholders}) THEN 0 ELSE 1 END", $variants);
+            } else {
+                $query->where(function ($matches) use ($search): void {
+                    $matches->where('name', 'like', '%'.$search.'%')
+                        ->orWhere('phone_numbers', 'like', '%'.$search.'%');
+                });
+            }
+        }
+        $rows = $query->orderBy('name')->orderBy('id')->paginate(20, ['id', 'name', 'phone_numbers', 'pancake_full_data', 'crm_shipping_address'], 'page', $data['page'] ?? 1);
 
         return response()->json(['success' => true, 'data' => [
             'customers' => collect($rows->items())->map(function ($customer) {
-                $address = data_get($customer->pancake_full_data, 'address')
-                    ?? data_get($customer->pancake_full_data, 'addresses.0.full_address');
-
                 return [
                     'id' => $customer->id, 'name' => $customer->name, 'phone' => $customer->phone_numbers,
-                    'address' => is_string($address) ? $address : '',
+                    'address' => $customer->shippingAddress(),
                 ];
             })->values(),
             'total_items' => $rows->total(),
@@ -288,7 +312,7 @@ class CustomerController extends Controller implements HasMiddleware
                     'customers.pancake_customer_id',
                     'customers.name',
                     'customers.phone_numbers',
-                    'customers.purchased_amount',
+                    \Illuminate\Support\Facades\DB::raw(\App\Services\CustomerCrmPurchaseValue::sql().' AS purchased_amount'),
                     'customers.order_count',
                     'customers.loyalty_tier_id',
                     'customers.created_at',
@@ -299,7 +323,7 @@ class CustomerController extends Controller implements HasMiddleware
                 ->selectRaw('COALESCE(customers.order_count, 0) AS total_orders')
                 ->selectRaw('customers.last_order_at AS last_purchase_at')
                 ->selectRaw('CASE WHEN customers.last_order_at IS NULL THEN NULL ELSE GREATEST(0, TIMESTAMPDIFF(DAY, customers.last_order_at, CURRENT_DATE)) END AS inactive_days')
-                ->selectRaw('COALESCE(customers.purchased_amount, 0) AS total_value');
+                ->selectRaw(\App\Services\CustomerCrmPurchaseValue::sql().' AS total_value');
 
             if ($sortBy === 'inactive_days') {
                 $query->orderByRaw('customers.last_order_at IS NULL ASC')
@@ -310,7 +334,7 @@ class CustomerController extends Controller implements HasMiddleware
             } elseif ($sortBy === 'total_orders') {
                 $query->orderBy('customers.order_count', $sortDirection);
             } else {
-                $query->orderBy('customers.purchased_amount', $sortDirection);
+                $query->orderBy('total_value', $sortDirection);
             }
 
             $rows = $query

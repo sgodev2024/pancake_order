@@ -44,6 +44,14 @@ class OrderService
                 return $existing;
             }
             Shop::whereKey($input['shop_id'])->sharedLock()->firstOrFail();
+            $page = null;
+            if (isset($input['order_page_id'])) {
+                $page = app(OrderPageOptionsService::class)->posQuery($actor, (int) $input['shop_id'])
+                    ->where('pancake_order_page_id', $input['order_page_id'])->first();
+                if (! $page) {
+                    throw ValidationException::withMessages(['order_page_id' => 'Nguồn đơn không khả dụng cho cửa hàng này.']);
+                }
+            }
             $products = Product::where('shop_id', $input['shop_id'])
                 ->whereIn('id', array_column($input['items'], 'product_id'))
                 ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
@@ -108,11 +116,11 @@ class OrderService
                 if (! $customer) {
                     throw ValidationException::withMessages(['customer_id' => 'Khách hàng không thuộc shop đã chọn.']);
                 }
-                app(CustomerReadAccessService::class)->authorize($actor, $customer);
+                app(CustomerReadAccessService::class)->authorize($actor, $customer, allowCskhShopCustomers: true);
             } else {
                 $localCustomers = Customer::where('shop_id', $input['shop_id'])
                     ->whereNull('pancake_customer_id')->where('phone_numbers', $input['customer']['phone']);
-                app(CustomerReadAccessService::class)->applyRecordScope($localCustomers, $actor);
+                app(CustomerReadAccessService::class)->applyRecordScope($localCustomers, $actor, allowCskhShopCustomers: true);
                 $customer = $localCustomers->orderBy('id')->lockForUpdate()->first();
                 if (! $customer) {
                     $customer = Customer::create([
@@ -124,6 +132,10 @@ class OrderService
                     ]);
                     app(CustomerEnteredSystemEventWriter::class)->write($customer, 'local_pos');
                 }
+            }
+            if ($customer->shippingAddress() !== $input['shipping_address']) {
+                $customer->crm_shipping_address = $input['shipping_address'];
+                $customer->save();
             }
             $totals = [
                 'subtotal' => self::moneyString($subtotal), 'discount_amount' => self::moneyString($discount),
@@ -159,6 +171,10 @@ class OrderService
                     ]],
                 ],
             ];
+            if ($page) {
+                $orderData['pancake_order_page_id'] = $page->id;
+                $orderData['pancake_order_page_name'] = $page->name;
+            }
             if (Schema::hasColumn('orders', 'prepaid_amount')) {
                 $orderData['prepaid_amount'] = self::moneyString($paid);
             }
@@ -199,11 +215,19 @@ class OrderService
 
             return [0, $total, null, 'remaining'];
         }
-        if (! in_array($mode, ['cash', 'bank_transfer'], true) || ! $confirmed) {
-            throw ValidationException::withMessages(['payment_confirmed' => 'Cần xác nhận đã nhận đủ tiền trước khi tạo đơn.']);
+        if (! in_array($mode, ['cash', 'bank_transfer', 'bank_transfer_cod'], true) || ! $confirmed) {
+            throw ValidationException::withMessages(['payment_confirmed' => 'Cần xác nhận số tiền thực nhận trước khi tạo đơn.']);
         }
         if (! isset($input['confirmed_total']) || self::moneyCents($input['confirmed_total']) !== $total) {
             throw ValidationException::withMessages(['confirmed_total' => 'Tổng tiền đã thay đổi. Vui lòng kiểm tra và xác nhận lại số tiền thực nhận.']);
+        }
+
+        if ($mode === 'bank_transfer_cod') {
+            $paid = self::moneyCents($input['deposit_amount'] ?? 0);
+            if ($paid <= 0 || $paid >= $total) {
+                throw ValidationException::withMessages(['deposit_amount' => 'Tiền chuyển khoản một phần phải lớn hơn 0 và nhỏ hơn tổng thanh toán.']);
+            }
+            return [$paid, $total - $paid, 'bank_transfer', 'remaining'];
         }
 
         return [$total, 0, $mode, 'none'];
@@ -214,6 +238,9 @@ class OrderService
         unset($input['idempotency_key']);
         foreach (['discount_amount', 'shipping_fee', 'surcharge', 'paid_amount'] as $key) {
             $input[$key] = self::moneyString(self::moneyCents($input[$key] ?? 0));
+        }
+        if (isset($input['deposit_amount'])) {
+            $input['deposit_amount'] = self::moneyString(self::moneyCents($input['deposit_amount']));
         }
         if (isset($input['confirmed_total'])) {
             $input['confirmed_total'] = self::moneyString(self::moneyCents($input['confirmed_total']));

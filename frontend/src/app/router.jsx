@@ -118,6 +118,15 @@ export const router = createBrowserRouter([
             ],
           },
           {
+            path: ROUTES.PANCAKE_ORDERS,
+            element: <LazyRoute Page={lazy(() => import('../pages/PancakeOrders/PancakeOrdersPage.jsx'))} />,
+          },
+          { path: '/pancake', element: <Navigate to={ROUTES.PANCAKE_ORDERS} replace /> },
+          {
+            path: ROUTES.POS_ORDERS,
+            element: <LazyRoute Page={lazy(() => import('../pages/Pos/PosOrdersPage.jsx'))} />,
+          },
+          {
             path: ROUTES.POS,
             element: <LazyRoute Page={lazy(() => import('../pages/Pos/PosPage.jsx'))} />,
           },
@@ -194,11 +203,14 @@ export const router = createBrowserRouter([
               !ADMIN_ONLY_ROUTES.includes(route.path) &&
               route.path !== ROUTES.ZALO_INBOX &&
               route.path !== ROUTES.ORDERS &&
+              route.path !== ROUTES.PANCAKE_ORDERS &&
+              route.path !== ROUTES.POS_ORDERS &&
               route.path !== ROUTES.POS &&
               route.path !== ROUTES.WAREHOUSE &&
               route.path !== ROUTES.OPPORTUNITIES &&
               route.path !== ROUTES.STAFF_ASSIGNMENTS &&
               route.path !== ROUTES.CUSTOMERS &&
+              route.path !== ROUTES.CARE_SEGMENTS &&
               route.path !== ROUTES.SHOPS &&
               route.path !== ROUTES.PRODUCTS &&
               route.path !== ROUTES.STAFF &&
@@ -213,6 +225,10 @@ export const router = createBrowserRouter([
             path: route.path,
             element: <LazyRoute Page={lazy(() => import('../pages/Placeholder/PlaceholderPage.jsx'))} />,
           })),
+          {
+            path: ROUTES.CARE_SEGMENTS,
+            element: <LazyRoute Page={lazy(() => import('../pages/CareSegments/CareSegmentsPage.jsx'))} />,
+          },
           {
             path: ROUTES.CUSTOMERS,
             element: <LazyRoute Page={lazy(() => import('../pages/Customers/CustomersPage.jsx'))} />,

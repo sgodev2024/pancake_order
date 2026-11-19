@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { calculatePosPaymentTotals, calculatePosTotals, money, optionalMoneyVnd, POS_PAYMENT_OPTIONS, toVnd, productPriceVnd } from '../src/pages/Pos/posTotals.js'
 import { editMoneyInput, formatMoneyInput, isValidMoneyInput, parseMoneyInput } from '../src/pages/Pos/posMoneyInput.js'
-import { canManageProducts, canUsePos, filterMenuByPermissions } from '../src/auth/permissions.js'
+import { canDeletePosOrders, canManageProducts, canUsePos, filterMenuByPermissions } from '../src/auth/permissions.js'
 import { MENU_ITEMS } from '../src/constants/menu.js'
 import { ROUTES } from '../src/constants/routes.js'
 import apiClient from '../src/api/client.js'
@@ -60,7 +60,7 @@ test('optional adjustments accept blank/null/undefined as zero and reject malfor
   }
 })
 test('cash and transfer stay unpaid until receipt confirmation; COD always remains uncollected', () => {
-  assert.equal(POS_PAYMENT_OPTIONS.length, 3)
+  assert.equal(POS_PAYMENT_OPTIONS.length, 4)
   const adjustments = { discount_amount: 10000, shipping_fee: 30000, surcharge: 5000 }
   for (const mode of ['cash', 'bank_transfer']) {
     const before = calculatePosPaymentTotals(cart, { ...adjustments, payment_mode: mode })
@@ -159,4 +159,37 @@ test('createOrder forwards the same idempotency key on retry; detail uses the ex
     assert.deepEqual(calls, [['/orders', payload], ['/orders', payload]])
     assert.deepEqual(await getOrder(9), { id: 9, origin: 'local_pos' })
   } finally { apiClient.post = originals.post; apiClient.get = originals.get }
+})
+
+test('partial bank transfer collects only the balance as COD after receipt confirmation', () => {
+  const fields = { payment_mode: 'bank_transfer_cod', shipping_fee: 30000, deposit_amount: 200000 }
+  const totals = calculatePosPaymentTotals(cart, fields, true)
+  assert.equal(totals.total, 530000)
+  assert.equal(totals.paid, 200000)
+  assert.equal(totals.cod, 330000)
+  assert.equal(totals.remaining, 330000)
+  assert.equal(calculatePosPaymentTotals(cart, fields).cod, 330000)
+  for (const deposit_amount of [undefined, 0, -1, 530000, 600000, 'abc', '1.234', '200000.00', '1,5']) {
+    assert.ok(calculatePosPaymentTotals(cart, { ...fields, deposit_amount }, true).error)
+  }
+})
+
+test('partial transfer input keeps whole VND through sequential edits and paste', () => {
+  let display = ''
+  for (const digit of '700000') {
+    const raw = display + digit
+    const edit = editMoneyInput(display, raw, raw.length, 'insertText')
+    display = edit.display
+    assert.equal(parseMoneyInput(display), edit.value)
+  }
+  assert.equal(display, '700.000')
+  const pasted = editMoneyInput('', '200.000 đ', 9, 'insertFromPaste')
+  assert.equal(pasted.value, '200000')
+  assert.equal(calculatePosPaymentTotals(cart, { payment_mode: 'bank_transfer_cod', deposit_amount: pasted.value }, true).cod, 300000)
+})
+
+test('POS deletion is available to Admin and CSKH roles only', () => {
+  for (const slug of ['admin', 'staff-cskh', 'manager-cskh']) assert.equal(canDeletePosOrders({role: {slug}}), true)
+  for (const slug of ['staff-sale', 'manager-sale', 'warehouse', 'director']) assert.equal(canDeletePosOrders({role: {slug}}), false)
+  assert.equal(canDeletePosOrders(null), false)
 })

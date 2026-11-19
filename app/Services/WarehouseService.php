@@ -119,11 +119,7 @@ class WarehouseService
                 $order->source_creator_name = mb_substr($creator['name'], 0, 255);
             }
             $order->origin = 'pancake';
-            if ($created !== null && $created->greaterThanOrEqualTo($this->activation())
-                && $this->packableStatus($payload['status'] ?? null)) {
-                $order->warehouse_status = Order::WAREHOUSE_WAITING;
-                $order->warehouse_queued_at = now();
-            } elseif (! $this->knownStatus($payload['status'] ?? null)) {
+            if (! $this->knownStatus($payload['status'] ?? null)) {
                 $this->review('unknown_order_status', $payload);
             }
             $order->save();
@@ -198,9 +194,9 @@ class WarehouseService
     public function inActiveQueue(Order $order): bool
     {
         $at = $this->activation();
-        $created = $order->origin === 'local_pos' ? $order->created_at : $order->source_created_at;
+        $created = $order->created_at;
 
-        return $at !== null && $created !== null && $order->warehouse_queued_at !== null
+        return $order->origin === 'local_pos' && $at !== null && $created !== null && $order->warehouse_queued_at !== null
             && $order->warehouse_queued_at->greaterThanOrEqualTo($at)
             && $created->greaterThanOrEqualTo($at);
     }

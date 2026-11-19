@@ -60,6 +60,7 @@ class CustomerCareAssignmentService
     ): CustomerCareAssignment {
         if (! in_array($sourceType, [
             CustomerCareAssignment::SOURCE_ORDER,
+            CustomerCareAssignment::SOURCE_CARE_SEGMENT,
             CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY,
         ], true)) {
             throw new InvalidArgumentException('Loại nguồn phân công không hợp lệ.');

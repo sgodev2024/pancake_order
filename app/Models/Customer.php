@@ -27,6 +27,24 @@ class Customer extends Model
         'last_order_at' => 'datetime',
     ];
 
+    public function shippingAddress(): string
+    {
+        $profile = $this->pancake_full_data ?? [];
+        $addresses = [$this->crm_shipping_address, data_get($profile, 'address')];
+        foreach (['shop_customer_addresses', 'addresses'] as $key) {
+            foreach ((array) data_get($profile, $key, []) as $entry) {
+                $addresses[] = data_get($entry, 'full_address');
+            }
+        }
+        foreach ($addresses as $address) {
+            if (is_string($address) && trim($address) !== '') {
+                return trim($address);
+            }
+        }
+
+        return '';
+    }
+
     public function shop()
     {
         return $this->belongsTo(Shop::class);

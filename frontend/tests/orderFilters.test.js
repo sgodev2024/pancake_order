@@ -63,3 +63,10 @@ test('page options keep IDs as strings and snapshot display handles blank names'
   assert.equal(normalizeOrderFilters({ ...createEmptyOrderFilters(), orderPageId: 'pzl_695112902870160686' }).order_page_id, 'pzl_695112902870160686')
   assert.equal('order_source_id' in normalizeOrderFilters(createEmptyOrderFilters()), false)
 })
+
+test('source options retain alias metadata for the shared dropdown renderer', () => {
+  const source = { id: 'pzl_123', name: 'Zalo Lẻ · Hương Chất', alias: 'Zalo Lẻ', original_name: 'Hương Chất' }
+  assert.deepEqual(getOrderPageOptions([source]), [{
+    value: 'pzl_123', label: 'Zalo Lẻ · Hương Chất', alias: 'Zalo Lẻ', original_name: 'Hương Chất',
+  }])
+})

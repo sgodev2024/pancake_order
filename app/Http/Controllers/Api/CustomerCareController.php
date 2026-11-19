@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\CustomerCareListAccessMiddleware;
+use App\Models\Customer;
 use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
@@ -15,6 +16,7 @@ use App\Services\CustomerCareListQuery;
 use App\Services\CustomerCareOrderSourceService;
 use App\Services\CustomerCareReclaimService;
 use App\Services\CustomerCareWriteAccessService;
+use App\Services\ReportDataVersion;
 use App\Services\ShopAccessService;
 use Carbon\Carbon;
 use DomainException;
@@ -23,6 +25,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -40,7 +43,7 @@ class CustomerCareController extends Controller implements HasMiddleware
     public static function middleware(): array
     {
         return [
-            new Middleware(CustomerCareListAccessMiddleware::class, only: ['index', 'getHistory', 'getOrder']),
+            new Middleware(CustomerCareListAccessMiddleware::class, only: ['index', 'getHistory', 'getOrder', 'posDraft']),
         ];
     }
 
@@ -180,6 +183,10 @@ class CustomerCareController extends Controller implements HasMiddleware
                 throw new AuthorizationException('Unauthenticated.');
             }
             $note = $request->note ?? null;
+            if (str_starts_with((string) $customer_care->note, '[Lọc CSKH]')
+                && ! str_starts_with((string) $note, '[Lọc CSKH]')) {
+                $note = "[Lọc CSKH]\n".$note;
+            }
             $time_care = $request->date ?? null;
             $is_admin = $actor->isAdmin() || $actor->isManagerCskh();
             $is_care_completion = (int) $request->input('status') === 1;
@@ -258,6 +265,7 @@ class CustomerCareController extends Controller implements HasMiddleware
                         'customer_name' => $lockedCustomerCare->customer_name,
                         'customer_addresss' => $lockedCustomerCare->customer_addresss,
                         'date_care' => $request->next_date_care,
+                        'note' => str_starts_with((string) $lockedCustomerCare->note, '[Lọc CSKH]') ? '[Lọc CSKH]' : null,
                         'user_creator_id' => $lockedCustomerCare->user_creator_id,
                         // "user_care_id"              => $lockedCustomerCare->user_care_id,
                         // "user_assigning_seller_id"  => $lockedCustomerCare->user_assigning_seller_id
@@ -424,6 +432,38 @@ class CustomerCareController extends Controller implements HasMiddleware
             'success' => true,
             'data' => $ordersQuery->get(),
         ]);
+    }
+
+    public function posDraft(Request $request, int $id)
+    {
+        $actor = $request->user();
+        abort_unless(($actor->isAdmin() || can_access('pos-create'))
+            && can_access('list-product') && can_access('list-customer'), 403);
+        $care = $this->authorizeCustomerCareRead($request, $id);
+        $this->ensureCustomerCareOrderLinkIsConsistent($care, $actor);
+
+        $matches = collect();
+        if (filled($care->pancake_customer_id)) {
+            $matches = Customer::where('shop_id', $care->shop_id)
+                ->where('pancake_customer_id', $care->pancake_customer_id)->limit(2)->get();
+        }
+        abort_if($matches->count() > 1, 409, 'Lịch hẹn khớp nhiều hồ sơ khách hàng. Vui lòng kiểm tra lại.');
+        $customer = $matches->first();
+        $segmentAssignment = $care->activeAssignments()->where('source_type', CustomerCareAssignment::SOURCE_CARE_SEGMENT)->first();
+        if ($segmentAssignment) {
+            $customer = Customer::whereKey($segmentAssignment->source_id)->where('shop_id', $care->shop_id)->firstOrFail();
+        }
+        $address = $customer?->crm_shipping_address ?: ($care->customer_addresss ?: $customer?->shippingAddress());
+
+        return response()->json(['success' => true, 'data' => [
+            'shop_id' => (int) $care->shop_id,
+            'customer' => [
+                'id' => $customer?->id,
+                'name' => $customer?->name ?: $care->customer_name,
+                'phone' => $customer?->phone_numbers ?: $care->customer_phones,
+                'address' => is_string($address) ? $address : '',
+            ],
+        ]]);
     }
 
     private function authorizeCustomerCareRead(Request $request, int|string $id): CustomerCare
@@ -595,6 +635,24 @@ class CustomerCareController extends Controller implements HasMiddleware
             $endOfWeek = Carbon::now()->endOfWeek()->format('Y-m-d');
             $user = auth()->user();
             $shop_ids = $user->shops()->pluck('shops.id');
+            $scope = $shop_ids->map(fn ($id) => (int) $id)->sort()->values()->all();
+            $cacheKey = 'care-overview:v2:'.hash('sha256', json_encode([
+                'user' => $user->getKey(),
+                'pancake_user' => $user->pancake_user_id,
+                'role' => $user->role_id,
+                'access' => [$user->isAdmin(), $user->isManagerSale(), $user->isManagerCskh()],
+                'shops' => $scope,
+                'date' => $today,
+                'week' => [$startOfWeek, $endOfWeek],
+                'timezone' => config('app.timezone'),
+                'minute' => now()->format('Y-m-d H:i'),
+                'versions' => [ReportDataVersion::key('cares'), ReportDataVersion::key('orders'), ReportDataVersion::key('users')],
+            ]));
+
+            if (($cached = Cache::get($cacheKey)) !== null) {
+                return response()->json($cached);
+            }
+
             $taskBaseQuery = CustomerCare::query();
             $this->applyOverviewAccessScope($taskBaseQuery, $user, $shop_ids, true);
             $totalCustomerCare = (clone $taskBaseQuery)->count();
@@ -674,7 +732,7 @@ class CustomerCareController extends Controller implements HasMiddleware
                             ')
                 ->first();
 
-            return response()->json([
+            $response = [
                 'success' => true,
                 'data' => [
                     'total_customer_care' => $totalCustomerCare,
@@ -691,7 +749,10 @@ class CustomerCareController extends Controller implements HasMiddleware
                     'total_order_today' => $query->total_order_today,
                     'total_revenue' => $query->total_revenue,
                 ],
-            ]);
+            ];
+            Cache::put($cacheKey, $response, 60);
+
+            return response()->json($response);
         } catch (\Throwable $th) {
             return response()->json([
                 'success' => false,

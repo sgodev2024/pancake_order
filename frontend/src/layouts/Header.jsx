@@ -1,3 +1,4 @@
+import NotificationBell from '../components/Notifications/NotificationBell.jsx'
 import {
   BellOutlined,
   LogoutOutlined,
@@ -59,15 +60,7 @@ const AppHeader = ({ collapsed, isMobile, onToggleSidebar, onLogout, user }) => 
           </Button>
         )}
 
-        <Tooltip title="Thông báo">
-          <Button
-            type="text"
-            shape="circle"
-            icon={<BellOutlined />}
-            aria-label="Thông báo"
-            className="app-header__notification"
-          />
-        </Tooltip>
+        <NotificationBell user={user} />
 
         <Dropdown menu={{ items: menuItems, onClick: handleMenuClick }} trigger={['click']}>
           <button type="button" className="user-menu" aria-label="Mở menu người dùng">

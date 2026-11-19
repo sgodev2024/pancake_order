@@ -14,8 +14,8 @@ const routerSource = readFileSync(new URL('../src/app/router.jsx', import.meta.u
 test('completion modal has V1 fields, validation, exact payload and reset/refresh behavior', () => {
   assert.match(pageSource, /label: 'Xác nhận đã chăm sóc'/)
   const modal = pageSource.slice(
-    pageSource.indexOf('title="Xác nhận đã chăm sóc"'),
-    pageSource.indexOf('title="Thu hồi khách hàng?"'),
+    pageSource.indexOf('title="Xác nhận"'),
+    pageSource.indexOf('title="Thu hồi CSKH?"'),
   )
   assert.match(modal, /label="Thời gian xác nhận"[\s\S]*readOnly/)
   assert.match(modal, /name="note"[\s\S]*label="Nội dung chăm sóc"/)

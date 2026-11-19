@@ -1,9 +1,11 @@
+import OrderSourceSelect from '../../components/OrderSourceSelect.jsx'
 import { Select, Typography } from 'antd'
 
 const CustomerCareOrderPageFilter = ({ shopId, value, options, query, onChange }) => (
   <div className="customer-care-field">
     <label htmlFor="customer-care-order-page">Nguồn đơn</label>
-    <Select
+    <OrderSourceSelect
+      shopId={shopId}
       id="customer-care-order-page"
       aria-label="Nguồn đơn"
       allowClear

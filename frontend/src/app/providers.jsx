@@ -1,3 +1,4 @@
+import { MaintenanceGate } from '../components/WebsiteMaintenance.jsx'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { App as AntdApp, ConfigProvider } from 'antd'
 import { useEffect } from 'react'
@@ -30,7 +31,7 @@ const AppProviders = () => {
         }}
       >
         <AntdApp>
-          <RouterProvider router={router} />
+          <MaintenanceGate><RouterProvider router={router} /></MaintenanceGate>
         </AntdApp>
       </ConfigProvider>
     </QueryClientProvider>

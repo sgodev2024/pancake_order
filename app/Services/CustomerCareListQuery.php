@@ -88,7 +88,7 @@ class CustomerCareListQuery
 
         if ($type === 'assignment_tracking') {
             $query->whereHas('assignments', function ($assignmentQuery) {
-                $assignmentQuery->whereIn('source_type', ['order', 'imported_opportunity']);
+                $assignmentQuery->whereIn('source_type', ['order', 'imported_opportunity', 'care_segment']);
             })->orderByDesc(
                 CustomerCareAssignment::query()
                     ->select('assigned_at')

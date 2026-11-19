@@ -8,15 +8,20 @@ use App\Models\CustomerCare;
 use App\Models\CustomerCareAssignment;
 use App\Models\Order;
 use App\Models\Province;
+use App\Models\Shop;
+use App\Services\OrderItemSql;
 use App\Services\OrderService;
+use App\Services\OrderSummaryService;
+use App\Services\ReportDataVersion;
 use App\Services\ShopAccessService;
-use Illuminate\Auth\Access\AuthorizationException;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
 class OrderController extends Controller implements HasMiddleware
@@ -53,14 +58,18 @@ class OrderController extends Controller implements HasMiddleware
             // databases while retaining the existing response by default.
             'include_totals' => ['nullable', 'boolean'],
             'totals_only' => ['nullable', 'boolean'],
+            'include_order_values' => ['nullable', 'boolean'],
+            'month_mode' => ['nullable', 'in:latest'],
         ]);
         $includeTotals = $request->boolean('include_totals', true);
         $totalsOnly = $request->boolean('totals_only');
+        $includeOrderValues = $isSummaryView && $totalsOnly && $request->boolean('include_order_values');
         $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
             $user,
             $request->filled('shop_id') ? $request->integer('shop_id') : null
         );
 
+        $request->validate(['origin' => ['nullable','in:local_pos,pancake,huongchat_web']]);
         try {
             $inputs = $request->only(
                 'search',
@@ -74,10 +83,26 @@ class OrderController extends Controller implements HasMiddleware
                 'user_id',
                 'order_source_id',
                 'order_page_id',
-                'cod'
+                'cod',
+                'month_mode'
             );
+            $summaryShopIds = $requestedShopId !== null
+                ? [$requestedShopId]
+                : ($this->shopAccessService->isGlobal($user) ? null : $this->shopAccessService->ids($user)->all());
+            $useOrderSummary = $isSummaryView && $totalsOnly && !$request->filled('origin')
+                && ! in_array(0, $summaryShopIds ?? [], true)
+                && $this->canUseOrderSummary($user, $inputs)
+                && OrderSummaryService::isReady();
+            $summaryInputs = $inputs;
             // 1. Khởi tạo query từ relationship
             $query = Order::query();
+            if ($request->query('origin') === 'pancake') {
+                // Legacy imports before explicit source tagging are Pancake orders.
+                $query->where(function ($source) { $source->where('orders.origin','pancake')->orWhereNull('orders.origin'); });
+            } elseif ($request->filled('origin')) {
+                $query->where('orders.origin',$request->query('origin'));
+            }
+            $hasOrderOrigin = Schema::hasColumn('orders', 'origin');
             if ($isSummaryView) {
                 $query->with([
                     'shop' => function ($query) {
@@ -124,15 +149,10 @@ class OrderController extends Controller implements HasMiddleware
                     $query->where('orders.status', $inputs['status']);
                 }
             }
-            // Snapshot before the date window so the trend can compare the
-            // previous period and the same period last year in one pass.
+            $latestMonthBase = clone $query;
+            // Preserve the existing comparison scope independently of the
+            // later list filters and selected date window.
             $trendBase = clone $query;
-            if (isset($inputs['date_from'])) {
-                $query->where('created_at', '>=', $inputs['date_from'].' 00:00:00');
-            }
-            if (isset($inputs['date_to'])) {
-                $query->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
-            }
             // Lọc theo received_at_shop (thường là boolean 0/1)
             if (isset($inputs['received_at_shop']) && $inputs['received_at_shop'] !== '') {
                 $query->where('orders.received_at_shop', $inputs['received_at_shop']);
@@ -149,17 +169,38 @@ class OrderController extends Controller implements HasMiddleware
             // (Bonus) Lọc theo search (ví dụ tìm theo số điện thoại hoặc mã đơn VTP)
             if (! empty($inputs['search'])) {
                 $searchTerm = $inputs['search'].'%';
-                $query->where(function ($q) use ($searchTerm, $inputs) {
+                $query->where(function ($q) use ($searchTerm, $inputs, $hasOrderOrigin) {
                     $q->where('orders.order_number_vtp', 'like', $searchTerm)
                         ->orWhere('orders.customer_phone', 'like', $searchTerm)
                         ->orWhere('orders.customer_name', 'like', $searchTerm)
                         ->orWhere('orders.pancake_order_id', $inputs['search']);
-                    if (preg_match('/^POS-(\d+)$/i', $inputs['search'], $match)) {
+                    if ($hasOrderOrigin && preg_match('/^POS-(\d+)$/i', $inputs['search'], $match)) {
                         $q->orWhere(function ($local) use ($match) {
                             $local->where('orders.origin', 'local_pos')->where('orders.id', $match[1]);
                         });
                     }
                 });
+            }
+            if (isset($inputs['date_from'])) {
+                $query->where('created_at', '>=', $inputs['date_from'].' 00:00:00');
+            }
+            if (isset($inputs['date_to'])) {
+                $query->where('created_at', '<=', $inputs['date_to'].' 23:59:59');
+            }
+            if (($inputs['month_mode'] ?? null) === 'latest' && ! isset($inputs['date_from']) && ! isset($inputs['date_to'])) {
+                // Only the month is needed here, so a verified daily summary
+                // has exactly the same latest-month boundary as source orders.
+                $latestOrderAt = $useOrderSummary
+                    ? $this->dailyOrderSummaryQuery($summaryShopIds)->where('total_items', '>', 0)->max('report_date')
+                    : $latestMonthBase->max('orders.created_at');
+                if ($latestOrderAt !== null) {
+                    $mStart = Carbon::parse($latestOrderAt)->startOfMonth()->startOfDay();
+                    $mEnd = Carbon::parse($latestOrderAt)->endOfMonth()->endOfDay();
+                    $query->where('orders.created_at', '>=', $mStart->toDateTimeString())
+                        ->where('orders.created_at', '<=', $mEnd->toDateTimeString());
+                    $summaryInputs['date_from'] = $mStart->toDateString();
+                    $summaryInputs['date_to'] = $mEnd->toDateString();
+                }
             }
             // 2. Select các trường cụ thể cần lấy để tối ưu performance
             // (Thêm tiền tố tên bảng 'customers.id' để tránh lỗi trùng lặp cột nếu sau này có join bảng)
@@ -195,6 +236,9 @@ class OrderController extends Controller implements HasMiddleware
                         ->limit(1),
                     'province_name'
                 );
+                if ($request->query('origin') === 'local_pos') {
+                    $query->addSelect(['warehouse_status', 'packed_at']);
+                }
             } else {
                 $query->select([
                     'id',
@@ -227,10 +271,11 @@ class OrderController extends Controller implements HasMiddleware
             $revenueExpression = "COALESCE(SUM({$orderValueExpression}), 0)";
             // Preserve the indexed COD path for synced orders while counting
             // a POS order's full value even when collection by COD is disabled.
-            $overviewRevenueExpression = Schema::hasColumn('orders', 'origin')
+            $overviewRevenueExpression = $hasOrderOrigin
                 ? "COALESCE(SUM(CASE WHEN orders.origin = 'local_pos' THEN {$orderValueExpression} ELSE COALESCE(orders.cod, 0) END), 0)"
                 : 'COALESCE(SUM(COALESCE(orders.cod, 0)), 0)';
-            $prepaidAmountExpression = Schema::hasColumn('orders', 'prepaid_amount')
+            $hasIndexedPrepaid = Schema::hasColumn('orders', 'prepaid_amount');
+            $prepaidAmountExpression = $hasIndexedPrepaid
                 ? 'COALESCE(SUM(COALESCE(orders.prepaid_amount, 0)), 0)'
                 : '0';
             // Counts and COD money only touch indexed columns. The prepaid JSON
@@ -255,6 +300,9 @@ SQL;
             $overdueCustomerCount = null;
             $trendPayload = null;
             $comparePayload = null;
+            $posValues = null;
+            $totalCod = null;
+            $totalOrderValue = null;
 
             if ($isSummaryView) {
                 $pageNumber = max((int) ($inputs['page'] ?? 1), 1);
@@ -262,16 +310,58 @@ SQL;
                 $summaryTotals = null;
 
                 if ($includeTotals || $totalsOnly) {
-                    // Only local POS rows need their JSON total in the overview;
-                    // synced orders retain the optimized real-column aggregate.
-                    $revenueSelect = $totalsOnly
-                        ? "{$overviewRevenueExpression} AS total_revenue"
-                        : "{$revenueExpression} AS total_revenue";
-                    $summaryTotals = (clone $query)->toBase()
-                        ->cloneWithout(['columns', 'orders'])
-                        ->cloneWithoutBindings(['select', 'order'])
-                        ->selectRaw("COUNT(*) AS total_items, {$revenueSelect}, {$overviewExpression}, {$prepaidAmountExpression} AS total_prepaid_amount")
-                        ->first();
+                    if ($useOrderSummary) {
+                        $sumQuery = $this->dailyOrderSummaryQuery($summaryShopIds);
+                        $this->applySummaryDates($sumQuery, $summaryInputs);
+
+                        $summaryTotals = $sumQuery->selectRaw('
+                            COALESCE(SUM(total_items), 0) AS total_items,
+                            COALESCE(SUM(total_revenue), 0) AS total_revenue,
+                            COALESCE(SUM(total_prepaid_amount), 0) AS total_prepaid_amount,
+                            COALESCE(SUM(shipping_count), 0) AS shipping_count,
+                            COALESCE(SUM(shipping_amount), 0) AS shipping_amount,
+                            COALESCE(SUM(success_count), 0) AS success_count,
+                            COALESCE(SUM(success_amount), 0) AS success_amount,
+                            COALESCE(SUM(cancel_count), 0) AS cancel_count,
+                            COALESCE(SUM(cancel_amount), 0) AS cancel_amount,
+                            COALESCE(SUM(return_count), 0) AS return_count,
+                            COALESCE(SUM(return_amount), 0) AS return_amount,
+                            COALESCE(SUM(pending_count), 0) AS pending_count,
+                            COALESCE(SUM(pending_amount), 0) AS pending_amount
+                        ')->first();
+                        $summaryTotals->total_cod = $summaryTotals->total_revenue;
+                        if ($hasOrderOrigin) {
+                            $posValues = $this->posOverviewAdjustment($query, $orderValueExpression, $hasIndexedPrepaid, $user);
+                            if ($posValues['delta'] != 0) {
+                                // Daily revenue remains COD for trends/monthly
+                                // reports; only this overview includes POS totals.
+                                $summaryTotals->total_revenue = round((float) $summaryTotals->total_revenue + $posValues['delta'], 2);
+                            }
+                        }
+                    }
+
+                    if ($summaryTotals === null) {
+                        // The overview request must stay on real columns. Parsing
+                        // prepaid out of pancake_full_data does not finish on the
+                        // full order table, so that sum stays on the smaller path.
+                        $revenueSelect = $totalsOnly
+                            ? "{$overviewRevenueExpression} AS total_revenue"
+                            : "{$revenueExpression} AS total_revenue";
+                        $summaryTotals = (clone $query)->toBase()
+                            ->cloneWithout(['columns', 'orders'])
+                            ->cloneWithoutBindings(['select', 'order'])
+                            ->selectRaw("COUNT(*) AS total_items, {$revenueSelect}, {$overviewExpression}, {$prepaidAmountExpression} AS total_prepaid_amount")
+                            ->first();
+                    }
+                }
+
+                if ($includeOrderValues && $summaryTotals !== null) {
+                    $posValues ??= $hasOrderOrigin
+                        ? $this->posOverviewAdjustment($query, $orderValueExpression, $hasIndexedPrepaid, $user)
+                        : ['delta' => 0.0, 'pos_prepaid' => 0.0];
+                    $totalCod = (float) $summaryTotals->total_cod;
+                    $totalOrderValue = round($totalCod + (float) $summaryTotals->total_prepaid_amount
+                        + $posValues['delta'] - $posValues['pos_prepaid'], 2);
                 }
 
                 if ($totalsOnly && $summaryTotals !== null) {
@@ -280,7 +370,7 @@ SQL;
                     $successAmount = $summaryTotals->success_amount;
                     $totalPrepaidAmount = $summaryTotals->total_prepaid_amount;
                     $overdueCustomerCount = $this->overdueCustomerCount($requestedShopId, $user);
-                    $trend = $this->deliveryTrend($trendBase, $inputs);
+                    $trend = $this->deliveryTrend($trendBase, $inputs, $summaryShopIds, $useOrderSummary);
                     $trendPayload = $trend['series'];
                     $comparePayload = $trend['compare'];
                 }
@@ -343,6 +433,10 @@ SQL;
                     'has_more' => $isSummaryView && ! $includeTotals && ! $totalsOnly
                         ? $hasMore
                         : null,
+                    ...($includeOrderValues ? [
+                        'total_cod' => $totalCod,
+                        'total_order_value' => $totalOrderValue,
+                    ] : []),
                 ],
             ]);
         } catch (\Throwable $th) {
@@ -353,6 +447,39 @@ SQL;
         }
     }
 
+    public function deletePosOrders(Request $request)
+    {
+        $actor = $request->user();
+        abort_unless($actor->isAdmin() || $actor->isStaffCskh() || $actor->isManagerCskh(),
+            403, 'Bạn không có quyền xóa đơn POS.');
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:100'],
+            'ids.*' => ['required', 'integer', 'min:1', 'distinct'],
+        ]);
+
+        DB::transaction(function () use ($data, $actor): void {
+            $orders = Order::withTrashed()->whereIn('id', $data['ids'])->orderBy('id')->lockForUpdate()->get();
+            abort_unless($orders->count() === count($data['ids'])
+                && $orders->every(fn (Order $order) => $order->origin === 'local_pos'),
+                422, 'Danh sách chỉ được chứa các đơn POS hợp lệ.');
+
+            foreach ($orders as $order) {
+                abort_unless($this->shopAccessService->canAccessShop($actor, (int) $order->shop_id),
+                    403, 'Bạn không có quyền xóa đơn POS của cửa hàng này.');
+            }
+
+            foreach ($orders->reject(fn (Order $order) => $order->trashed()) as $order) {
+                abort_unless((string) $order->status === '0'
+                    && blank($order->packed_at) && $order->warehouse_status !== Order::WAREHOUSE_PACKED
+                    && blank($order->order_number_vtp) && ! $order->aicrmShipment()->exists(),
+                    409, 'Chỉ xóa được đơn POS mới, chưa đóng gói và chưa có vận đơn.');
+                $order->delete();
+            }
+        }, 3);
+
+        return response()->json(['success' => true, 'message' => 'Đã xóa đơn POS khỏi CRM.']);
+    }
+
     public function store(Request $request, OrderService $service)
     {
         $user = $request->user();
@@ -361,6 +488,11 @@ SQL;
             && ! can_access('pos-create')) {
             throw new AuthorizationException('Bạn không có quyền tạo đơn POS.');
         }
+        abort_unless(Schema::hasColumns('orders', [
+            'origin', 'customer_id', 'created_by_user_id', 'idempotency_key', 'request_hash',
+            'warehouse_status', 'warehouse_queued_at',
+        ]) && Schema::hasColumn('products', 'virtual_stock'), 503,
+            'Chức năng POS chưa sẵn sàng. Cần áp dụng migration POS trước khi tạo đơn.');
         $adjustments = [];
         foreach (['discount_amount', 'shipping_fee', 'surcharge'] as $field) {
             $value = $request->input($field);
@@ -370,7 +502,7 @@ SQL;
         }
         $request->merge($adjustments);
         $simplifiedPayment = $request->has('payment_mode');
-        $needsConfirmation = in_array($request->input('payment_mode'), ['cash', 'bank_transfer'], true);
+        $needsConfirmation = in_array($request->input('payment_mode'), ['cash', 'bank_transfer', 'bank_transfer_cod'], true);
         // Requests use plain whole VND, never localized separators or fractional money.
         $money = ['numeric', 'min:0', 'max:999999999999', 'regex:/^\d{1,12}$/D'];
         $data = $request->validate([
@@ -381,6 +513,7 @@ SQL;
             'role_id' => ['prohibited'],
             'permissions' => ['prohibited'],
             'idempotency_key' => ['required', 'uuid'],
+            'order_page_id' => ['sometimes', 'required', 'string', 'max:255'],
             'shop_id' => ['required', 'integer', Rule::exists('shops', 'id')->whereNull('deleted_at')],
             'customer_id' => ['nullable', 'integer', 'prohibits:customer'],
             'customer' => ['required_without:customer_id', 'array:name,phone', 'prohibits:customer_id'],
@@ -400,7 +533,8 @@ SQL;
             'paid_amount' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), ...$money],
             'payment_method' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), Rule::in(['cash', 'bank_transfer'])],
             'cod_mode' => ['sometimes', 'required', Rule::prohibitedIf($simplifiedPayment), Rule::in(['remaining', 'none'])],
-            'payment_mode' => ['sometimes', 'required', Rule::in(['cash', 'bank_transfer', 'cod'])],
+            'payment_mode' => ['sometimes', 'required', Rule::in(['cash', 'bank_transfer', 'cod', 'bank_transfer_cod'])],
+            'deposit_amount' => [Rule::requiredIf($request->input('payment_mode') === 'bank_transfer_cod'), Rule::prohibitedIf($request->input('payment_mode') !== 'bank_transfer_cod'), ...$money],
             'payment_confirmed' => [Rule::requiredIf($needsConfirmation), Rule::prohibitedIf(! $simplifiedPayment), 'boolean'],
             'confirmed_total' => [Rule::requiredIf($needsConfirmation), Rule::prohibitedIf(! $needsConfirmation), ...$money],
             'note' => ['nullable', 'string', 'max:5000'],
@@ -435,6 +569,7 @@ SQL;
 
         return array_merge($order->load('shop:id,name', 'user_creator')->toArray(), [
             'reference' => $order->origin === 'local_pos' ? 'POS-'.$order->id : $order->pancake_order_id,
+            'order_page_name' => $order->pancake_order_page_name,
             'totals' => $payload['pos_totals'] ?? null,
             'items' => $payload['items'] ?? [], 'payments' => $payload['payments'] ?? [],
         ]);
@@ -688,11 +823,85 @@ SQL;
         }
     }
 
+    private function posOverviewAdjustment($query, string $orderValueExpression, bool $hasIndexedPrepaid, $user): array
+    {
+        $posQuery = (clone $query)->toBase()
+            ->cloneWithout(['columns', 'orders'])
+            ->cloneWithoutBindings(['select', 'order'])
+            ->where('orders.origin', 'local_pos');
+        $cacheKey = 'order_pos_adjustment:v2:'.hash('sha256', json_encode([
+            $user->getAuthIdentifier(), $user->role_id, $user->role?->slug,
+            $user->pancake_user_id, $posQuery->toSql(), $posQuery->getBindings(),
+            ReportDataVersion::key('orders'), $hasIndexedPrepaid,
+        ], JSON_THROW_ON_ERROR));
+
+        return Cache::remember($cacheKey, 120, function () use ($posQuery, $orderValueExpression, $hasIndexedPrepaid) {
+            $posPrepaid = $hasIndexedPrepaid ? 'COALESCE(SUM(COALESCE(orders.prepaid_amount, 0)), 0)' : '0';
+            $row = $posQuery->selectRaw("COALESCE(SUM({$orderValueExpression} - COALESCE(orders.cod, 0)), 0) AS adjustment, {$posPrepaid} AS pos_prepaid")->first();
+
+            return ['delta' => (float) $row->adjustment, 'pos_prepaid' => (float) $row->pos_prepaid];
+        });
+    }
+
+    /** Daily totals do not contain record-level or exact-status dimensions. */
+    private function canUseOrderSummary($user, array $inputs): bool
+    {
+        if (! $this->shopAccessService->isGlobal($user) && ! $user->isManagerSale() && ! $user->isManagerCskh()) {
+            return false;
+        }
+
+        // Unlike the other optional filters, the source user filter also
+        // applies to an explicitly supplied empty string.
+        if (isset($inputs['user_id'])) {
+            return false;
+        }
+
+        foreach (['date_from', 'date_to'] as $dateFilter) {
+            if (! isset($inputs[$dateFilter])) {
+                continue;
+            }
+            $date = $inputs[$dateFilter];
+            if (! is_string($date) || ! preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $parts)
+                || ! checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1])) {
+                return false;
+            }
+        }
+
+        foreach (['search', 'order_page_id', 'status', 'order_source_id', 'received_at_shop', 'cod'] as $filter) {
+            if (isset($inputs[$filter]) && $inputs[$filter] !== '') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function dailyOrderSummaryQuery(?array $shopIds)
+    {
+        $query = DB::table('daily_order_summaries');
+
+        return $shopIds === null
+            ? $query->where('shop_id', 0)
+            : $query->whereIn('shop_id', $shopIds);
+    }
+
+    private function applySummaryDates($query, array $inputs): void
+    {
+        $from = isset($inputs['date_from']) && $inputs['date_from'] !== '' ? Carbon::parse($inputs['date_from'])->toDateString() : null;
+        $to = isset($inputs['date_to']) && $inputs['date_to'] !== '' ? Carbon::parse($inputs['date_to'])->toDateString() : null;
+        if ($from !== null) {
+            $query->where('report_date', '>=', $from);
+        }
+        if ($to !== null) {
+            $query->where('report_date', '<=', $to);
+        }
+    }
+
     /**
      * Successful-delivery value split into 30 equal slices of the selected
      * window, plus the previous window and the same window last year.
      */
-    private function deliveryTrend($baseQuery, array $inputs): array
+    private function deliveryTrend($baseQuery, array $inputs, ?array $shopIds, bool $useSummaryTable): array
     {
         $hasRange = isset($inputs['date_from'], $inputs['date_to'])
             && $inputs['date_from'] !== ''
@@ -723,13 +932,26 @@ SQL;
                 ->where('orders.created_at', '<=', $currentEnd->copy()->endOfDay()->toDateTimeString());
         }
 
-        $rows = $trendQuery
-            ->toBase()
-            ->cloneWithout(['columns', 'orders'])
-            ->cloneWithoutBindings(['select', 'order'])
-            ->selectRaw("DATE(orders.created_at) AS day, COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS success_amount, COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_cod")
-            ->groupByRaw('DATE(orders.created_at)')
-            ->get();
+        if ($useSummaryTable) {
+            $sumQuery = $this->dailyOrderSummaryQuery($shopIds);
+            if ($hasRange) {
+                $sumQuery->where('report_date', '>=', $fetchStart->toDateString())
+                    ->where('report_date', '<=', $currentEnd->toDateString());
+            }
+
+            $rows = $sumQuery
+                ->selectRaw('report_date AS day, COALESCE(SUM(success_amount), 0) AS success_amount, COALESCE(SUM(total_revenue), 0) AS total_cod')
+                ->groupBy('report_date')
+                ->get();
+        } else {
+            $rows = $trendQuery
+                ->toBase()
+                ->cloneWithout(['columns', 'orders'])
+                ->cloneWithoutBindings(['select', 'order'])
+                ->selectRaw('DATE(orders.created_at) AS day, COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN COALESCE(orders.cod, 0) ELSE 0 END), 0) AS success_amount, COALESCE(SUM(COALESCE(orders.cod, 0)), 0) AS total_cod')
+                ->groupByRaw('DATE(orders.created_at)')
+                ->get();
+        }
 
         $byDay = [];
         foreach ($rows as $row) {
@@ -854,6 +1076,21 @@ SQL;
             'search' => ['nullable', 'string'],
         ]);
 
+        $summaryReady = OrderSummaryService::isReady();
+        $cacheKey = 'order_sales_chart_v2_'.md5(json_encode([
+            $shopIds,
+            $request->only(['date_from', 'date_to', 'status', 'order_page_id', 'search']),
+            $summaryReady,
+            ReportDataVersion::key('orders'),
+            ReportDataVersion::key('users'),
+        ]));
+        // Resolve the cached response before looking up the default date or
+        // inspecting order JSON. Cache hits must not scan source orders.
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return response()->json(['success' => true, 'data' => $cached]);
+        }
+
         if ($request->filled('date_from') && $request->filled('date_to')) {
             $start = Carbon::parse($request->query('date_from'))->startOfDay();
             $end = Carbon::parse($request->query('date_to'))->endOfDay();
@@ -861,7 +1098,9 @@ SQL;
                 [$start, $end] = [$end->copy()->startOfDay(), $start->copy()->endOfDay()];
             }
         } else {
-            $latestOrderAt = Order::query()->max('created_at');
+            $latestOrderAt = $summaryReady
+                ? OrderSummaryService::latestOrderAt(null, false)
+                : Order::query()->max('created_at');
             if ($latestOrderAt === null) {
                 return response()->json([
                     'success' => true,
@@ -912,7 +1151,7 @@ SQL;
         }
 
         if ($request->filled('search')) {
-            $searchTerm = $request->input('search') . '%';
+            $searchTerm = $request->input('search').'%';
             $whereClauses[] = '(orders.order_number_vtp LIKE ? OR orders.customer_phone LIKE ? OR orders.customer_name LIKE ? OR orders.pancake_order_id = ?)';
             $bindings[] = $searchTerm;
             $bindings[] = $searchTerm;
@@ -922,101 +1161,104 @@ SQL;
 
         $whereSql = implode(' AND ', $whereClauses);
 
-        $sql = "SELECT
-            orders.shop_id,
-            shops.name as shop_name,
-            COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm') as product_name,
-            SUM(COALESCE(item.quantity, 0)) as quantity,
-            SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)) as revenue,
-            COUNT(DISTINCT orders.id) as orders_count
-        FROM orders
-        LEFT JOIN shops ON shops.id = orders.shop_id
-        JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
-            product_name VARCHAR(255) PATH '$.variation_info.name',
-            quantity DECIMAL(12,2) PATH '$.quantity',
-            retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
-        )) AS item
-        WHERE {$whereSql}
-        GROUP BY orders.shop_id, shops.name, product_name
-        HAVING revenue > 0
-        ORDER BY revenue DESC";
+        $data = Cache::remember($cacheKey, 600, function () use ($whereSql, $bindings, $start, $end) {
+            // This chart groups by name, while product summaries keep
+            // identities separate. Summing their order counts would count
+            // one order twice when it contains two same-named products.
+            $sql = "SELECT
+                orders.shop_id,
+                shops.name as shop_name,
+                COALESCE(NULLIF(TRIM(item.product_name), ''), 'Chưa rõ sản phẩm') as product_name,
+                SUM(COALESCE(item.quantity, 0)) as quantity,
+                SUM(COALESCE(item.quantity, 0) * COALESCE(item.retail_price, 0)) as revenue,
+                COUNT(DISTINCT orders.id) as orders_count
+            FROM orders
+            LEFT JOIN shops ON shops.id = orders.shop_id
+            JOIN JSON_TABLE(orders.pancake_full_data, '$.items[*]' COLUMNS (
+                product_name VARCHAR(255) PATH '$.variation_info.name',
+                quantity DECIMAL(12,2) PATH '$.quantity',
+                retail_price DECIMAL(14,2) PATH '$.variation_info.retail_price'
+            )) AS item
+            WHERE {$whereSql}
+            GROUP BY orders.shop_id, shops.name, product_name
+            HAVING revenue > 0
+            ORDER BY revenue DESC";
 
-        $rows = \App\Services\OrderItemSql::select($sql, $bindings);
+            $rows = $this->salesChartRows($sql, $bindings);
+            $shopsMap = Shop::pluck('name', 'id')->all();
 
-        $byProduct = [];
-        $topPairings = [];
-        $totalSystemRevenue = 0;
-        $totalSystemQuantity = 0;
+            $byProduct = [];
+            $topPairings = [];
+            $totalSystemRevenue = 0;
+            $totalSystemQuantity = 0;
 
-        foreach ($rows as $row) {
-            $revenue = (float) $row->revenue;
-            $quantity = (float) $row->quantity;
-            $ordersCount = (int) $row->orders_count;
-            $shopName = $row->shop_name ?? ('Cửa hàng #' . $row->shop_id);
-            $pName = $row->product_name;
+            foreach ($rows as $row) {
+                $revenue = (float) $row->revenue;
+                $quantity = (float) $row->quantity;
+                $ordersCount = (int) $row->orders_count;
+                $shopName = $row->shop_name ?? $shopsMap[$row->shop_id] ?? ('Cửa hàng #'.$row->shop_id);
+                $pName = $row->product_name;
 
-            $totalSystemRevenue += $revenue;
-            $totalSystemQuantity += $quantity;
+                $totalSystemRevenue += $revenue;
+                $totalSystemQuantity += $quantity;
 
-            if (!isset($byProduct[$pName])) {
-                $byProduct[$pName] = [
-                    'product_name' => $pName,
-                    'total_revenue' => 0,
-                    'total_quantity' => 0,
-                    'total_orders' => 0,
-                    'shops' => [],
-                ];
-            }
+                if (! isset($byProduct[$pName])) {
+                    $byProduct[$pName] = [
+                        'product_name' => $pName,
+                        'total_revenue' => 0,
+                        'total_quantity' => 0,
+                        'total_orders' => 0,
+                        'shops' => [],
+                    ];
+                }
 
-            $byProduct[$pName]['total_revenue'] += $revenue;
-            $byProduct[$pName]['total_quantity'] += $quantity;
-            $byProduct[$pName]['total_orders'] += $ordersCount;
-            $byProduct[$pName]['shops'][] = [
-                'shop_id' => $row->shop_id,
-                'shop_name' => $shopName,
-                'revenue' => round($revenue),
-                'quantity' => floor($quantity) === $quantity ? (int) $quantity : round($quantity, 2),
-                'orders_count' => $ordersCount,
-            ];
-
-            if (count($topPairings) < 15) {
-                $topPairings[] = [
+                $byProduct[$pName]['total_revenue'] += $revenue;
+                $byProduct[$pName]['total_quantity'] += $quantity;
+                $byProduct[$pName]['total_orders'] += $ordersCount;
+                $byProduct[$pName]['shops'][] = [
                     'shop_id' => $row->shop_id,
                     'shop_name' => $shopName,
-                    'product_name' => $pName,
                     'revenue' => round($revenue),
                     'quantity' => floor($quantity) === $quantity ? (int) $quantity : round($quantity, 2),
                     'orders_count' => $ordersCount,
                 ];
+
+                if (count($topPairings) < 15) {
+                    $topPairings[] = [
+                        'shop_id' => $row->shop_id,
+                        'shop_name' => $shopName,
+                        'product_name' => $pName,
+                        'revenue' => round($revenue),
+                        'quantity' => floor($quantity) === $quantity ? (int) $quantity : round($quantity, 2),
+                        'orders_count' => $ordersCount,
+                    ];
+                }
             }
-        }
 
-        $products = [];
-        foreach ($byProduct as $product) {
-            usort($product['shops'], fn ($a, $b) => $b['revenue'] <=> $a['revenue']);
-            $productRevenue = $product['total_revenue'];
-            foreach ($product['shops'] as &$shop) {
-                $shop['share_percent'] = $productRevenue > 0 ? round(($shop['revenue'] / $productRevenue) * 100, 1) : 0;
+            $products = [];
+            foreach ($byProduct as $product) {
+                usort($product['shops'], fn ($a, $b) => $b['revenue'] <=> $a['revenue']);
+                $productRevenue = $product['total_revenue'];
+                foreach ($product['shops'] as &$shop) {
+                    $shop['share_percent'] = $productRevenue > 0 ? round(($shop['revenue'] / $productRevenue) * 100, 1) : 0;
+                }
+                unset($shop);
+
+                $topShop = $product['shops'][0] ?? null;
+
+                $products[] = [
+                    'product_name' => $product['product_name'],
+                    'total_revenue' => round($productRevenue),
+                    'total_quantity' => floor($product['total_quantity']) === $product['total_quantity'] ? (int) $product['total_quantity'] : round($product['total_quantity'], 2),
+                    'total_orders' => $product['total_orders'],
+                    'top_shop' => $topShop,
+                    'shops' => $product['shops'],
+                ];
             }
-            unset($shop);
 
-            $topShop = $product['shops'][0] ?? null;
+            usort($products, fn ($a, $b) => $b['total_revenue'] <=> $a['total_revenue']);
 
-            $products[] = [
-                'product_name' => $product['product_name'],
-                'total_revenue' => round($productRevenue),
-                'total_quantity' => floor($product['total_quantity']) === $product['total_quantity'] ? (int) $product['total_quantity'] : round($product['total_quantity'], 2),
-                'total_orders' => $product['total_orders'],
-                'top_shop' => $topShop,
-                'shops' => $product['shops'],
-            ];
-        }
-
-        usort($products, fn ($a, $b) => $b['total_revenue'] <=> $a['total_revenue']);
-
-        return response()->json([
-            'success' => true,
-            'data' => [
+            return [
                 'from' => $start->toDateString(),
                 'to' => $end->toDateString(),
                 'total_revenue' => round($totalSystemRevenue),
@@ -1024,6 +1266,139 @@ SQL;
                 'total_products' => count($products),
                 'top_pairings' => $topPairings,
                 'products' => $products,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+        ]);
+    }
+
+    protected function salesChartRows(string $sql, array $bindings): array
+    {
+        return OrderItemSql::select($sql, $bindings);
+    }
+
+    /**
+     * Bảng thống kê số lượng đơn hàng theo tháng (đầy đủ 12 tháng trong năm).
+     */
+    public function monthlyCounts(Request $request)
+    {
+        $actor = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $actor,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $shopIds = $requestedShopId !== null
+            ? [$requestedShopId]
+            : (! $this->shopAccessService->isGlobal($actor) ? $this->shopAccessService->ids($actor)->all() : null);
+
+        $request->validate([
+            'year' => ['nullable', 'integer', 'min:2020', 'max:2030'],
+            'shop_id' => ['nullable', 'integer'],
+            'status' => ['nullable'],
+        ]);
+
+        $summaryReady = OrderSummaryService::isReady();
+        $summaryReady = $summaryReady && ! in_array(0, $shopIds ?? [], true);
+        $yearsQuery = $summaryReady
+            ? $this->dailyOrderSummaryQuery($shopIds)->where('total_items', '>', 0)
+            : Order::query()->when($shopIds !== null, fn ($q) => $q->whereIn('shop_id', $shopIds));
+        $yearColumn = $summaryReady ? 'report_date' : 'created_at';
+        $availableYears = $yearsQuery
+            ->selectRaw("DISTINCT YEAR({$yearColumn}) as yr")
+            ->orderByDesc('yr')
+            ->pluck('yr')
+            ->filter()
+            ->map(fn ($y) => (int) $y)
+            ->values()
+            ->all();
+
+        $defaultYear = $availableYears[0] ?? (int) date('Y');
+        $year = $request->integer('year', $defaultYear);
+
+        if ($summaryReady && ! $request->filled('status')) {
+            $rows = $this->dailyOrderSummaryQuery($shopIds)
+                ->where('report_date', '>=', sprintf('%04d-01-01', $year))
+                ->where('report_date', '<', sprintf('%04d-01-01', $year + 1))
+                ->selectRaw('MONTH(report_date) as month, SUM(total_items) as total_orders, SUM(success_count) as success_orders, SUM(success_amount) as success_cod, SUM(total_revenue) as total_cod')
+                ->groupByRaw('MONTH(report_date)')
+                ->get()->keyBy('month');
+        } else {
+            // Coarse delivery buckets cannot represent an arbitrary exact
+            // status subset, so keep the source query for those filters.
+            $query = Order::query()
+                ->where('orders.created_at', '>=', sprintf('%04d-01-01 00:00:00', $year))
+                ->where('orders.created_at', '<', sprintf('%04d-01-01 00:00:00', $year + 1))
+                ->when($shopIds !== null, fn ($q) => $q->whereIn('orders.shop_id', $shopIds));
+
+            if ($request->filled('status')) {
+                $status = $request->input('status');
+                if (is_array($status)) {
+                    $query->whereIn('orders.status', $status);
+                } else {
+                    $query->where('orders.status', $status);
+                }
+            }
+
+            $rows = $query->selectRaw('
+                    MONTH(orders.created_at) as month,
+                    COUNT(DISTINCT orders.id) as total_orders,
+                    COUNT(DISTINCT CASE WHEN orders.status IN (3, 16) THEN orders.id END) as success_orders,
+                    COALESCE(SUM(CASE WHEN orders.status IN (3, 16) THEN orders.cod ELSE 0 END), 0) as success_cod,
+                    COALESCE(SUM(orders.cod), 0) as total_cod
+                ')
+                ->groupByRaw('MONTH(orders.created_at)')
+                ->get()->keyBy('month');
+        }
+
+        $months = [];
+        $totalOrdersYear = 0;
+        $totalSuccessYear = 0;
+        $totalSuccessCodYear = 0.0;
+        $totalCodYear = 0.0;
+
+        for ($m = 1; $m <= 12; $m++) {
+            $row = $rows->get($m);
+            $totalOrders = $row ? (int) $row->total_orders : 0;
+            $successOrders = $row ? (int) $row->success_orders : 0;
+            $successCod = $row ? (float) $row->success_cod : 0.0;
+            $totalCod = $row ? (float) $row->total_cod : 0.0;
+            $successRate = $totalOrders > 0 ? round(($successOrders / $totalOrders) * 100, 1) : 0.0;
+
+            $totalOrdersYear += $totalOrders;
+            $totalSuccessYear += $successOrders;
+            $totalSuccessCodYear += $successCod;
+            $totalCodYear += $totalCod;
+
+            $months[] = [
+                'month' => $m,
+                'label' => "Tháng $m",
+                'short_label' => "T$m",
+                'total_orders' => $totalOrders,
+                'success_orders' => $successOrders,
+                'success_rate' => $successRate,
+                'success_cod' => $successCod,
+                'total_cod' => $totalCod,
+            ];
+        }
+
+        $overallSuccessRate = $totalOrdersYear > 0 ? round(($totalSuccessYear / $totalOrdersYear) * 100, 1) : 0.0;
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'year' => $year,
+                'available_years' => $availableYears,
+                'summary' => [
+                    'total_orders' => $totalOrdersYear,
+                    'success_orders' => $totalSuccessYear,
+                    'success_rate' => $overallSuccessRate,
+                    'success_cod' => $totalSuccessCodYear,
+                    'total_cod' => $totalCodYear,
+                ],
+                'months' => $months,
             ],
         ]);
     }

@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\LoyaltyTierController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\OrderPageController;
 use App\Http\Controllers\Api\OrderSourceController;
+use App\Http\Controllers\Api\PancakeOrderController;
+
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\PermissionGroupController;
 use App\Http\Controllers\Api\ProductController;
@@ -49,8 +51,16 @@ Route::prefix('v1/auth')->group(function () {
     Route::post('reset-password', [AuthController::class, 'resetPassword']);
 });
 Route::get('/v1/settings/{code}', [SettingController::class, 'show']);
+Route::get('/v1/website-maintenance', [\App\Http\Controllers\Api\WebsiteMaintenanceController::class, 'show']);
 // --- Nhóm các Route Private (Yêu cầu Passport Token) ---
-Route::middleware('auth:api')->prefix('v1')->group(function () {
+Route::middleware(['auth:api', \App\Http\Middleware\EnsureStaffAccountActive::class, \App\Http\Middleware\WebsiteMaintenanceMiddleware::class])->prefix('v1')->group(function () {
+    Route::put('website-maintenance', [\App\Http\Controllers\Api\WebsiteMaintenanceController::class, 'update']);
+    Route::get('care-notifications', [\App\Http\Controllers\Api\CareNotificationController::class, 'index']);
+    Route::post('care-notifications/read-all', [\App\Http\Controllers\Api\CareNotificationController::class, 'readAll']);
+    Route::post('care-notifications/{id}/read', [\App\Http\Controllers\Api\CareNotificationController::class, 'read'])->whereNumber('id');
+    Route::get('care-notification-templates', [\App\Http\Controllers\Api\CareNotificationController::class, 'templates']);
+    Route::put('care-notification-templates/{type}', [\App\Http\Controllers\Api\CareNotificationController::class, 'save']);
+
     Route::post('/change-first-password', [AuthController::class, 'changeFirstPassword']);
     // Nhóm tài khoản (Profile)
     Route::prefix('me')->group(function () {
@@ -83,6 +93,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post('shops/{shop_id}/get-data-pancake', [ShopController::class, 'getDataPancake']);
 
     Route::apiResource('shops', ShopController::class);
+    Route::put('shops/{shop}/source-alias', [\App\Http\Controllers\Api\OrderSourceAliasController::class, 'update']);
     Route::apiResource('shops.customers', ShopCustomerController::class);
     Route::apiResource('shops.orders', ShopOrderController::class);
     Route::apiResource('shops.users', ShopUserController::class)
@@ -94,12 +105,21 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
         ->middleware(PermissionCheckMiddleware::class.':view-chance,strict');
     Route::get('order-sources', [OrderSourceController::class, 'index']);
     Route::get('order-pages', [OrderPageController::class, 'index']);
+    Route::get('orders/monthly-counts', [OrderController::class, 'monthlyCounts'])
+        ->middleware(AdminOnlyMiddleware::class.':allow-director');
     Route::get('orders/sales-chart-data', [OrderController::class, 'salesChartData']);
+    Route::post('orders/pos/delete', [OrderController::class, 'deletePosOrders']);
     Route::apiResource('orders', OrderController::class);
     Route::get('warehouse/orders', [\App\Http\Controllers\Api\WarehouseController::class, 'index']);
     Route::get('warehouse/orders/{order}', [\App\Http\Controllers\Api\WarehouseController::class, 'show']);
     Route::post('warehouse/orders/{order}/complete', [\App\Http\Controllers\Api\WarehouseController::class, 'complete']);
     Route::post('warehouse/orders/{order}/viettel-post', [\App\Http\Controllers\Api\AicrmShipmentController::class, 'store']);
+
+    Route::post('pancake-orders/hide', [\App\Http\Controllers\Api\PancakeOrderController::class, 'hide']);
+    Route::delete('pancake-orders/hidden/{id}', [\App\Http\Controllers\Api\PancakeOrderController::class, 'restore'])->whereNumber('id');
+    Route::get('pancake-orders', [PancakeOrderController::class, 'index']);
+    Route::get('pancake-orders/{id}', [PancakeOrderController::class, 'show']);
+
 
     Route::post('webhook-monitor/cleanup', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'cleanup'])->middleware(AdminOnlyMiddleware::class);
     Route::get('webhook-monitor', [\App\Http\Controllers\Api\WebhookMonitorController::class, 'index'])->middleware(AdminOnlyMiddleware::class);
@@ -116,6 +136,10 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
 
     Route::get('customers/{customer}/journey', [CustomerJourneyController::class, 'show'])
         ->middleware(PermissionCheckMiddleware::class.':list-customer,strict');
+    Route::get('care-segments/customers/{customer}/care', [\App\Http\Controllers\Api\CareSegmentController::class, 'careOptions']);
+    Route::post('care-segments/customers/{customer}/care', [\App\Http\Controllers\Api\CareSegmentController::class, 'saveCare']);
+    Route::post('care-segments/export', [\App\Http\Controllers\Api\CareSegmentController::class, 'index']);
+    Route::get('care-segments', [\App\Http\Controllers\Api\CareSegmentController::class, 'index']);
     Route::get('customers/order-insights', [CustomerController::class, 'orderInsights']);
     Route::apiResource('customers', CustomerController::class);
     Route::get('customers/{pancake_customer_id}/orders', [CustomerController::class, 'getOrder']);
@@ -132,6 +156,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('users/mornitoring', [UserController::class, 'getMornitoring']);
     Route::get('users/all-user', [UserController::class, 'getAllUser'])
         ->middleware(AdminOnlyMiddleware::class.':activity-log-query');
+    Route::put('users/{user}/account-state', [\App\Http\Controllers\Api\StaffAccountController::class, 'update']);
     Route::apiResource('users', UserController::class);
     Route::get('users/{pancake_user_id}/orders', [UserController::class, 'getOrder']);
 
@@ -141,6 +166,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::post('customer-cares/{id}/accept', [CustomerCareController::class, 'accept']);
     Route::post('customer-cares/{id}/reclaim', [CustomerCareController::class, 'reclaim']);
     Route::get('customer-cares/{id}/histories', [CustomerCareController::class, 'getHistory']);
+    Route::get('customer-cares/{id}/pos-draft', [CustomerCareController::class, 'posDraft'])->whereNumber('id');
     Route::get('customer-cares/{id}/orders', [CustomerCareController::class, 'getOrder']);
     Route::apiResource('customer-cares', CustomerCareController::class);
 
@@ -157,6 +183,7 @@ Route::middleware('auth:api')->prefix('v1')->group(function () {
     Route::get('loyalty-tiers/customers/pendding-upgrade-list', [LoyaltyTierController::class, 'getCustomerPenddingUpgradeList']);
     Route::get('loyalty-tiers/customers/pendding-upgrade', [LoyaltyTierController::class, 'getCustomerPenddingUpgrade']);
     Route::get('loyalty-tiers/overview', [LoyaltyTierController::class, 'overview']);
+    Route::get('loyalty-tiers/shop-report', [LoyaltyTierController::class, 'shopReport']);
     Route::get('loyalty-tiers/total-discount', [LoyaltyTierController::class, 'getTotalDiscount']);
     Route::apiResource('loyalty-tiers', LoyaltyTierController::class);
 

@@ -5,10 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\PermissionCheckMiddleware;
 use App\Models\Customer;
+use App\Services\ShopAccessService;
 use Illuminate\Http\Request;
 use App\Models\LoyaltyTier;
 use App\Models\Order;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
@@ -16,12 +18,26 @@ use Illuminate\Support\Facades\DB;
 
 class LoyaltyTierController extends Controller implements HasMiddleware
 {
+    public function __construct(
+        private readonly ShopAccessService $shopAccessService
+    ) {}
+
     public static function middleware(): array
     {
         return [
-            new Middleware(PermissionCheckMiddleware::class . ':loyalty-report|create-update-destroy-loyalty-tier', only: ['index', 'show']),
+            new Middleware(PermissionCheckMiddleware::class . ':loyalty-report|create-update-destroy-loyalty-tier|list-customer', only: ['index', 'show', 'overview', 'shopReport']),
             new Middleware(PermissionCheckMiddleware::class . ':create-update-destroy-loyalty-tier,strict', only: ['store', 'update', 'destroy']),
         ];
+    }
+
+    private function bumpLoyaltyCacheVersion(): void
+    {
+        Cache::put('loyalty_report:version', (string) now()->format('YmdHisv'), 86400);
+    }
+
+    private function getLoyaltyCacheVersion(): string
+    {
+        return (string) Cache::get('loyalty_report:version', 'v1');
     }
 
     // GET /api/v1/loyalty-tiers
@@ -47,6 +63,7 @@ class LoyaltyTierController extends Controller implements HasMiddleware
         ]);
         $validated = $validator->validated();
         $tier = LoyaltyTier::create($validated);
+        $this->bumpLoyaltyCacheVersion();
 
         return response()->json([
             'success' => true,
@@ -79,6 +96,7 @@ class LoyaltyTierController extends Controller implements HasMiddleware
         }
         $validated = $validator->validated();
         $loyaltyTier->update($validated);
+        $this->bumpLoyaltyCacheVersion();
 
         return response()->json([
             'success' => true,
@@ -91,6 +109,7 @@ class LoyaltyTierController extends Controller implements HasMiddleware
     public function destroy(LoyaltyTier $loyaltyTier): JsonResponse
     {
         $loyaltyTier->delete();
+        $this->bumpLoyaltyCacheVersion();
 
         return response()->json([
             'success' => true,
@@ -343,5 +362,89 @@ class LoyaltyTierController extends Controller implements HasMiddleware
                 "data"    => []
             ]);
         }
+    }
+
+    /**
+     * Thống kê Loyalty theo từng cửa hàng (Báo cáo Loyalty)
+     * GET /api/v1/loyalty-tiers/shop-report
+     */
+    public function shopReport(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $requestedShopId = $this->shopAccessService->authorizeRequestedShopId(
+            $user,
+            $request->filled('shop_id') ? $request->integer('shop_id') : null
+        );
+        $loyaltyTierId = $request->filled('loyalty_tier_id') ? $request->integer('loyalty_tier_id') : null;
+        $isGlobal = $this->shopAccessService->isGlobal($user);
+        $allowedShopIds = $isGlobal ? [] : $this->shopAccessService->ids($user)->all();
+
+        $cacheKey = 'loyalty:shop_report:' . md5(json_encode([
+            'v' => $this->getLoyaltyCacheVersion(),
+            'u' => $isGlobal ? 'global' : $allowedShopIds,
+            'shop_id' => $requestedShopId,
+            'tier_id' => $loyaltyTierId,
+        ]));
+
+        $data = Cache::remember($cacheKey, 300, function () use ($isGlobal, $allowedShopIds, $requestedShopId, $loyaltyTierId) {
+            $rows = DB::table('customers')
+                ->join('loyalty_tiers', function ($join) {
+                    $join->on('loyalty_tiers.id', '=', 'customers.loyalty_tier_id')
+                         ->where('loyalty_tiers.is_active', 1);
+                })
+                ->join('shops', 'shops.id', '=', 'customers.shop_id')
+                ->when($requestedShopId !== null, fn ($q) => $q->where('customers.shop_id', $requestedShopId))
+                ->when($requestedShopId === null && ! $isGlobal, fn ($q) => $q->whereIn('customers.shop_id', $allowedShopIds))
+                ->when($loyaltyTierId !== null, fn ($q) => $q->where('customers.loyalty_tier_id', $loyaltyTierId))
+                ->selectRaw('
+                    customers.shop_id,
+                    shops.name as shop_name,
+                    customers.loyalty_tier_id as tier_id,
+                    loyalty_tiers.name as tier_name,
+                    COUNT(DISTINCT customers.pancake_customer_id) as customers_count,
+                    COALESCE(SUM(customers.purchased_amount), 0) as total_revenue
+                ')
+                ->groupBy('customers.shop_id', 'shops.name', 'customers.loyalty_tier_id', 'loyalty_tiers.name')
+                ->get();
+
+            $shopsMap = [];
+            foreach ($rows as $row) {
+                $shopId = (int) $row->shop_id;
+                if (! isset($shopsMap[$shopId])) {
+                    $shopsMap[$shopId] = [
+                        'shop_id' => $shopId,
+                        'shop_name' => $row->shop_name,
+                        'customers_count' => 0,
+                        'total_revenue' => 0.0,
+                        'tiers_breakdown' => [],
+                    ];
+                }
+                $cnt = (int) $row->customers_count;
+                $rev = (float) $row->total_revenue;
+                $shopsMap[$shopId]['customers_count'] += $cnt;
+                $shopsMap[$shopId]['total_revenue'] += $rev;
+                $shopsMap[$shopId]['tiers_breakdown'][] = [
+                    'tier_id' => (int) $row->tier_id,
+                    'tier_name' => $row->tier_name,
+                    'customers_count' => $cnt,
+                    'total_revenue' => $rev,
+                ];
+            }
+
+            $shopsList = array_values($shopsMap);
+            usort($shopsList, function ($a, $b) {
+                if ($b['customers_count'] !== $a['customers_count']) {
+                    return $b['customers_count'] <=> $a['customers_count'];
+                }
+                return $b['total_revenue'] <=> $a['total_revenue'];
+            });
+
+            return $shopsList;
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+        ]);
     }
 }

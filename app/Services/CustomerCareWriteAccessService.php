@@ -84,6 +84,7 @@ class CustomerCareWriteAccessService
                     ->whereKey($assignment->source_id)->value('shop_id'),
                 CustomerCareAssignment::SOURCE_IMPORTED_OPPORTUNITY => ImportedOpportunity::query()
                     ->whereKey($assignment->source_id)->value('shop_id'),
+                CustomerCareAssignment::SOURCE_CARE_SEGMENT => \App\Models\Customer::whereKey($assignment->source_id)->value('shop_id'),
                 default => null,
             };
 

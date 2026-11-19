@@ -422,5 +422,5 @@ Hệ thống có DTO `ViettelPostWebHookRequest` để nhận callback trạng t
 
 ---
 
-📌 **Phiên bản:** 1.0  
+📌 **Phiên bản:** 1.0
 👤 **Liên hệ:** Team AICRM — `vn.aicrm.viettelpost.order`

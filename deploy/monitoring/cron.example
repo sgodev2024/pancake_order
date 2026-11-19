@@ -1,0 +1,1 @@
+* * * * * root /usr/bin/timeout 55 /usr/bin/python3 /usr/local/sbin/pancake-health-monitor.py >> /var/log/pancake-health-monitor.log 2>&1

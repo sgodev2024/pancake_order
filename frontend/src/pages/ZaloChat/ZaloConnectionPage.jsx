@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, App, Button, Card, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { ApiOutlined, CheckCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
@@ -17,18 +17,52 @@ export default function ZaloConnectionPage() {
  const [accountName, setAccountName] = useState('')
  const [grantAccount, setGrantAccount] = useState(null)
  const [grantValues, setGrantValues] = useState({})
+ const [qrOpen, setQrOpen] = useState(false)
+ const [qrName, setQrName] = useState('')
+ const [qrBusy, setQrBusy] = useState(false)
+ const [qrError, setQrError] = useState('')
+ const [pairing, setPairing] = useState(null)
+ const [qrUrl, setQrUrl] = useState(null)
+ const qrUrlRef = useRef(null)
  const config = useQuery({ queryKey: ['zalo', 'connection'], queryFn: zaloApi.configuration })
  const accounts = useQuery({ queryKey: ['zalo', 'accounts'], queryFn: zaloApi.accounts, enabled: Boolean(config.data?.enabled), refetchInterval: 15000, retry: false })
- const monitor = useQuery({ queryKey: ['zalo', 'monitoring'], queryFn: zaloApi.monitoring, enabled: Boolean(config.data?.enabled), refetchInterval: 15000, retry: false })
+ const monitor = useQuery({ queryKey: ['zalo', 'monitoring'], queryFn: zaloApi.monitoring, enabled: Boolean(config.data?.enabled && !config.data?.base_url?.endsWith('/api/v1/zalo-integration')), refetchInterval: 15000, retry: false })
  const grants = useQuery({ queryKey: ['zalo', 'grants', grantAccount?.id], queryFn: () => zaloApi.grants(grantAccount.id), enabled: Boolean(grantAccount), retry: false })
  useEffect(() => { if (config.data) form.setFieldsValue({ ...config.data, api_key: '' }) }, [config.data, form])
  useEffect(() => { if (grants.data) setGrantValues(Object.fromEntries(grants.data.grants.map((g) => [g.user_id, g.access_level]))) }, [grants.data])
+ useEffect(() => {
+  if (!qrOpen || !pairing?.connectionId || ['CONNECTED', 'FAILED', 'EXPIRED', 'CANCELLED', 'DECLINED'].includes(pairing.status)) return undefined
+  let disposed = false
+  const poll = async () => {
+   try {
+    const next = await zaloApi.qrStatus(pairing.connectionId)
+    if (disposed) return
+    setPairing(next)
+    if (!qrUrlRef.current && ['WAITING_FOR_QR', 'WAITING_FOR_SCAN', 'SCANNED'].includes(next.status)) {
+     try {
+      const blob = await zaloApi.qrImage(pairing.connectionId)
+      if (disposed) return
+      if (blob.type !== 'image/png') throw new Error('QR không phải ảnh PNG hợp lệ.')
+      qrUrlRef.current = URL.createObjectURL(blob)
+      setQrUrl(qrUrlRef.current)
+     } catch (error) { if (error?.response?.status !== 404 && error?.status !== 404 && !disposed) setQrError(zaloError(error)) }
+    }
+   } catch (error) { if (!disposed) setQrError(zaloError(error)) }
+  }
+  void poll()
+  const timer = window.setInterval(() => void poll(), 3000)
+  return () => { disposed = true; window.clearInterval(timer) }
+ }, [qrOpen, pairing?.connectionId, pairing?.status])
+ useEffect(() => () => { if (qrUrlRef.current) URL.revokeObjectURL(qrUrlRef.current) }, [])
  const refresh = () => queryClient.invalidateQueries({ queryKey: ['zalo'] })
+ const clearQr = () => { if (qrUrlRef.current) URL.revokeObjectURL(qrUrlRef.current); qrUrlRef.current = null; setQrUrl(null); setPairing(null); setQrError(''); setQrOpen(false) }
+ const closeQr = async () => { if (pairing?.connectionId && !['CONNECTED', 'FAILED', 'EXPIRED', 'CANCELLED', 'DECLINED'].includes(pairing.status)) { try { await zaloApi.cancelQr(pairing.connectionId) } catch (error) { setQrError(zaloError(error)); return } } clearQr(); await refresh() }
+ const startQr = async () => { if (!qrName.trim()) return setQrError('Nhập tên account trước khi tạo QR.'); setQrBusy(true); setQrError(''); try { setPairing(await zaloApi.startQr(qrName.trim())) } catch (error) { setQrError(zaloError(error)) } finally { setQrBusy(false) } }
  const run = async (action) => {
   setBusy(true); setNotice(null)
   try {
    const body = await form.validateFields()
-   if (action === 'test') { const result = await zaloApi.test(body); setNotice({ type: 'success', text: `API hoạt động. Có ${result.account_count} tài khoản. Kết nối API không đồng nghĩa tài khoản Zalo đang online.` }) }
+   if (action === 'test') { const result = await zaloApi.test(body); setNotice({ type: result.account_readable === false ? 'warning' : 'success', text: result.account_readable === false ? 'API Key hợp lệ nhưng chưa có accounts:read. Bạn có thể lưu cấu hình và tạo QR; sau khi kết nối, cấp quyền account và accounts:read để xem danh sách.' : `API hoạt động. Có ${result.account_count} tài khoản. Kết nối API không đồng nghĩa tài khoản Zalo đang online.` }) }
    else { await zaloApi.save(body); form.setFieldValue('api_key', ''); await refresh(); message.success('Đã lưu cấu hình kết nối Zalo') }
   } catch (error) { if (!error.errorFields) setNotice({ type: 'error', text: zaloError(error) }) }
   finally { setBusy(false) }
@@ -45,7 +79,7 @@ export default function ZaloConnectionPage() {
      <Form.Item name="base_url" label="Địa chỉ dịch vụ Zalo" rules={[{ required: true, message: 'Nhập địa chỉ dịch vụ' }]}><Input placeholder="http://zalo-core:8080" /></Form.Item>
      <Form.Item name="api_key" label="API key" extra={config.data?.has_api_key ? 'Đã lưu khóa. Để trống để giữ nguyên; nhập khóa mới để thay thế.' : 'Dùng API key của service account tích hợp.'}><Input.Password autoComplete="new-password" placeholder={config.data?.has_api_key ? 'Đã lưu, không hiển thị lại' : 'cpa_…'} /></Form.Item>
      <Form.Item name="enabled" label="Bật kết nối" valuePropName="checked"><Switch /></Form.Item>
-     <Space wrap><Button icon={<CheckCircleOutlined />} loading={busy} onClick={() => run('test')}>Kiểm tra kết nối</Button><Button type="primary" loading={busy} onClick={() => run('save')}>Lưu cấu hình</Button></Space>
+     <Space wrap><Button icon={<CheckCircleOutlined />} loading={busy} onClick={() => run('test')}>Kiểm tra kết nối</Button><Button type="primary" loading={busy} onClick={() => run('save')}>Lưu cấu hình</Button><Button disabled={!config.data?.enabled || !config.data?.base_url?.endsWith('/api/v1/zalo-integration')} onClick={() => { setQrName(''); setQrOpen(true) }}>Kết nối Zalo bằng QR</Button></Space>
     </Form>
     {notice && <Alert style={{ marginTop: 16 }} type={notice.type} title={notice.text} showIcon />}
    </Card>
@@ -73,6 +107,11 @@ export default function ZaloConnectionPage() {
    <p>Admin luôn có quyền quản lý. Nhân viên chỉ truy cập tài khoản được cấp quyền dưới đây.</p>
    {grants.isError && <Alert type="error" title={zaloError(grants.error)} />}
    <Table rowKey="id" loading={grants.isFetching} dataSource={grants.data?.users ?? []} pagination={{ pageSize: 6 }} columns={[{ title: 'Nhân viên', render: (_, u) => <><strong>{u.name}</strong><br />{u.email}</> }, { title: 'Quyền', render: (_, u) => <Select style={{ width: 170 }} value={grantValues[u.id] || ''} onChange={(v) => setGrantValues((old) => ({ ...old, [u.id]: v }))} options={[{ value: '', label: 'Không truy cập' }, { value: 'VIEW', label: 'Chỉ xem' }, { value: 'CHAT', label: 'Xem và trả lời' }]} /> }]} />
+  </Modal>
+  <Modal title="Kết nối Zalo bằng QR" open={qrOpen} onCancel={() => void closeQr()} footer={<Button onClick={() => void closeQr()}>{pairing?.status === 'CONNECTED' ? 'Đóng' : 'Hủy và đóng'}</Button>} destroyOnHidden>
+   {!pairing && <><p>Chủ tài khoản quét QR trên ứng dụng Zalo cá nhân. Mỗi phiên có hiệu lực tối đa 3 phút.</p><Input value={qrName} maxLength={160} onChange={(event) => setQrName(event.target.value)} placeholder="Tên account mới" /><Button type="primary" style={{ marginTop: 12 }} loading={qrBusy} onClick={() => void startQr()}>Tạo mã QR</Button></>}
+   {pairing && <><p>Trạng thái: <strong>{pairing.status}</strong></p>{qrUrl && !['CONNECTED', 'EXPIRED', 'FAILED', 'CANCELLED', 'DECLINED'].includes(pairing.status) && <img src={qrUrl} alt="QR đăng nhập Zalo" style={{ width: 260, height: 260, maxWidth: '100%' }} />}{pairing.status === 'CONNECTED' && <Alert type="success" title="Đã kết nối. Cấp quyền accounts:read và chọn account này trên Core để Pancake hiển thị hội thoại." />}{pairing.status === 'EXPIRED' && <Alert type="warning" title="QR hết hạn. Đóng và tạo phiên mới." />}</>}
+   {qrError && <Alert style={{ marginTop: 12 }} type="error" title={qrError} />}
   </Modal>
  </section>
 }

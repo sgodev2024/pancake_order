@@ -9,6 +9,8 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
+Schedule::command('orders:sync-summaries --pending')->everyMinute()->withoutOverlapping(10);
+
 Schedule::command('customer-care:reclaim-stale', [
     '--execute',
     '--limit' => config('customer_care.auto_reclaim.limit'),
@@ -18,3 +20,7 @@ Schedule::command('customer-care:reclaim-stale', [
     ->when(fn (): bool => config('customer_care.auto_reclaim.enabled') === true)
     ->withoutOverlapping(180)
     ->onFailure(fn () => Log::error('Scheduled customer-care auto reclaim failed.'));
+
+Schedule::command('huongchat:sync')->everyFiveMinutes()->withoutOverlapping(15);
+
+Schedule::command('care:notify')->everyMinute()->withoutOverlapping(5);

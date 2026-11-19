@@ -98,9 +98,25 @@ class ShopController extends Controller implements HasMiddleware
                     $userQuery->where('users.id', auth()->id());
                 });
             }
+            $rows = $shops->latest()->get();
+            $snapshots = \App\Models\Order::query()->whereIn('shop_id', $rows->pluck('id'))
+                ->whereNotNull('pancake_order_page_id')->whereRaw("TRIM(pancake_order_page_id) <> ''")
+                ->select(['shop_id', 'pancake_order_page_id', 'pancake_order_page_name'])
+                ->selectRaw('ROW_NUMBER() OVER (PARTITION BY shop_id, pancake_order_page_id ORDER BY created_at DESC, id DESC) AS source_rank');
+            $sources = \Illuminate\Support\Facades\DB::query()->fromSub($snapshots->toBase(), 'shop_sources')
+                ->where('source_rank', 1)
+                ->selectRaw("shop_id, pancake_order_page_id AS id, COALESCE(NULLIF(TRIM(pancake_order_page_name), ''), pancake_order_page_id) AS name")
+                ->orderBy('name')->orderBy('id')->get()->groupBy('shop_id');
+            $sources = app(\App\Services\OrderSourceAliasService::class)->decorate($sources->flatten(1))->groupBy('shop_id');
+            foreach ($rows as $shop) {
+                $shop->setAttribute('order_pages', $sources->get($shop->id, collect())->map(
+                    fn ($source) => array_merge($source, ['id' => (string) $source['id']])
+                )->values());
+            }
+
             return response()->json([
-                "success" => true,
-                "data"    => $shops->latest()->get()
+                'success' => true,
+                'data' => $rows,
             ]);
         } catch (\Throwable $th) {
             return response()->json([ 
@@ -182,6 +198,7 @@ class ShopController extends Controller implements HasMiddleware
 
     public function getCustomer($shop)
     {
+        if ($shop && $shop->pancake_shop_id === 'huongchat_web') { throw new \RuntimeException('Cửa hàng Hương Chất Web đồng bộ tự động từ Web; nhân viên được gán trong CRM.'); }
         Log::info("======================getCustomer=====================");
         try {
             $page_size = 20;
@@ -210,6 +227,7 @@ class ShopController extends Controller implements HasMiddleware
 
     public function getProduct($shop)
     {
+        if ($shop && $shop->pancake_shop_id === 'huongchat_web') { throw new \RuntimeException('Cửa hàng Hương Chất Web đồng bộ tự động từ Web; nhân viên được gán trong CRM.'); }
         Log::info("======================getProduct=====================");
         try {
             $page_size = 20;
@@ -238,6 +256,7 @@ class ShopController extends Controller implements HasMiddleware
 
     public function getOrder($shop, $date_from = NULL, $date_to = NULL)
     {
+        if ($shop && $shop->pancake_shop_id === 'huongchat_web') { throw new \RuntimeException('Cửa hàng Hương Chất Web đồng bộ tự động từ Web; nhân viên được gán trong CRM.'); }
         Log::info("======================getOrder=====================");
         try {
             $page_size = 20;
@@ -320,6 +339,7 @@ class ShopController extends Controller implements HasMiddleware
 
     public function getEmployee($shop)
     {
+        if ($shop && $shop->pancake_shop_id === 'huongchat_web') { throw new \RuntimeException('Cửa hàng Hương Chất Web đồng bộ tự động từ Web; nhân viên được gán trong CRM.'); }
         Log::info("======================getEmployee=====================");
         $response = Http::get($this->apiUrl . "shops/{$shop->pancake_shop_id}/users?api_key={$shop->api_key}")->json();
         if (!empty($response["data"])) {

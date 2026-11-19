@@ -33,7 +33,7 @@
 .orders-filters__grid {
   display: flex;
   flex: 1 1 100%;
-  align-items: flex-end;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 12px;
 }

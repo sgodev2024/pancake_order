@@ -1,11 +1,14 @@
+import OrderSourceSelect from '../../components/OrderSourceSelect.jsx'
+import { createRequestId } from '../../utils/requestId.js'
 import { MinusOutlined, PlusOutlined, SearchOutlined, ShoppingCartOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, App, Button, Card, Empty, Form, Image, Input, InputNumber, Pagination, Result, Select, Space, Spin, Typography } from 'antd'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getProducts } from '../../api/products.api.js'
+import { getCustomerCarePosDraft } from '../../api/customer-care.api.js'
 import { getCustomers } from '../../api/customers.api.js'
-import { createOrder, getOrder } from '../../api/orders.api.js'
+import { createOrder, getOrder, orderPageQueryOptions } from '../../api/orders.api.js'
 import { posShopOptionsQueryOptions } from '../../api/shops.api.js'
 import { useAuthStore } from '../../auth/auth.store.js'
 import { canUsePos } from '../../auth/permissions.js'
@@ -14,6 +17,7 @@ import QueryErrorAlert from '../../components/QueryErrorAlert.jsx'
 import { getProductImage, PRODUCT_PLACEHOLDER } from '../../utils/products.js'
 import { getApiErrorMessage } from '../../utils/response.js'
 import { ROUTES } from '../../constants/routes.js'
+import { getOrderPageOptions } from '../Orders/orderFilters.js'
 import PosOrderReceipt from './PosOrderReceipt.jsx'
 import VndMoneyInput from './VndMoneyInput.jsx'
 import { VND_INPUT_ERROR } from './posMoneyInput.js'
@@ -34,15 +38,37 @@ const PosShopSession = ({ user, allowed }) => {
   const queryClient = useQueryClient()
   const [params] = useSearchParams()
   const orderId = params.get('order_id')
+  const careId = orderId ? null : params.get('care_id')
+  const customerId = !orderId && !careId ? params.get('customer_id') : null
+  const requestedShop = params.get('shop_id')
+  const customerDraftQuery = useQuery({
+    queryKey: ['pos-customer-draft', user?.id, requestedShop, customerId],
+    queryFn: async ({ signal }) => {
+      const data = await getCustomers({ view: 'pos', shop_id: requestedShop, customer_id: customerId }, { signal })
+      const customer = data.customers?.find((c) => String(c.id) === customerId)
+      if (!customer) throw new Error('Không tìm thấy khách hàng trong cửa hàng được phân công.')
+      return { shop_id: requestedShop, customer }
+    },
+    enabled: allowed && !!customerId && !!requestedShop, retry: false, gcTime: 0,
+  })
+  const careQuery = useQuery({
+    queryKey: ['pos-care-draft', user?.id, careId],
+    queryFn: ({ signal }) => getCustomerCarePosDraft(careId, { signal }),
+    enabled: allowed && !!careId,
+    gcTime: 0,
+    retry: false,
+  })
+  const careDraft = customerId ? customerDraftQuery.data : careQuery.data
   const shopsQuery = useQuery({ ...posShopOptionsQueryOptions(user?.id), enabled: allowed && !orderId })
   const shops = shopsQuery.data ?? []
   const scopeKey = JSON.stringify(shops.map((shop) => String(shop.id)).sort())
   const [selection, setSelection] = useState({})
   const chosenShop = selection.scopeKey === scopeKey && shops.some((shop) => String(shop.id) === selection.shopId)
     ? selection.shopId : undefined
-  const shopId = chosenShop ?? (shops.length === 1 ? String(shops[0].id) : undefined)
+  const careShop = shops.find((shop) => String(shop.id) === String(careDraft?.shop_id))
+  const shopId = (careId || customerId) ? (careShop ? String(careShop.id) : undefined) : chosenShop ?? (shops.length === 1 ? String(shops[0].id) : undefined)
   const shopsReady = allowed && shopsQuery.isSuccess && shopsQuery.isFetchedAfterMount && !shopsQuery.isFetching
-  const draftKey = JSON.stringify([scopeKey, shopId, allowed, orderId])
+  const draftKey = JSON.stringify([scopeKey, shopId, allowed, orderId, careId, customerId])
   const activeScope = useRef(null)
   useLayoutEffect(() => {
     activeScope.current = { draftKey, shopsReady }
@@ -60,7 +86,16 @@ const PosShopSession = ({ user, allowed }) => {
   const isCurrentScope = () => activeScope.current?.draftKey === draftKey && activeScope.current?.shopsReady
     && useAuthStore.getState().user?.id === user?.id
 
-  return <PosDraft key={draftKey} user={user} allowed={allowed} orderId={orderId}
+  if (allowed && customerId && !requestedShop) return <Result status="400" title="Thiếu cửa hàng của khách hàng" />
+  if (allowed && (careId || customerId)) {
+    if (customerDraftQuery.isError) return <QueryErrorAlert error={customerDraftQuery.error} onRetry={customerDraftQuery.refetch} />
+    if (careQuery.isError) return <QueryErrorAlert error={careQuery.error} onRetry={careQuery.refetch} />
+    if (shopsQuery.isError) return <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
+    if (!careDraft || !shopsQuery.isFetchedAfterMount) return <Spin tip="Đang tải thông tin lịch hẹn"><div style={{ minHeight: 80 }} /></Spin>
+    if (!careShop) return <Result status="403" title="Bạn không có quyền bán hàng tại cửa hàng của lịch hẹn" />
+  }
+
+  return <PosDraft key={draftKey} careDraft={careDraft} user={user} allowed={allowed} orderId={orderId}
     shopsQuery={shopsQuery} shopsReady={shopsReady} shopId={shopId} isCurrentScope={isCurrentScope}
     onShopChange={(next) => {
       if (!isCurrentScope()) return
@@ -69,17 +104,25 @@ const PosShopSession = ({ user, allowed }) => {
     }} />
 }
 
-const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onShopChange, isCurrentScope }) => {
+const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onShopChange, isCurrentScope, careDraft }) => {
   const { message, modal } = App.useApp()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [form] = Form.useForm()
-  const fields = Form.useWatch([], form) ?? INITIAL
+  const careCustomer = careDraft?.customer
+  const initialValues = useMemo(() => careCustomer ? {
+    ...INITIAL,
+    customer_id: careCustomer.id ?? undefined,
+    customer_name: careCustomer.name ?? '',
+    customer_phone: careCustomer.phone ?? '',
+    shipping_address: careCustomer.address ?? '',
+  } : INITIAL, [careCustomer])
+  const fields = Form.useWatch([], form) ?? initialValues
   const [search, setSearch] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
   const [customerSearch, setCustomerSearch] = useState('')
   const [customerTerm, setCustomerTerm] = useState('')
-  const [selectedCustomer, setSelectedCustomer] = useState(null)
+  const [selectedCustomer, setSelectedCustomer] = useState(() => careCustomer?.id ? careCustomer : null)
   const [page, setPage] = useState(1)
   const [cart, setCart] = useState([])
   const [created, setCreated] = useState(null)
@@ -89,7 +132,12 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const shopDialog = useRef(null)
   const paymentDialog = useRef(null)
   const currentDraft = useRef(null)
-  const draftFingerprint = JSON.stringify({ cart, fields })
+  const [orderPageId, setOrderPageId] = useState()
+  const pagesQuery = useQuery({
+    ...orderPageQueryOptions(user?.id, shopId, 'pos'),
+    enabled: shopsReady && !!shopId,
+  })
+  const draftFingerprint = JSON.stringify({ cart, fields, orderPageId })
   useLayoutEffect(() => {
     currentDraft.current = draftFingerprint
     return () => { currentDraft.current = null }
@@ -115,9 +163,10 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
     queryFn: ({ signal }) => getCustomers({ view: 'pos', shop_id: shopId, search: customerTerm, page: 1 }, { signal }),
     enabled: shopsReady && !!shopId && !orderId,
   })
+  const customerSearchPending = customerSearch.trim() !== customerTerm || customersQuery.isFetching
   const customerOptions = useMemo(() => {
     if (!shopsReady) return []
-    const customers = customersQuery.data?.customers ?? []
+    const customers = customerSearchPending ? [] : customersQuery.data?.customers ?? []
     const options = customers.map((customer) => ({
       value: customer.id,
       label: `${customer.name || 'Khách hàng'} · ${customer.phone || ''}`,
@@ -129,7 +178,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
       })
     }
     return options
-  }, [customersQuery.data, selectedCustomer, shopsReady])
+  }, [customersQuery.data, selectedCustomer, shopsReady, customerSearchPending])
   const orderQuery = useQuery({
     queryKey: ['order-detail', user?.id, orderId], queryFn: () => getOrder(orderId), enabled: !!orderId,
     retry: false,
@@ -163,6 +212,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
         setPaymentConfirmed(false)
       }
       const errors = error?.errors ?? error?.response?.data?.errors
+      if (errors?.order_page_id) message.error(errors.order_page_id[0])
       if (errors) form.setFields(Object.entries(errors).map(([name, messages]) => ({
         name: name.split('.'), errors: Array.isArray(messages) ? messages : [messages],
       })))
@@ -171,6 +221,8 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
   const draftLocked = mutation.isPending || lockedRequest || !!created
   const disabled = draftLocked || !shopsReady || !shopId
   const resetDraft = () => {
+    if (careDraft) { navigate(ROUTES.POS, { replace: true }); return }
+    setOrderPageId(undefined)
     setCart([]); setCreated(null); pendingRequest.current = null; setLockedRequest(false)
     setPaymentConfirmed(false)
     form.resetFields(); mutation.reset(); setCustomerSearch(''); setCustomerTerm(''); setSelectedCustomer(null)
@@ -198,14 +250,16 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
     const submittedTotals = calculatePosPaymentTotals(cart, values)
     if (submittedTotals.error) { message.error(submittedTotals.error); return }
     const payload = {
-      idempotency_key: crypto.randomUUID(), shop_id: Number(shopId),
+      idempotency_key: createRequestId(), shop_id: Number(shopId),
       ...(values.customer_id
         ? { customer_id: values.customer_id }
         : { customer: { name: values.customer_name, phone: values.customer_phone } }),
       shipping_address: values.shipping_address,
+      ...(orderPageId ? { order_page_id: orderPageId } : {}),
       items: cart.map(({ product_id, quantity, unit_price }) => ({ product_id, quantity, unit_price: productPriceVnd(unit_price) })),
       discount_amount: submittedTotals.discount, shipping_fee: submittedTotals.shipping, surcharge: submittedTotals.surcharge,
-      payment_mode: values.payment_mode ?? 'cod', note: values.note,
+      payment_mode: values.payment_mode ?? 'cod',
+      ...(values.payment_mode === 'bank_transfer_cod' ? { deposit_amount: optionalMoneyVnd(values.deposit_amount) } : {}), note: values.note,
     }
     const send = (confirmed) => {
       if (!isCurrentScope()) return
@@ -218,9 +272,11 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
     const confirmedDraft = currentDraft.current
     let accepted = false
     paymentDialog.current = modal.confirm({
-      title: payload.payment_mode === 'cash' ? 'Xác nhận đã thu đủ tiền mặt' : 'Xác nhận đã nhận đủ chuyển khoản',
-      content: `Số tiền cần xác nhận: ${money(submittedTotals.total)}. Chỉ xác nhận khi bạn đã thực sự nhận đủ tiền.`,
-      okText: 'Đã nhận đủ tiền', cancelText: 'Chưa nhận tiền',
+      title: payload.payment_mode === 'bank_transfer_cod' ? 'Xác nhận đã nhận chuyển khoản một phần' : payload.payment_mode === 'cash' ? 'Xác nhận đã thu đủ tiền mặt' : 'Xác nhận đã nhận đủ chuyển khoản',
+      content: payload.payment_mode === 'bank_transfer_cod'
+        ? `Đã nhận chuyển khoản: ${money(values.deposit_amount)}. Còn thu COD: ${money(submittedTotals.total - optionalMoneyVnd(values.deposit_amount))}. Chỉ xác nhận khi đã thực sự nhận khoản tiền này.`
+        : `Số tiền cần xác nhận: ${money(submittedTotals.total)}. Chỉ xác nhận khi bạn đã thực sự nhận đủ tiền.`,
+      okText: payload.payment_mode === 'bank_transfer_cod' ? 'Đã nhận khoản chuyển' : 'Đã nhận đủ tiền', cancelText: 'Chưa nhận tiền',
       onCancel: () => { paymentDialog.current = null },
       onOk: () => {
         paymentDialog.current = null
@@ -232,7 +288,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
     })
   }
 
-  if (orderId) return <main className="pos-page"><Card title="Chi tiết đơn hàng" extra={<Button onClick={() => navigate(ROUTES.ORDERS)}>Danh sách đơn</Button>}>
+  if (orderId) return <main className="pos-page"><Card title="Chi tiết đơn hàng" extra={<Button onClick={() => navigate(ROUTES.POS_ORDERS)}>Danh sách đơn</Button>}>
     {orderQuery.isPending ? <Spin /> : orderQuery.isError ? <QueryErrorAlert error={orderQuery.error} onRetry={orderQuery.refetch} />
       : orderQuery.data?.origin === 'local_pos' ? <PosOrderReceipt order={orderQuery.data} /> : <Alert type="info" title="Đơn Pancake được xem trong danh sách đơn hàng." />}
   </Card></main>
@@ -240,11 +296,16 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
 
   const products = shopsReady ? productsQuery.data?.products ?? [] : []
   return <main className="pos-page">
-    <div className="pos-heading"><div><Typography.Title level={3}>Bán hàng POS</Typography.Title><Typography.Text type="secondary">Tạo đơn Local · Giá bán được kiểm tra khi lưu</Typography.Text></div><Button onClick={() => navigate(ROUTES.ORDERS)}>Danh sách đơn</Button></div>
+    <div className="pos-heading"><div><Typography.Title level={3}>Bán hàng POS</Typography.Title><Typography.Text type="secondary">Tạo đơn Local · Giá bán được kiểm tra khi lưu</Typography.Text></div><Button onClick={() => navigate(ROUTES.POS_ORDERS)}>Danh sách đơn</Button></div>
     <div className="pos-layout">
       <Card className="pos-products" title="Sản phẩm">
         <div className="pos-product-filters"><ShopSelectInput shopsQuery={shopsQuery} value={shopsReady ? shopId : undefined}
-          onChange={changeShop} disabled={draftLocked || !shopsReady} allowClear={(shopsQuery.data?.length ?? 0) > 1} />
+          onChange={changeShop} disabled={!!careDraft || draftLocked || !shopsReady} allowClear={!careDraft && (shopsQuery.data?.length ?? 0) > 1} />
+          <OrderSourceSelect shopId={shopId} aria-label="Nguồn đơn" placeholder="Tất cả nguồn đơn" allowClear showSearch
+            optionFilterProp="label" value={orderPageId} onChange={setOrderPageId} disabled={disabled}
+            loading={pagesQuery.isFetching} status={pagesQuery.isError ? 'error' : undefined}
+            notFoundContent={pagesQuery.isLoading ? 'Đang tải...' : pagesQuery.isError ? 'Không thể tải nguồn đơn' : 'Không có nguồn đơn'}
+            options={getOrderPageOptions(pagesQuery.data)} />
           <Input prefix={<SearchOutlined />} value={search} disabled={!shopId || disabled} allowClear onChange={(event) => setSearch(event.target.value)} placeholder="Tên, mã sản phẩm hoặc barcode" aria-label="Tìm sản phẩm POS" /></div>
         {shopsQuery.isError ? <QueryErrorAlert error={shopsQuery.error} onRetry={shopsQuery.refetch} />
           : !shopsReady ? <Spin tip="Đang tải cửa hàng"><Empty description="Đang tải danh sách cửa hàng" /></Spin>
@@ -260,10 +321,10 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
         {created ? <><PosOrderReceipt order={created} /><Button type="primary" block size="large" style={{ marginTop: 20 }} onClick={resetDraft}>Tạo đơn mới</Button></> : <>
           {mutation.isError && <Alert type="error" showIcon title={getApiErrorMessage(mutation.error, 'Không thể tạo đơn.')}
             description={lockedRequest ? 'Giỏ hàng được giữ nguyên. Gửi lại đúng yêu cầu này để nhận kết quả, tránh tạo đơn trùng.' : 'Kiểm tra dữ liệu và thử lại.'} />}
-          <Form form={form} layout="vertical" initialValues={INITIAL} disabled={disabled} onFinish={submit}>
+          <Form form={form} layout="vertical" initialValues={initialValues} disabled={disabled} onFinish={submit}>
             <Form.Item name="customer_id" label="Tìm khách hàng có sẵn (không bắt buộc)"
               extra="Chọn khách hàng đã có hoặc để trống để nhập thông tin khách mới.">
-              <Select allowClear showSearch filterOption={false} disabled={!shopId || disabled} loading={customersQuery.isFetching}
+              <Select allowClear showSearch filterOption={false} disabled={!shopId || disabled} loading={customerSearchPending} notFoundContent={customerSearchPending ? 'Đang tìm khách hàng...' : 'Không tìm thấy khách hàng'}
                 placeholder="Tìm theo tên hoặc số điện thoại" onSearch={setCustomerSearch}
                 options={customerOptions}
                 onChange={(id) => {
@@ -272,6 +333,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
                     customer = customersQuery.data?.customers?.find((item) => String(item.id) === String(id))
                       ?? (String(selectedCustomer?.id) === String(id) ? selectedCustomer : null)
                   }
+                  setCustomerSearch('')
                   setSelectedCustomer(customer)
                   form.setFieldsValue({
                     customer_name: customer?.name || '',
@@ -295,7 +357,7 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
               </Form.Item>
             </div>
             {customersQuery.isError && <QueryErrorAlert error={customersQuery.error} onRetry={customersQuery.refetch} />}
-            <Form.Item name="shipping_address" label="Địa chỉ giao hàng" rules={[{ required: true, whitespace: true, message: 'Nhập địa chỉ giao hàng.' }, { max: 1000 }]}><Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} /></Form.Item>
+            <Form.Item name="shipping_address" label="Địa chỉ giao hàng" extra={fields.customer_id ? 'Địa chỉ đã sửa sẽ được lưu vào hồ sơ khách khi tạo đơn.' : undefined} rules={[{ required: true, whitespace: true, message: 'Nhập địa chỉ giao hàng.' }, { max: 1000 }]}><Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} /></Form.Item>
             <div className="pos-cart" aria-label="Giỏ hàng">{!cart.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chọn sản phẩm ở bên trái" /> : cart.map((item) => <div className="pos-cart-row" key={item.product_id}>
               <div className="pos-cart-name"><strong>{item.name}</strong><span>{money(item.unit_price)} / sản phẩm</span></div>
               <Space.Compact><Button aria-label={`Giảm ${item.name}`} disabled={disabled || item.quantity <= 1} icon={<MinusOutlined />} onClick={() => setQuantity(item.product_id, item.quantity - 1)} />
@@ -308,11 +370,19 @@ const PosDraft = ({ user, allowed, orderId, shopsQuery, shopsReady, shopId, onSh
               <VndMoneyInput />
             </Form.Item>)}</div>
             <Form.Item name="payment_mode" label="Hình thức thanh toán"><Select options={POS_PAYMENT_OPTIONS} /></Form.Item>
-            {fields.payment_mode !== 'cod' && !paymentConfirmed && <Alert type="info" showIcon title="Chỉ ghi nhận đã thanh toán sau khi xác nhận thực sự nhận đủ tiền." />}
+            {fields.payment_mode === 'bank_transfer_cod' && <Form.Item name="deposit_amount" label="Số tiền chuyển khoản đã nhận" preserve={false}
+              rules={[{ required: true, message: 'Nhập số tiền đã nhận.' }, { validator: (_, value) => {
+                const amount = optionalMoneyVnd(value)
+                const total = calculatePosPaymentTotals(cart, { ...fields, payment_mode: 'cod' }).total
+                return amount !== null && amount > 0 && amount < total ? Promise.resolve() : Promise.reject(new Error('Số tiền phải lớn hơn 0 và nhỏ hơn tổng thanh toán.'))
+              } }]}>
+              <VndMoneyInput />
+            </Form.Item>}
+            {fields.payment_mode !== 'cod' && !paymentConfirmed && <Alert type="info" showIcon title="Chỉ ghi nhận đã thanh toán sau khi xác nhận số tiền thực nhận." />}
             <div className="pos-totals" aria-live="polite">{totalsError ? <Alert type="warning" title={totalsError} /> : <>
               <div><span>Tiền hàng</span><strong>{money(totals.subtotal)}</strong></div>
               <div className="pos-total"><span>Tổng thanh toán</span><strong>{money(totals.total)}</strong></div>
-              <div><span>Đã thanh toán</span><strong>{money(totals.paid)}</strong></div>
+              <div><span>{fields.payment_mode === 'bank_transfer_cod' && !paymentConfirmed ? 'Chuyển khoản khai báo' : 'Đã thanh toán'}</span><strong>{money(totals.paid)}</strong></div>
               <div><span>Còn phải thu</span><strong>{money(totals.remaining)}</strong></div>
               <div><span>COD dự kiến</span><strong>{money(totals.cod)}</strong></div>
             </>}</div>

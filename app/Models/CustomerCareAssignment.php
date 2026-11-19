@@ -11,6 +11,8 @@ class CustomerCareAssignment extends Model
 {
     public const SOURCE_ORDER = 'order';
 
+    public const SOURCE_CARE_SEGMENT = 'care_segment';
+
     public const SOURCE_IMPORTED_OPPORTUNITY = 'imported_opportunity';
 
     public const STATUS_ACTIVE = 'active';

@@ -10,6 +10,7 @@ const PosOrderReceipt = ({ order }) => {
       { key: 'shop', label: 'Cửa hàng', children: order.shop?.name },
       { key: 'customer', label: 'Khách hàng', children: `${order.customer_name || ''} · ${order.customer_phone || ''}` },
       { key: 'address', label: 'Địa chỉ', children: order.customer_address },
+      { key: 'source', label: 'Nguồn đơn', children: order.order_page_name || 'POS Local' },
       { key: 'creator', label: 'Người tạo', children: order.user_creator?.name || '—' },
       { key: 'tracking', label: 'Mã vận đơn', children: order.order_number_vtp || 'Chưa có' },
     ]} />

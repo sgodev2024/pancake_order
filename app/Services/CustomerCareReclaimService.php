@@ -558,10 +558,18 @@ class CustomerCareReclaimService
     /**
      * Lock the source after CustomerCare and assignment locks.
      *
-     * @return Order|ImportedOpportunity|array<string, mixed>
+     * @return Order|ImportedOpportunity|\App\Models\Customer|array<string, mixed>
      */
-    private function lockAndValidateSource(CustomerCareAssignment $assignment): Order|ImportedOpportunity|array
+    private function lockAndValidateSource(CustomerCareAssignment $assignment): Order|ImportedOpportunity|\App\Models\Customer|array
     {
+        if ($assignment->source_type === CustomerCareAssignment::SOURCE_CARE_SEGMENT) {
+            $customer = \App\Models\Customer::whereKey($assignment->source_id)->lockForUpdate()->first();
+            if (! $customer || (int) $customer->shop_id !== (int) $assignment->shop_id) {
+                return $this->row($assignment, self::RESULT_INVALID_RELATION, 'Segment customer does not belong to the assigned shop.');
+            }
+            return $customer;
+        }
+
         if ($assignment->source_type === CustomerCareAssignment::SOURCE_ORDER) {
             $order = Order::withTrashed()
                 ->whereKey($assignment->source_id)
@@ -644,7 +652,7 @@ class CustomerCareReclaimService
         CustomerCareAssignment $assignment,
         CustomerCare $customerCare,
         ?Shop $shop,
-        Order|ImportedOpportunity $source,
+        Order|ImportedOpportunity|\App\Models\Customer $source,
         CarbonImmutable $reclaimedAt,
         string $reason,
         string $eventSource,

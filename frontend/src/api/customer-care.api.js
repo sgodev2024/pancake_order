@@ -14,6 +14,11 @@ export const getCustomerCares = async (params = {}) => {
   return response.data.data ?? {}
 }
 
+export const getCustomerCarePosDraft = async (id, { signal } = {}) => {
+  const response = await apiClient.get(`${API_ROUTES.CUSTOMER_CARES}/${id}/pos-draft`, { signal })
+  return response.data.data
+}
+
 export const getCustomerCareHistories = async (customerCareId) => {
   const response = await apiClient.get(`${API_ROUTES.CUSTOMER_CARES}/${customerCareId}/histories`)
   return response.data.data ?? []

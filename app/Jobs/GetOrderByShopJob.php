@@ -7,8 +7,10 @@ use App\Models\Order;
 use App\Models\Shop;
 use App\Services\OrderCreatedEventWriter;
 use App\Services\OrderService;
+use App\Services\OrderSummaryService;
 use App\Services\WarehouseService;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -47,13 +49,14 @@ class GetOrderByShopJob implements ShouldQueue
         try {
             DB::transaction(function () use ($eventWriter): void {
                 $shopId = (int) $this->shop_id;
+                $lockedShop = Shop::whereKey($shopId)->lockForUpdate()->first();
                 $insertData = [];
                 $storedOrderIds = [];
                 $sourcePayloads = [];
                 $orderService = new OrderService;
                 $warehouse = app(WarehouseService::class);
-                if ($warehouse->enabled()) {
-                    Shop::whereKey($shopId)->lockForUpdate()->firstOrFail();
+                if ($warehouse->enabled() && $lockedShop === null) {
+                    throw (new ModelNotFoundException)->setModel(Shop::class, [$shopId]);
                 }
                 $hasPrepaidAmount = Schema::hasColumn('orders', 'prepaid_amount');
 
@@ -100,7 +103,7 @@ class GetOrderByShopJob implements ShouldQueue
                     return;
                 }
 
-                Order::insert($insertData);
+                OrderSummaryService::trackSourceWrite(fn () => Order::insert($insertData));
 
                 $insertedOrders = Order::query()
                     ->where('shop_id', $shopId)
@@ -143,6 +146,10 @@ class GetOrderByShopJob implements ShouldQueue
                             'Could not resolve a newly inserted order for journey logging.'
                         );
                     }
+
+                    // insert() bypasses model events; persist projection work
+                    // within the same transaction as the inserted source rows.
+                    OrderSummaryService::queueOrder((int) $order->id);
 
                     $customer = $customersByPancakeId->get((string) $order->pancake_customer_id);
                     $warehouse->synchronize($order, $sourcePayloads[$storedOrderId], true);

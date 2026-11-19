@@ -1,10 +1,6 @@
 import { API_ROUTES } from '../constants/routes.js'
 import apiClient from './client.js'
 
-export const createOrder = async (payload) => (await apiClient.post(API_ROUTES.ORDERS, payload)).data
-
-export const getOrder = async (id) => (await apiClient.get(`${API_ROUTES.ORDERS}/${id}`)).data.data
-
 const removeEmptyParams = (params) =>
   Object.fromEntries(
     Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
@@ -60,6 +56,13 @@ export const getOrderPages = async ({ shop_id: shopId, context, type } = {}, { s
     : []
 }
 
+export const orderPageQueryOptions = (userId, shopId, context) => ({
+  queryKey: ['order-pages', userId, shopId == null ? null : String(shopId), context],
+  queryFn: ({ signal }) => getOrderPages({ shop_id: shopId, context }, { signal }),
+  enabled: Boolean(shopId),
+  staleTime: 5 * 60_000,
+})
+
 export const getOrderSources = async (params = {}) => {
   const shopId = params.shop_id
   if (shopId === undefined || shopId === null || shopId === '') return []
@@ -82,3 +85,9 @@ export const getOrderHistory = async (orderId, params = {}) => {
 
   return response.data
 }
+
+export const createOrder = async (payload) => (await apiClient.post(API_ROUTES.ORDERS, payload)).data
+export const getOrder = async (id) => (await apiClient.get(`${API_ROUTES.ORDERS}/${id}`)).data.data
+
+
+export const deletePosOrders = async (ids) => (await apiClient.post(`${API_ROUTES.ORDERS}/pos/delete`, { ids })).data

@@ -53,7 +53,7 @@ class GetOrderFromWebhookJob implements ShouldQueue
                 $pancakeShopId = $this->data['shop_id'];
                 $warehouse = app(WarehouseService::class);
                 $shop = Shop::where('pancake_shop_id', $pancakeShopId)
-                    ->when($warehouse->enabled(), fn ($query) => $query->lockForUpdate())->first();
+                    ->lockForUpdate()->first();
 
                 if (! $shop) {
                     WebhookMonitor::record('skipped', $pancakeShopId, 'Shop chưa được cấu hình');
@@ -188,7 +188,12 @@ class GetOrderFromWebhookJob implements ShouldQueue
                             }
                         }
                     }
-                    $order->update($result);
+                    $order->fill($result);
+                    // Identical webhook retries must not write updated_at,
+                    // invalidate every report, or enqueue projection work.
+                    if ($order->isDirty()) {
+                        $order->save();
+                    }
                     $warehouse->synchronize($order, $this->data, false);
                 } else {
                     $order = Order::create($result);

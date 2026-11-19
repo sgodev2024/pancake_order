@@ -56,6 +56,7 @@ class PosOrderTest extends TestCase
             '2026_04_29_170341_add_column_to_orders_table.php',
             '2026_05_04_082209_add_slug_to_roles_table.php',
             '2026_05_11_161116_create_products_table.php',
+            '2026_05_20_083440_create_settings_table.php',
             '2026_05_14_074248_add_assigned_user_id_to_customers_table.php',
             '2026_06_04_110133_add_order_count_to_customers_table.php',
             '2026_08_20_000000_create_activity_logs_table.php',
@@ -76,14 +77,204 @@ class PosOrderTest extends TestCase
             $table->unsignedInteger('province_id')->nullable();
         });
         $this->runMigration();
+        (require database_path('migrations/2026_11_05_000003_add_crm_shipping_address_to_customers.php'))->up();
         $this->shop = Shop::create(['name' => 'Assigned', 'pancake_shop_id' => 'shop-1', 'api_key' => 'test']);
         $this->otherShop = Shop::create(['name' => 'Other', 'pancake_shop_id' => 'shop-2', 'api_key' => 'test']);
         $this->actor = $this->actor('staff-sale');
         $this->local = $this->product('Local', null, 250000, 20);
         $this->synced = $this->product('Pancake', 'upstream-variation', 100000, 5);
+        (require database_path('migrations/2026_11_04_000001_create_staff_account_states_table.php'))->up();
         $this->actingAs($this->actor, 'api');
         Http::preventStrayRequests();
         Queue::fake();
+    }
+
+    public function test_pos_saves_a_source_from_its_shop_without_changing_order_origin(): void
+    {
+        Order::create([
+            'shop_id' => $this->shop->id, 'origin' => 'pancake',
+            'user_creator_id' => $this->actor->pancake_user_id,
+            'pancake_order_page_id' => 'page-1', 'pancake_order_page_name' => 'Facebook Shop',
+        ]);
+        $this->postJson('/api/v1/orders', $this->payload(['order_page_id' => 'unknown']))
+            ->assertUnprocessable()->assertJsonValidationErrors('order_page_id');
+        $input = $this->payload(['order_page_id' => 'page-1']);
+        $this->postJson('/api/v1/orders', $input)->assertCreated()
+            ->assertJsonPath('data.origin', 'local_pos')
+            ->assertJsonPath('data.pancake_order_page_id', 'page-1')
+            ->assertJsonPath('data.order_page_name', 'Facebook Shop');
+        $this->postJson('/api/v1/orders', $input)->assertOk()->assertJsonPath('replayed', true);
+    }
+
+    public function test_admin_can_soft_delete_multiple_new_pos_orders_atomically(): void
+    {
+        (require database_path('migrations/2026_11_04_000001_create_aicrm_shipments.php'))->up();
+        $first = $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->json('data.id');
+        $second = $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->json('data.id');
+        $pancake = Order::create(['shop_id' => $this->shop->id, 'origin' => 'pancake']);
+        $url = '/api/v1/orders/pos/delete';
+
+        $this->postJson($url, ['ids' => [$first]])->assertForbidden();
+        $this->actingAs($this->actor('admin'), 'api');
+        $this->postJson($url, ['ids' => [$first, $pancake->id]])->assertUnprocessable();
+        Order::findOrFail($second)->forceFill(['warehouse_status' => Order::WAREHOUSE_PACKED])->save();
+        $this->postJson($url, ['ids' => [$first, $second]])->assertConflict();
+        $this->assertNotNull(Order::find($first));
+        Order::findOrFail($second)->forceFill(['warehouse_status' => Order::WAREHOUSE_WAITING])->save();
+
+        $this->postJson($url, ['ids' => [$first, $second]])->assertOk();
+        $this->postJson($url, ['ids' => [$first]])->assertOk();
+        $this->assertSoftDeleted('orders', ['id' => $first]);
+        $this->assertSoftDeleted('orders', ['id' => $second]);
+        $this->assertNotNull(Order::find($pancake->id));
+    }
+
+    public function test_cskh_deletes_only_pos_orders_in_assigned_shops_and_bulk_is_atomic(): void
+    {
+        (require database_path('migrations/2026_11_04_000001_create_aicrm_shipments.php'))->up();
+        foreach (['staff-cskh', 'manager-cskh'] as $role) {
+            $this->actingAs($this->actor, 'api');
+            $first = $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->json('data.id');
+            $second = $this->postJson('/api/v1/orders', $this->payload())->assertCreated()->json('data.id');
+            $foreign = Order::create(['shop_id' => $this->otherShop->id, 'origin' => 'local_pos', 'status' => 0]);
+            $user = $this->actor($role);
+            $this->actingAs($user, 'api');
+            $url = '/api/v1/orders/pos/delete';
+            $this->postJson($url, ['ids' => [$first, $foreign->id]])->assertForbidden();
+            $this->assertNotNull(Order::find($first));
+            $this->postJson($url, ['ids' => [$first, $second]])->assertOk();
+            $this->assertSoftDeleted('orders', ['id' => $first]);
+            $this->assertSoftDeleted('orders', ['id' => $second]);
+            $this->assertNotNull(Order::find($foreign->id));
+        }
+    }
+
+    public function test_care_segment_counts_only_delivered_products_and_enforces_shop_scope(): void
+    {
+        $admin = $this->actor('admin');
+        $this->actingAs($admin, 'api');
+        $customer = $this->customer($this->shop, $this->actor);
+        $ids = [];
+        foreach ([['Local', 2], ['Pancake', 3], ['Local', 7]] as [$name, $quantity]) {
+            $product = $name === 'Local' ? $this->local : $this->synced;
+            $id = $this->postJson('/api/v1/orders', $this->payload([
+                'customer_id' => $customer->id,
+                'items' => [['product_id' => $product->id, 'quantity' => $quantity]],
+            ]))->assertCreated()->json('data.id');
+            $ids[] = $id;
+            Order::findOrFail($id)->update(['status' => count($ids) === 3 ? 0 : 3]);
+        }
+        Order::findOrFail($ids[0])->update(['pancake_order_page_id' => 'source-a', 'pancake_order_page_name' => 'Nguồn A']);
+        Order::findOrFail($ids[1])->update(['pancake_order_page_id' => 'source-b', 'pancake_order_page_name' => 'Nguồn B']);
+        $month = now()->format('Y-m');
+        $url = '/api/v1/care-segments?month_from='.$month.'&month_to='.$month;
+        $response = $this->getJson($url)->assertOk()->assertJsonPath('data.total', 1)
+            ->assertJsonPath('data.customers.0.order_count', 2)
+            ->assertJsonPath('data.customers.0.quantity', 5);
+        $this->assertCount(2, $response->json('data.products'));
+        $this->getJson($url.'&order_page_ids[]=source-a')->assertOk()
+            ->assertJsonPath('data.customers.0.quantity', 2)->assertJsonPath('data.customers.0.order_count', 1)
+            ->assertJsonCount(2, 'data.sources');
+        $this->getJson($url.'&sources_only=1')->assertOk()->assertJsonCount(2, 'data.sources')
+            ->assertJsonCount(0, 'data.customers');
+        $this->getJson($url.'&order_page_ids[]=missing-source')->assertOk()->assertJsonPath('data.total', 0);
+
+        $local = sha1(mb_strtolower('Local'));
+        $pancake = sha1(mb_strtolower('Pancake'));
+        $this->getJson($url.'&products[]='.$local)->assertOk()
+            ->assertJsonPath('data.customers.0.quantity', 2)->assertJsonPath('data.customers.0.order_count', 1);
+        $this->getJson($url.'&products[]='.$local.'&products[]='.$pancake.'&match=all')->assertOk()
+            ->assertJsonPath('data.total', 1);
+        $this->getJson($url.'&quantity_min=6')->assertOk()->assertJsonPath('data.total', 0);
+
+        $staff = $this->actor('staff-cskh');
+        $group = PermissionGroup::firstOrCreate(['name' => 'Lọc CSKH']);
+        $permission = Permission::firstOrCreate(['slug' => 'care-segment-view'], ['permission_group_id' => $group->id, 'name' => 'View']);
+        RolePermission::firstOrCreate(['role_id' => $staff->role_id, 'permission_id' => $permission->id]);
+        $this->actingAs($staff, 'api');
+        $this->getJson($url)->assertOk()->assertJsonPath('data.total', 1);
+        $this->getJson($url.'&shop_ids[]='.$this->otherShop->id)->assertForbidden();
+        $this->postJson('/api/v1/care-segments/export', ['month_from' => $month, 'month_to' => $month, 'export' => true])->assertForbidden();
+        $this->actingAs($admin, 'api');
+        $export = $this->postJson('/api/v1/care-segments/export', ['month_from' => $month, 'month_to' => $month, 'export' => true])
+            ->assertOk()->assertDownload('loc-cskh.xlsx');
+        $this->assertStringStartsWith('PK', $export->streamedContent());
+    }
+
+    public function test_source_alias_is_admin_only_shop_scoped_and_keeps_original_name(): void
+    {
+        (require database_path('migrations/2026_11_05_000005_create_order_source_aliases.php'))->up();
+        foreach ([$this->shop, $this->otherShop] as $shop) {
+            Order::create(['shop_id' => $shop->id, 'pancake_order_page_id' => 'shared-id', 'pancake_order_page_name' => 'Original']);
+        }
+        $url = '/api/v1/shops/'.$this->shop->id.'/source-alias';
+        $this->putJson($url, ['source_id' => 'shared-id', 'alias' => 'My name'])->assertForbidden();
+        $this->actingAs($this->actor('admin'), 'api');
+        $this->putJson($url, ['source_id' => 'missing', 'alias' => 'Name'])->assertUnprocessable();
+        $this->putJson($url, ['source_id' => 'shared-id', 'alias' => 'My name'])->assertOk();
+        $this->getJson('/api/v1/order-pages?shop_id='.$this->shop->id)->assertOk()
+            ->assertJsonPath('data.0.alias', 'My name')
+            ->assertJsonPath('data.0.original_name', 'Original');
+        $this->getJson('/api/v1/order-pages?shop_id='.$this->otherShop->id)->assertOk()
+            ->assertJsonPath('data.0.name', 'Original')->assertJsonMissingPath('data.0.alias');
+        $this->putJson($url, ['source_id' => 'shared-id', 'alias' => ''])->assertOk();
+        $this->getJson('/api/v1/order-pages?shop_id='.$this->shop->id)->assertOk()->assertJsonPath('data.0.name', 'Original');
+    }
+
+    public function test_segment_care_schedules_once_reuses_pending_and_continues_existing_workflow(): void
+    {
+        foreach ([
+            '2026_05_10_023452_create_customer_cares_table.php',
+            '2026_05_14_042746_add_time_care_to_customer_cares_table.php',
+            '2026_05_16_091606_add_is_accept_to_customer_cares_table.php',
+            '2026_05_16_155328_add_total_edit_column_to_customer_cares_table.php',
+            '2026_05_19_090003_add_reason_column_to_customer_cares.php',
+            '2026_05_23_165321_add_is_confirm_care_to_customer_cares_table.php',
+            '2026_05_23_162926_create_customer_assigneds_table.php',
+            '2026_08_21_000000_create_customer_care_assignments_table.php',
+            '2026_08_27_010000_create_customer_care_journey_sequences_table.php',
+            '2026_11_05_000006_create_care_segment_entries.php',
+        ] as $file) {
+            (require database_path('migrations/'.$file))->up();
+        }
+        $actor = $this->actor('staff-cskh');
+        $group = PermissionGroup::firstOrCreate(['name' => 'Segments']);
+        $permission = Permission::firstOrCreate(['slug' => 'care-segment-view'], ['permission_group_id' => $group->id, 'name' => 'View']);
+        RolePermission::firstOrCreate(['role_id' => $actor->role_id, 'permission_id' => $permission->id]);
+        $customer = $this->customer($this->shop, $actor);
+        $this->actingAs($actor, 'api');
+        $url = '/api/v1/care-segments/customers/'.$customer->id.'/care';
+        $payload = ['request_id' => (string) Str::uuid(), 'note' => 'Đã tư vấn', 'next_date' => now()->addDay()->toDateString(), 'context' => 'Canxi tháng 10'];
+        $this->getJson($url)->assertOk()->assertJsonCount(0, 'data.pending');
+        $nextId = $this->postJson($url, $payload)->assertOk()->json('data.care_id');
+        $this->postJson($url, $payload)->assertOk()->assertJsonPath('data.replayed', true);
+        $this->assertDatabaseCount('customer_cares', 2);
+        $this->assertDatabaseCount('care_segment_entries', 1);
+        $this->assertDatabaseHas('customer_cares', ['id' => $nextId, 'status' => 0, 'date_care' => $payload['next_date']]);
+        $this->getJson($url)->assertOk()->assertJsonCount(1, 'data.pending');
+        $this->getJson('/api/v1/customer-cares?type=customer_care_pending&page=1&context=v2')->assertOk()
+            ->assertJsonFragment(['id' => $nextId]);
+        $payload['request_id'] = (string) Str::uuid();
+        $payload['note'] = 'Đã chăm sóc lần nữa';
+        $secondId = $this->postJson($url, $payload)->assertOk()->json('data.care_id');
+        $this->assertDatabaseCount('customer_cares', 3);
+        $this->assertDatabaseHas('customer_cares', ['id' => $nextId, 'status' => 1]);
+        $this->putJson('/api/v1/customer-cares/'.$secondId, ['status' => 1, 'note' => 'Theo lịch hiện tại',
+            'date' => now()->format('Y-m-d H:i:00'), 'next_date_care' => now()->addDays(2)->toDateString()])
+            ->assertOk()->assertJsonPath('success', true);
+        $pending = app(\App\Services\CareSegmentSchedulingService::class)->pending($customer)->get();
+        $this->assertCount(1, $pending);
+        $this->assertStringStartsWith('[Lọc CSKH]', $pending->first()->customerCare->note);
+        $this->assertSame(3, \App\Models\ActivityLog::where('action', 'customer_care.completed')->count());
+        $another = $this->actor('staff-cskh');
+        $this->actingAs($another, 'api')->postJson($url, array_replace($payload, ['request_id' => (string) Str::uuid()]))->assertConflict();
+        $this->actingAs($actor, 'api');
+        app(\App\Services\CustomerCareReclaimService::class)->reclaimManually(
+            $pending->first()->customer_care_id, $this->actor('admin'), 'Test reclaim');
+        $this->assertCount(0, app(\App\Services\CareSegmentSchedulingService::class)->pending($customer)->get());
+        $other = $this->customer($this->otherShop, $actor);
+        $this->postJson('/api/v1/care-segments/customers/'.$other->id.'/care', $payload)->assertForbidden();
+        Http::assertNothingSent();
     }
 
     private function runMigration(): void
@@ -185,14 +376,29 @@ class PosOrderTest extends TestCase
         $this->assertDatabaseCount('orders', 1);
     }
 
-    public function test_existing_customer_is_scoped_and_snapshot_is_not_changed_with_profile(): void
+    public function test_pos_prefills_imported_address_and_saves_edits_without_changing_old_orders(): void
     {
         $customer = $this->customer($this->shop, $this->actor);
-        $response = $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $customer->id, 'customer' => null]));
-        $response->assertCreated()->assertJsonPath('data.customer_id', $customer->id);
-        $id = $response->json('data.id');
-        $customer->update(['name' => 'Changed profile']);
-        $this->getJson('/api/v1/orders/'.$id)->assertOk()->assertJsonPath('data.customer_name', 'Existing');
+        $profile = ['address' => '', 'shop_customer_addresses' => [['full_address' => 'Địa chỉ đã đồng bộ']]];
+        $customer->update(['pancake_full_data' => $profile]);
+        $options = '/api/v1/customers?view=pos&shop_id='.$this->shop->id;
+        $this->getJson($options)->assertOk()->assertJsonPath('data.customers.0.address', 'Địa chỉ đã đồng bộ');
+
+        $first = $this->payload(['customer_id' => $customer->id, 'shipping_address' => 'Địa chỉ mới']);
+        $id = $this->postJson('/api/v1/orders', $first)->assertCreated()
+            ->assertJsonPath('data.customer_id', $customer->id)->json('data.id');
+        $this->getJson($options)->assertOk()->assertJsonPath('data.customers.0.address', 'Địa chỉ mới');
+        $this->assertSame($profile, $customer->fresh()->pancake_full_data);
+
+        $this->postJson('/api/v1/orders', $this->payload([
+            'customer_id' => $customer->id, 'shipping_address' => 'Địa chỉ mới hơn',
+        ]))->assertCreated();
+        $this->postJson('/api/v1/orders', $first)->assertOk()->assertJsonPath('replayed', true);
+        $this->assertSame('Địa chỉ mới hơn', $customer->fresh()->crm_shipping_address);
+        $customer->update(['name' => 'Changed profile', 'pancake_full_data' => []]);
+        $this->getJson($options)->assertOk()->assertJsonPath('data.customers.0.address', 'Địa chỉ mới hơn');
+        $this->getJson('/api/v1/orders/'.$id)->assertOk()
+            ->assertJsonPath('data.customer_name', 'Existing')->assertJsonPath('data.customer_address', 'Địa chỉ mới');
         $this->assertDatabaseCount('customers', 1);
     }
 
@@ -414,24 +620,43 @@ class PosOrderTest extends TestCase
         $this->assertSame($before, DB::table('role_permissions')->orderBy('id')->get()->toJson());
     }
 
-    public function test_staff_cskh_pos_grant_does_not_expand_customer_scope_or_accept_forged_creator(): void
+    public function test_staff_cskh_can_use_shop_customers_in_pos_but_cannot_cross_shops_or_forge_creator(): void
     {
         $cskh = $this->actor('staff-cskh');
         (require database_path('migrations/2026_10_22_000001_add_explicit_pos_permission.php'))->up();
         RolePermission::create(['role_id' => $cskh->role_id, 'permission_id' => Permission::where('slug', 'pos-create')->sole()->id]);
-        $own = $this->customer($this->shop, $cskh);
-        $private = $this->customer($this->shop, $this->actor);
+        $this->customer($this->shop, $cskh);
+        $shopCustomer = $this->customer($this->shop, $this->actor);
+        $outside = $this->customer($this->otherShop, $this->actor);
+        $shopCustomer->update(['phone_numbers' => '+84 912.345.678']);
+        Order::create([
+            'shop_id' => $this->shop->id, 'origin' => 'pancake',
+            'user_creator_id' => $this->actor->pancake_user_id,
+            'pancake_order_page_id' => 'shared-page', 'pancake_order_page_name' => 'Shared source',
+        ]);
         $this->actingAs($cskh, 'api');
+        $this->getJson('/api/v1/order-pages?context=catalog&shop_id='.$this->shop->id)
+            ->assertOk()->assertJsonPath('data.0.id', 'shared-page');
+        $this->getJson('/api/v1/order-pages?context=catalog&shop_id='.$this->otherShop->id)->assertForbidden();
+        $this->getJson('/api/v1/order-pages?context=pos&shop_id='.$this->shop->id)
+            ->assertOk()->assertJsonPath('data.0.id', 'shared-page');
+        $this->getJson('/api/v1/order-pages?context=pos&shop_id='.$this->otherShop->id)->assertForbidden();
+        foreach (['0912345678', '+84 912-345-678'] as $phone) {
+            $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->shop->id.'&search='.urlencode($phone))
+                ->assertOk()->assertJsonCount(1, 'data.customers')->assertJsonPath('data.customers.0.id', $shopCustomer->id);
+        }
         $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->shop->id)->assertOk()
-            ->assertJsonCount(1, 'data.customers')->assertJsonPath('data.customers.0.id', $own->id);
-        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $private->id]))->assertForbidden();
+            ->assertJsonCount(2, 'data.customers')->assertJsonFragment(['id' => $shopCustomer->id]);
+        $this->getJson('/api/v1/customers?view=pos&shop_id='.$this->otherShop->id)->assertForbidden();
+        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $outside->id]))->assertUnprocessable();
         foreach (['user_id', 'created_by_user_id', 'user_creator_id', 'user_assigning_seller_id', 'role_id', 'permissions'] as $field) {
             $this->postJson('/api/v1/orders', $this->payload([$field => $field === 'permissions' ? ['pos-create'] : 1]))
                 ->assertUnprocessable()->assertJsonValidationErrors($field);
         }
-        $this->assertDatabaseCount('orders', 0);
-        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $own->id]))->assertCreated()
-            ->assertJsonPath('data.created_by_user_id', $cskh->id)->assertJsonPath('data.customer_id', $own->id);
+        $this->assertDatabaseCount('orders', 1);
+        $this->postJson('/api/v1/orders', $this->payload(['customer_id' => $shopCustomer->id, 'order_page_id' => 'shared-page']))->assertCreated()
+            ->assertJsonPath('data.created_by_user_id', $cskh->id)->assertJsonPath('data.customer_id', $shopCustomer->id)
+            ->assertJsonPath('data.order_page_name', 'Shared source');
         Http::assertNothingSent();
     }
 
@@ -631,6 +856,53 @@ class PosOrderTest extends TestCase
         }
         $this->assertDatabaseCount('orders', 0);
         $this->assertDatabaseCount('customers', 0);
+    }
+
+    public function test_partial_transfer_records_receipt_and_only_collects_the_balance_as_cod(): void
+    {
+        config(['aicrm.shipping_provider_id' => 42]);
+        $input = $this->simplePaymentPayload('bank_transfer_cod', ['shipping_fee' => 30000]);
+        $input += ['deposit_amount' => 200000, 'payment_confirmed' => true, 'confirmed_total' => 530000];
+        $id = $this->postJson('/api/v1/orders', $input)->assertCreated()
+            ->assertJsonPath('data.totals.total_amount', '530000.00')
+            ->assertJsonPath('data.totals.paid_amount', '200000.00')
+            ->assertJsonPath('data.totals.remaining_amount', '330000.00')
+            ->assertJsonPath('data.totals.expected_cod', '330000.00')->json('data.id');
+        $order = Order::findOrFail($id);
+        $this->assertEquals(200000, $order->cash);
+        $this->assertEquals(330000, $order->cod);
+        $this->assertSame('bank_transfer', $order->pancake_full_data['payments'][0]['method']);
+        $this->assertSame('bank_transfer_cod', $order->pancake_full_data['payment_mode']);
+        $this->assertEquals(330000, app(AicrmOrderPayload::class)->make($order)['moneyCollection']);
+        $this->postJson('/api/v1/orders', $input)->assertOk()->assertJsonPath('replayed', true);
+        $input['deposit_amount'] = '200000';
+        $this->postJson('/api/v1/orders', $input)->assertOk()->assertJsonPath('replayed', true);
+        $input['deposit_amount'] = '210000';
+        $this->postJson('/api/v1/orders', $input)->assertStatus(409);
+        $this->assertDatabaseCount('orders', 1);
+        Http::assertNothingSent();
+    }
+
+    public function test_partial_transfer_requires_valid_amount_and_confirmed_current_total(): void
+    {
+        $base = $this->simplePaymentPayload('bank_transfer_cod');
+        $base += ['payment_confirmed' => true, 'confirmed_total' => '500000'];
+        foreach ([null, 0, -1, 500000, 500001, 'abc', '1.234', '200000.00', '1,5'] as $amount) {
+            $this->postJson('/api/v1/orders', $base + ['deposit_amount' => $amount])->assertUnprocessable();
+        }
+        $input = $base + ['deposit_amount' => '200000'];
+        $input['payment_confirmed'] = false;
+        $this->postJson('/api/v1/orders', $input)->assertUnprocessable();
+        unset($input['payment_confirmed']);
+        $this->postJson('/api/v1/orders', $input)->assertUnprocessable();
+        $input['payment_confirmed'] = true;
+        $input['confirmed_total'] = '499999';
+        $this->postJson('/api/v1/orders', $input)->assertUnprocessable();
+        $input['confirmed_total'] = '500000';
+        $input['payment_mode'] = 'cod';
+        $this->postJson('/api/v1/orders', $input)->assertUnprocessable();
+        $this->assertDatabaseCount('orders', 0);
+        Http::assertNothingSent();
     }
 
     private function simplePaymentPayload(string $mode, array $override = []): array
